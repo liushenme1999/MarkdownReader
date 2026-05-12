@@ -11,6 +11,9 @@ val BookshelfPageBackgroundDark = Color(0xFF252528)
 /** 底部主导航栏纯白 */
 val MainNavigationBarBackground = Color(0xFFFFFFFF)
 
+/** 主导航栏选中项：图标与文字淡蓝（无选中底色时使用） */
+val MainNavTabSelectedTint = Color(0xFF6BB3E8)
+
 // 默认主题
 val Purple80 = Color(0xFFD0BCFF)
 val PurpleGrey80 = Color(0xFFCCC2DC)

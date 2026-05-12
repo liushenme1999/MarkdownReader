@@ -1,7 +1,9 @@
 package com.example.markdownreader.ui.screens.profile
 
+import android.app.Activity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
@@ -9,16 +11,50 @@ import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
 import androidx.navigation.NavController
+import com.example.markdownreader.ui.theme.BookshelfPageBackground
+import com.example.markdownreader.ui.theme.BookshelfPageBackgroundDark
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(navController: NavController) {
-    val shelfBg = MaterialTheme.colorScheme.surface
+    val view = LocalView.current
+    val systemInDarkTheme = isSystemInDarkTheme()
+    val shelfBg =
+        if (systemInDarkTheme) BookshelfPageBackgroundDark
+        else BookshelfPageBackground
+
+    DisposableEffect(shelfBg, systemInDarkTheme) {
+        val window = (view.context as Activity).window
+        val controller = WindowCompat.getInsetsController(window, view)
+        val prevColor = window.statusBarColor
+        val prevLightStatusBars = controller.isAppearanceLightStatusBars
+        window.statusBarColor = shelfBg.toArgb()
+        controller.isAppearanceLightStatusBars = systemInDarkTheme
+        onDispose {
+            window.statusBarColor = prevColor
+            controller.isAppearanceLightStatusBars = prevLightStatusBars
+        }
+    }
+
+    // 阅读页用 SideEffect 写状态栏；返回「我的」时须在本帧最后再写一次，避免仍显示阅读主题色
+    SideEffect {
+        val window = (view.context as Activity).window
+        val controller = WindowCompat.getInsetsController(window, view)
+        window.statusBarColor = shelfBg.toArgb()
+        controller.isAppearanceLightStatusBars = systemInDarkTheme
+    }
+
     Scaffold(
         containerColor = shelfBg,
         topBar = {
@@ -26,7 +62,10 @@ fun ProfileScreen(navController: NavController) {
                 title = {
                     Text(
                         "我的",
-                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontFamily = FontFamily.SansSerif,
+                            fontWeight = FontWeight.Black
+                        )
                     )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(

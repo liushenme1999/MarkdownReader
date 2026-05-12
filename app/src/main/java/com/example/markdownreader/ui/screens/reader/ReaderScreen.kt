@@ -1,5 +1,6 @@
 package com.example.markdownreader.ui.screens.reader
 
+import android.app.Activity
 import android.content.Context
 import android.text.Spannable
 import android.text.style.BackgroundColorSpan
@@ -36,12 +37,14 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -51,6 +54,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
+import androidx.core.graphics.ColorUtils
+import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.example.markdownreader.data.local.entity.HighlightEntity
@@ -69,6 +74,10 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
+/** 略深于阅读区底色，用于顶栏/状态栏/底栏/系统导航条，便于与正文区分 */
+private fun readingChromeShade(readingBackground: Color): Color =
+    lerp(readingBackground, Color.Black, 0.04f)
+
 /** 删除条为 error 底时，避免 onError 与底色过于接近或 IconButton 的 contentColor 盖住矢量，保证垃圾桶可见。 */
 private fun iconTintForDeleteStrip(error: Color): Color {
     val l = error.red * 0.299f + error.green * 0.587f + error.blue * 0.114f
@@ -86,6 +95,8 @@ private val ReaderImmersiveBottomBarHeight = 56.dp
 @Composable
 private fun ReaderImmersiveBottomBar(
     modifier: Modifier = Modifier,
+    theme: ReadingTheme,
+    chromeBackground: Color,
     onToc: () -> Unit,
     onBookmarks: () -> Unit,
     onThemeBackground: () -> Unit,
@@ -96,7 +107,7 @@ private fun ReaderImmersiveBottomBar(
         modifier = modifier.fillMaxWidth(),
         tonalElevation = 3.dp,
         shadowElevation = 8.dp,
-        color = MaterialTheme.colorScheme.surfaceContainer
+        color = chromeBackground
     ) {
         Row(
             modifier = Modifier
@@ -105,34 +116,40 @@ private fun ReaderImmersiveBottomBar(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
+            val iconTint = theme.textColor
             IconButton(onClick = onToc) {
                 Icon(
                     imageVector = Icons.Default.Toc,
-                    contentDescription = "目录"
+                    contentDescription = "目录",
+                    tint = iconTint
                 )
             }
             IconButton(onClick = onBookmarks) {
                 Icon(
                     imageVector = Icons.Default.Bookmark,
-                    contentDescription = "书签"
+                    contentDescription = "书签",
+                    tint = iconTint
                 )
             }
             IconButton(onClick = onThemeBackground) {
                 Icon(
                     imageVector = Icons.Default.Palette,
-                    contentDescription = "阅读背景"
+                    contentDescription = "阅读背景",
+                    tint = iconTint
                 )
             }
             IconButton(onClick = onFont) {
                 Icon(
                     imageVector = Icons.Default.TextFields,
-                    contentDescription = "字体"
+                    contentDescription = "字体",
+                    tint = iconTint
                 )
             }
             IconButton(onClick = onPageTurn) {
                 Icon(
                     imageVector = Icons.Default.ImportContacts,
-                    contentDescription = "翻页设置"
+                    contentDescription = "翻页设置",
+                    tint = iconTint
                 )
             }
         }
@@ -145,15 +162,23 @@ private fun ReaderTopAppBar(
     title: String,
     chapterTitle: String?,
     onNavigateBack: () -> Unit,
+    theme: ReadingTheme,
     modifier: Modifier = Modifier
 ) {
     TopAppBar(
         modifier = modifier,
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = readingChromeShade(theme.backgroundColor),
+            titleContentColor = theme.textColor,
+            navigationIconContentColor = theme.textColor,
+            actionIconContentColor = theme.textColor
+        ),
         title = {
             Column {
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleMedium,
+                    color = theme.textColor,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -161,7 +186,7 @@ private fun ReaderTopAppBar(
                     Text(
                         text = chapterTitle,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                        color = theme.secondaryTextColor,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -509,14 +534,48 @@ fun ReaderScreen(
         }
     }
 
+    val view = LocalView.current
+    DisposableEffect(Unit) {
+        val activity = view.context as? Activity
+        if (activity == null) {
+            return@DisposableEffect onDispose { }
+        }
+        val window = activity.window
+        val controller = WindowCompat.getInsetsController(window, view)
+        val prevStatusColor = window.statusBarColor
+        val prevLightStatusBars = controller.isAppearanceLightStatusBars
+        val prevNavColor = window.navigationBarColor
+        val prevLightNavBars = controller.isAppearanceLightNavigationBars
+        onDispose {
+            window.statusBarColor = prevStatusColor
+            controller.isAppearanceLightStatusBars = prevLightStatusBars
+            window.navigationBarColor = prevNavColor
+            controller.isAppearanceLightNavigationBars = prevLightNavBars
+        }
+    }
+
+    SideEffect {
+        val activity = view.context as? Activity ?: return@SideEffect
+        val window = activity.window
+        val controller = WindowCompat.getInsetsController(window, view)
+        val chromeArgb = readingChromeShade(currentTheme.backgroundColor).toArgb()
+        val lightSystemBars = ColorUtils.calculateLuminance(chromeArgb) < 0.5
+        window.statusBarColor = chromeArgb
+        controller.isAppearanceLightStatusBars = lightSystemBars
+        window.navigationBarColor = chromeArgb
+        controller.isAppearanceLightNavigationBars = lightSystemBars
+    }
+
     Scaffold(
+        containerColor = currentTheme.backgroundColor,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             if (!immersiveReading) {
                 ReaderTopAppBar(
                     title = book?.title ?: "阅读中",
                     chapterTitle = chapterTitle,
-                    onNavigateBack = { navController.navigateUp() }
+                    onNavigateBack = { navController.navigateUp() },
+                    theme = currentTheme
                 )
             }
         }
@@ -633,12 +692,13 @@ fun ReaderScreen(
                     shape = RectangleShape,
                     tonalElevation = 3.dp,
                     shadowElevation = 8.dp,
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh
+                    color = readingChromeShade(currentTheme.backgroundColor)
                 ) {
                     ReaderTopAppBar(
                         title = book?.title ?: "阅读中",
                         chapterTitle = chapterTitle,
                         onNavigateBack = { navController.navigateUp() },
+                        theme = currentTheme,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -646,6 +706,8 @@ fun ReaderScreen(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .zIndex(1f),
+                    theme = currentTheme,
+                    chromeBackground = readingChromeShade(currentTheme.backgroundColor),
                     onToc = { showToc = true },
                     onBookmarks = { showBookmarks = true },
                     onThemeBackground = { showReaderThemeSheet = true },

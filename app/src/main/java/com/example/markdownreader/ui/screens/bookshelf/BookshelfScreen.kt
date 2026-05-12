@@ -1,5 +1,6 @@
 package com.example.markdownreader.ui.screens.bookshelf
 
+import android.app.Activity
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -24,12 +25,16 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.example.markdownreader.data.local.entity.BookEntity
@@ -68,13 +73,29 @@ fun BookshelfScreen(
 
     BackHandler(enabled = selectionMode) { exitSelection() }
 
+    val view = LocalView.current
+    val systemInDarkTheme = isSystemInDarkTheme()
+    val shelfBg =
+        if (systemInDarkTheme) BookshelfPageBackgroundDark
+        else BookshelfPageBackground
+
+    DisposableEffect(shelfBg) {
+        val window = (view.context as Activity).window
+        val controller = WindowCompat.getInsetsController(window, view)
+        val prevColor = window.statusBarColor
+        val prevLightStatusBars = controller.isAppearanceLightStatusBars
+        window.statusBarColor = shelfBg.toArgb()
+        controller.isAppearanceLightStatusBars = systemInDarkTheme
+        onDispose {
+            window.statusBarColor = prevColor
+            controller.isAppearanceLightStatusBars = prevLightStatusBars
+        }
+    }
+
     DisposableEffect(Unit) {
         onDispose { onSelectionModeChange(false) }
     }
 
-    val shelfBg =
-        if (isSystemInDarkTheme()) BookshelfPageBackgroundDark
-        else BookshelfPageBackground
     val barBg = MainNavigationBarBackground
     val managementVisible = selectionMode && selectedIds.isNotEmpty()
     val gridBottomPadding = 16.dp + if (managementVisible) 80.dp else 0.dp
@@ -89,9 +110,10 @@ fun BookshelfScreen(
             TopAppBar(
                 title = {
                     Text(
-                        if (selectionMode) "已选 ${selectedIds.size} 本" else "我的书架",
+                        if (selectionMode) "已选 ${selectedIds.size} 本" else "书架",
                         style = MaterialTheme.typography.titleLarge.copy(
-                            fontWeight = FontWeight.Bold
+                            fontFamily = FontFamily.SansSerif,
+                            fontWeight = FontWeight.Black
                         )
                     )
                 },

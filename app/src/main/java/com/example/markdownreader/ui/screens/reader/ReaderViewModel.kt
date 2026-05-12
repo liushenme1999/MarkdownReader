@@ -46,19 +46,36 @@ class ReaderViewModel @Inject constructor(
     private val _readingProgress = MutableStateFlow(0f)
     val readingProgress: StateFlow<Float> = _readingProgress.asStateFlow()
 
-    private val _currentTheme = MutableStateFlow<ReadingTheme>(ReadingTheme.Paper)
-    val currentTheme: StateFlow<ReadingTheme> = _currentTheme.asStateFlow()
+    val currentTheme: StateFlow<ReadingTheme> = readerSettingsRepository.readingTheme
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = ReadingTheme.Paper
+        )
 
-    private val _fontSize = MutableStateFlow(16)
-    val fontSize: StateFlow<Int> = _fontSize.asStateFlow()
+    val fontSize: StateFlow<Int> = readerSettingsRepository.fontSize
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = 16
+        )
 
     /** 正文四周边距（dp），用于 TextView padding。 */
-    private val _readerPaddingDp = MutableStateFlow(32)
-    val readerPaddingDp: StateFlow<Int> = _readerPaddingDp.asStateFlow()
+    val readerPaddingDp: StateFlow<Int> = readerSettingsRepository.readerPaddingDp
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = 32
+        )
 
     /** 行距倍数，对应 [android.widget.TextView.setLineSpacing] 的 multiplier。 */
-    private val _readerLineSpacingMultiplier = MutableStateFlow(1.5f)
-    val readerLineSpacingMultiplier: StateFlow<Float> = _readerLineSpacingMultiplier.asStateFlow()
+    val readerLineSpacingMultiplier: StateFlow<Float> =
+        readerSettingsRepository.readerLineSpacingMultiplier
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = 1.5f
+            )
 
     val pageTurnMode: StateFlow<ReaderPageTurnMode> = readerSettingsRepository.pageTurnMode
         .stateIn(
@@ -223,20 +240,28 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun setTheme(theme: ReadingTheme) {
-        _currentTheme.value = theme
+        viewModelScope.launch {
+            readerSettingsRepository.setReadingTheme(theme)
+        }
     }
 
     fun setFontSize(size: Int) {
-        _fontSize.value = size.coerceIn(10, 40)
+        viewModelScope.launch {
+            readerSettingsRepository.setFontSize(size.coerceIn(10, 40))
+        }
     }
 
     fun setReaderPaddingDp(dp: Int) {
-        _readerPaddingDp.value = dp.coerceIn(8, 56)
+        viewModelScope.launch {
+            readerSettingsRepository.setReaderPaddingDp(dp.coerceIn(8, 56))
+        }
     }
 
     fun setReaderLineSpacingMultiplier(mult: Float) {
         val snapped = (mult * 20f).roundToInt() / 20f
-        _readerLineSpacingMultiplier.value = snapped.coerceIn(1f, 2.5f)
+        viewModelScope.launch {
+            readerSettingsRepository.setReaderLineSpacingMultiplier(snapped.coerceIn(1f, 2.5f))
+        }
     }
 
     fun setPageTurnMode(mode: ReaderPageTurnMode) {
