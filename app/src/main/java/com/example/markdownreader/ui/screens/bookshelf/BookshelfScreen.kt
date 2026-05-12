@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -33,6 +34,9 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.example.markdownreader.data.local.entity.BookEntity
 import com.example.markdownreader.ui.theme.BookCoverColors
+import com.example.markdownreader.ui.theme.BookshelfPageBackground
+import com.example.markdownreader.ui.theme.BookshelfPageBackgroundDark
+import com.example.markdownreader.ui.theme.MainNavigationBarBackground
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -40,6 +44,7 @@ import java.util.*
 @Composable
 fun BookshelfScreen(
     navController: NavController,
+    onSelectionModeChange: (Boolean) -> Unit = {},
     viewModel: BookshelfViewModel = hiltViewModel()
 ) {
     val books by viewModel.books.collectAsState()
@@ -63,7 +68,23 @@ fun BookshelfScreen(
 
     BackHandler(enabled = selectionMode) { exitSelection() }
 
+    DisposableEffect(Unit) {
+        onDispose { onSelectionModeChange(false) }
+    }
+
+    val shelfBg =
+        if (isSystemInDarkTheme()) BookshelfPageBackgroundDark
+        else BookshelfPageBackground
+    val barBg = MainNavigationBarBackground
+    val managementVisible = selectionMode && selectedIds.isNotEmpty()
+    val gridBottomPadding = 16.dp + if (managementVisible) 80.dp else 0.dp
+
+    LaunchedEffect(selectionMode) {
+        onSelectionModeChange(selectionMode)
+    }
+
     Scaffold(
+        containerColor = shelfBg,
         topBar = {
             TopAppBar(
                 title = {
@@ -80,45 +101,20 @@ fun BookshelfScreen(
                             Icon(Icons.Default.Close, contentDescription = "退出管理")
                         }
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = shelfBg,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurface
+                )
             )
-        },
-        bottomBar = {
-            if (selectionMode && selectedIds.isNotEmpty()) {
-                Surface(tonalElevation = 3.dp) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 8.dp, horizontal = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        ManagementBarButton(
-                            icon = Icons.Default.DeleteOutline,
-                            label = "移出书架",
-                            onClick = { showRemoveConfirm = true }
-                        )
-                        ManagementBarButton(
-                            icon = Icons.Default.PushPin,
-                            label = "置顶",
-                            onClick = { viewModel.togglePinForSelection(selectedIds) }
-                        )
-                        ManagementBarButton(
-                            icon = Icons.Default.FolderSpecial,
-                            label = "分组",
-                            onClick = {
-                                groupInput = ""
-                                showGroupDialog = true
-                            }
-                        )
-                    }
-                }
-            }
         }
     ) { paddingValues ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .background(shelfBg)
                 .padding(paddingValues)
         ) {
             if (books.isEmpty()) {
@@ -133,7 +129,12 @@ fun BookshelfScreen(
                 val gridCount = if (selectionMode) books.size else books.size + 1
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
-                    contentPadding = PaddingValues(16.dp),
+                    contentPadding = PaddingValues(
+                        start = 16.dp,
+                        end = 16.dp,
+                        top = 16.dp,
+                        bottom = gridBottomPadding
+                    ),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
@@ -182,6 +183,44 @@ fun BookshelfScreen(
                                 }
                             )
                         }
+                    }
+                }
+            }
+
+            if (managementVisible) {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .navigationBarsPadding(),
+                    color = barBg,
+                    shadowElevation = 6.dp
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp, horizontal = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        ManagementBarButton(
+                            icon = Icons.Default.DeleteOutline,
+                            label = "移出书架",
+                            onClick = { showRemoveConfirm = true }
+                        )
+                        ManagementBarButton(
+                            icon = Icons.Default.PushPin,
+                            label = "置顶",
+                            onClick = { viewModel.togglePinForSelection(selectedIds) }
+                        )
+                        ManagementBarButton(
+                            icon = Icons.Default.FolderSpecial,
+                            label = "分组",
+                            onClick = {
+                                groupInput = ""
+                                showGroupDialog = true
+                            }
+                        )
                     }
                 }
             }
@@ -265,9 +304,13 @@ private fun ManagementBarButton(
 private fun EmptyBookshelf(
     onImportClick: () -> Unit
 ) {
+    val shelfBg =
+        if (isSystemInDarkTheme()) BookshelfPageBackgroundDark
+        else BookshelfPageBackground
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .background(shelfBg)
             .padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -315,46 +358,15 @@ private fun ImportBookCard(onClick: () -> Unit) {
                 .background(dashSurface),
             contentAlignment = Alignment.Center
         ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-                modifier = Modifier.padding(8.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = null,
-                    modifier = Modifier.size(28.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "导入",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontSize = 11.sp
-                    ),
-                    maxLines = 1
-                )
-            }
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "导入书籍",
+                modifier = Modifier.size(32.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
         }
         Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = "导入书籍",
-            style = MaterialTheme.typography.bodySmall.copy(
-                fontWeight = FontWeight.Medium
-            ),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Text(
-            text = "Markdown / 文本",
-            style = MaterialTheme.typography.labelSmall.copy(
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-            ),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        Spacer(modifier = Modifier.height(36.dp))
     }
 }
 

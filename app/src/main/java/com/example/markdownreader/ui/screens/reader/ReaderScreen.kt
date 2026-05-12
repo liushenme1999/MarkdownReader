@@ -12,6 +12,7 @@ import android.text.method.LinkMovementMethod
 import android.view.View
 import android.widget.TextView
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -20,6 +21,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -27,20 +31,30 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
+import com.example.markdownreader.data.local.entity.HighlightEntity
+import com.example.markdownreader.model.ReaderPageTurnMode
 import com.example.markdownreader.ui.theme.ReadingTheme
 import io.noties.markwon.Markwon
 import io.noties.markwon.core.CorePlugin
@@ -48,9 +62,18 @@ import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.ext.tables.TablePlugin
 import io.noties.markwon.html.HtmlPlugin
 import io.noties.markwon.linkify.LinkifyPlugin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.roundToInt
+
+/** 删除条为 error 底时，避免 onError 与底色过于接近或 IconButton 的 contentColor 盖住矢量，保证垃圾桶可见。 */
+private fun iconTintForDeleteStrip(error: Color): Color {
+    val l = error.red * 0.299f + error.green * 0.587f + error.blue * 0.114f
+    return if (l > 0.55f) Color(0xFF1C1B1F) else Color.White
+}
 
 /** [TextView] 上用于判断是否需要重新执行 Markwon 渲染的 tag key */
 private const val TAG_READER_RENDER_SIG = 0x4d445f52 // "MD_R"
@@ -66,7 +89,8 @@ private fun ReaderImmersiveBottomBar(
     onToc: () -> Unit,
     onBookmarks: () -> Unit,
     onThemeBackground: () -> Unit,
-    onFont: () -> Unit
+    onFont: () -> Unit,
+    onPageTurn: () -> Unit
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -105,11 +129,277 @@ private fun ReaderImmersiveBottomBar(
                     contentDescription = "字体"
                 )
             }
+            IconButton(onClick = onPageTurn) {
+                Icon(
+                    imageVector = Icons.Default.ImportContacts,
+                    contentDescription = "翻页设置"
+                )
+            }
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReaderTopAppBar(
+    title: String,
+    chapterTitle: String?,
+    onNavigateBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    TopAppBar(
+        modifier = modifier,
+        title = {
+            Column {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (chapterTitle != null) {
+                    Text(
+                        text = chapterTitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        },
+        navigationIcon = {
+            IconButton(onClick = onNavigateBack) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+            }
+        }
+    )
+}
+
+private suspend fun SnackbarHostState.showBriefSnackbar(message: String, visibleMs: Long = 1400L) {
+    coroutineScope {
+        val snackJob = launch {
+            showSnackbar(message = message, duration = SnackbarDuration.Indefinite)
+        }
+        delay(visibleMs)
+        currentSnackbarData?.dismiss()
+        snackJob.join()
+    }
+}
+
+private fun estimateTargetCharsPerPage(fontSize: Int, screenHeightDp: Int, screenWidthDp: Int): Int {
+    val lineHeight = fontSize * 1.55f
+    val lines = (screenHeightDp / lineHeight).toInt().coerceAtLeast(4)
+    val charsPerLine = (screenWidthDp / (fontSize * 0.48f)).toInt().coerceAtLeast(8)
+    return (lines * charsPerLine).coerceIn(900, 14_000)
+}
+
+/** 将正文切成多段用于横向分页；返回 (片段, 在全文中的起始下标)。 */
+private fun splitMarkdownToPages(content: String, targetChars: Int): List<Pair<String, Int>> {
+    if (content.isEmpty()) return listOf("" to 0)
+    if (targetChars < 200) return listOf(content to 0)
+    val result = mutableListOf<Pair<String, Int>>()
+    var idx = 0
+    while (idx < content.length) {
+        val start = idx
+        var end = (start + targetChars).coerceAtMost(content.length)
+        if (end < content.length) {
+            val slice = content.substring(start, end)
+            val paraBreak = slice.lastIndexOf("\n\n")
+            val lineBreak = slice.lastIndexOf('\n')
+            val breakAt = maxOf(
+                if (paraBreak >= targetChars / 6) paraBreak else -1,
+                if (lineBreak >= targetChars / 6) lineBreak else -1
+            )
+            if (breakAt >= 0) {
+                end = start + breakAt + 1
+            }
+        }
+        if (end <= start) {
+            end = (start + 1).coerceAtMost(content.length)
+        }
+        result += content.substring(start, end) to start
+        idx = end
+    }
+    return result
+}
+
+private fun highlightsForPageSlice(
+    globalStart: Int,
+    globalExclusiveEnd: Int,
+    highlights: List<HighlightEntity>,
+    slice: String
+): List<HighlightEntity> {
+    if (slice.isEmpty()) return emptyList()
+    val endCap = globalExclusiveEnd.coerceAtMost(globalStart + slice.length)
+    return highlights.mapNotNull { h ->
+        if (h.endPosition <= globalStart || h.startPosition >= endCap) return@mapNotNull null
+        val s = (h.startPosition - globalStart).coerceIn(0, slice.length)
+        val e = (h.endPosition - globalStart).coerceIn(0, slice.length)
+        if (e <= s) return@mapNotNull null
+        val text = slice.substring(s, e)
+        h.copy(startPosition = s, endPosition = e, highlightedText = text)
+    }
+}
+
+private fun pageIndexForGlobalChar(pages: List<Pair<String, Int>>, charPos: Int): Int =
+    pages.indexOfLast { it.second <= charPos }.coerceAtLeast(0)
+
+private fun localProgressOnPage(
+    pages: List<Pair<String, Int>>,
+    contentLength: Int,
+    charPos: Int,
+    pageIndex: Int
+): Float {
+    val start = pages[pageIndex].second
+    val end = if (pageIndex + 1 < pages.size) pages[pageIndex + 1].second else contentLength
+    val span = (end - start).coerceAtLeast(1)
+    return ((charPos - start).toFloat() / span.toFloat()).coerceIn(0f, 1f)
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ReaderPagedMarkdownHost(
+    pages: List<Pair<String, Int>>,
+    pageTurnMode: ReaderPageTurnMode,
+    pagerState: PagerState,
+    theme: ReadingTheme,
+    fontSize: Int,
+    readerPaddingDp: Int,
+    readerLineSpacingMultiplier: Float,
+    highlights: List<HighlightEntity>,
+    pageTextViews: MutableMap<Int, TextView>,
+    modifier: Modifier = Modifier,
+    onTextSelected: (String) -> Unit,
+    onReadingVerticalScroll: (Int) -> Unit,
+    onSwipeRightBookmark: () -> Unit,
+    onCenterTap: () -> Unit,
+    onPageTextViewReady: (Int, TextView) -> Unit
+) {
+    val layoutDirection = LocalLayoutDirection.current
+    val cameraDistancePx = with(LocalDensity.current) { 12f * density * 80f }
+
+    HorizontalPager(
+        state = pagerState,
+        modifier = modifier.fillMaxSize()
+    ) { pageIndex ->
+        val outOfCenter = (pagerState.currentPage - pageIndex) + pagerState.currentPageOffsetFraction
+        val pageModifier = when (pageTurnMode) {
+            ReaderPageTurnMode.HorizontalSwipe ->
+                Modifier.fillMaxSize()
+            ReaderPageTurnMode.SimulationPageTurn ->
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        this.cameraDistance = cameraDistancePx
+                        transformOrigin = TransformOrigin(
+                            pivotFractionX = if (layoutDirection == LayoutDirection.Ltr) 0f else 1f,
+                            pivotFractionY = 0.5f
+                        )
+                        rotationY = (-outOfCenter * 62f).coerceIn(-82f, 82f)
+                        alpha = 1f - 0.12f * abs(outOfCenter).coerceIn(0f, 1.5f)
+                    }
+            ReaderPageTurnMode.CoverPageTurn ->
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        translationX = size.width * outOfCenter * 0.92f
+                    }
+            else -> Modifier.fillMaxSize()
+        }
+
+        val (slice, globalStart) = pages[pageIndex]
+        val globalEndExclusive = if (pageIndex + 1 < pages.size) {
+            pages[pageIndex + 1].second
+        } else {
+            Int.MAX_VALUE
+        }
+        val pageHighlights = remember(highlights, slice, globalStart, globalEndExclusive) {
+            highlightsForPageSlice(globalStart, globalEndExclusive, highlights, slice)
+        }
+
+        Box(modifier = pageModifier) {
+            MarkdownReaderView(
+                content = slice,
+                theme = theme,
+                fontSize = fontSize,
+                readerPaddingDp = readerPaddingDp,
+                readerLineSpacingMultiplier = readerLineSpacingMultiplier,
+                highlights = pageHighlights,
+                modifier = Modifier.fillMaxSize(),
+                onTextSelected = onTextSelected,
+                onScroll = { },
+                onReadingVerticalScroll = onReadingVerticalScroll,
+                onViewReady = { tv ->
+                    pageTextViews[pageIndex] = tv
+                    onPageTextViewReady(pageIndex, tv)
+                },
+                onSwipeRightBookmark = onSwipeRightBookmark,
+                onSwipeDownBookmark = onSwipeRightBookmark,
+                onCenterTap = onCenterTap
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReaderPageTurnSheet(
+    currentMode: ReaderPageTurnMode,
+    onModeSelected: (ReaderPageTurnMode) -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 16.dp)
+        ) {
+            Text(
+                text = "翻页方式",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "横向模式按段落估算分页，复杂排版可能与上下滚动略有差异。左右滑动/仿真/覆盖翻页时：在页顶向下拉可添加或取消书签。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            ReaderPageTurnMode.values().forEach { mode ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onModeSelected(mode)
+                            onDismiss()
+                        }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = mode == currentMode,
+                        onClick = {
+                            onModeSelected(mode)
+                            onDismiss()
+                        }
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = mode.label,
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ReaderScreen(
     navController: NavController,
@@ -129,6 +419,8 @@ fun ReaderScreen(
     val readerPaddingDp by viewModel.readerPaddingDp.collectAsState()
     val readerLineSpacingMultiplier by viewModel.readerLineSpacingMultiplier.collectAsState()
     val loadError by viewModel.loadError.collectAsState()
+    val pageTurnMode by viewModel.pageTurnMode.collectAsState()
+    val configuration = LocalConfiguration.current
 
     var showReaderThemeSheet by remember { mutableStateOf(false) }
     var showReaderFontSheet by remember { mutableStateOf(false) }
@@ -137,17 +429,50 @@ fun ReaderScreen(
     var selectedText by remember { mutableStateOf("") }
     var showHighlightMenu by remember { mutableStateOf(false) }
     var showTopBar by remember { mutableStateOf(false) }
+    var showReaderPageTurnSheet by remember { mutableStateOf(false) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val readerTextView = remember { mutableStateOf<TextView?>(null) }
 
     val immersiveReading = content.isNotEmpty() && loadError == null
-    val showTopBarEffective = !immersiveReading || showTopBar
 
     val tocEntries = remember(content) { parseMarkdownToc(content) }
     val totalChars = book?.totalChars?.takeIf { it > 0 } ?: content.length.coerceAtLeast(1)
     val chapterTitle = remember(tocEntries, readingProgress, totalChars) {
         currentChapterTitleForProgress(tocEntries, readingProgress, totalChars)
+    }
+
+    val pageSpecs = remember(content, pageTurnMode, fontSize, configuration.screenHeightDp, configuration.screenWidthDp) {
+        when (pageTurnMode) {
+            ReaderPageTurnMode.VerticalScroll -> emptyList()
+            else -> splitMarkdownToPages(
+                content,
+                estimateTargetCharsPerPage(fontSize, configuration.screenHeightDp, configuration.screenWidthDp)
+            )
+        }
+    }
+    val pageTextViews = remember(content) { mutableMapOf<Int, TextView>() }
+    val pagerState = rememberPagerState(pageCount = { pageSpecs.size.coerceAtLeast(1) })
+
+    LaunchedEffect(bookId, content, pageSpecs) {
+        if (content.isEmpty()) return@LaunchedEffect
+        if (pageTurnMode == ReaderPageTurnMode.VerticalScroll || pageSpecs.isEmpty()) return@LaunchedEffect
+        val charPos = (readingProgress * totalChars).toInt().coerceIn(0, (content.length - 1).coerceAtLeast(0))
+        val page = pageIndexForGlobalChar(pageSpecs, charPos).coerceIn(0, pageSpecs.lastIndex.coerceAtLeast(0))
+        pagerState.scrollToPage(page)
+    }
+
+    LaunchedEffect(pagerState.currentPage, pageTurnMode, content) {
+        if (pageTurnMode == ReaderPageTurnMode.VerticalScroll) return@LaunchedEffect
+        readerTextView.value = pageTextViews[pagerState.currentPage]
+    }
+
+    LaunchedEffect(pageTurnMode, pageSpecs, pagerState, totalChars) {
+        if (pageTurnMode == ReaderPageTurnMode.VerticalScroll || pageSpecs.isEmpty()) return@LaunchedEffect
+        snapshotFlow { pagerState.currentPage }.distinctUntilChanged().collect { page ->
+            val start = pageSpecs.getOrNull(page)?.second ?: return@collect
+            viewModel.updateReadingProgress(start.toFloat() / totalChars.coerceAtLeast(1))
+        }
     }
 
     val density = LocalDensity.current
@@ -169,13 +494,14 @@ fun ReaderScreen(
         showTopBar = false
     }
 
-    LaunchedEffect(bookId, content) {
+    LaunchedEffect(bookId, content, pageTurnMode) {
         if (content.isEmpty()) return@LaunchedEffect
+        if (pageTurnMode != ReaderPageTurnMode.VerticalScroll) return@LaunchedEffect
         repeat(40) {
             val tv = readerTextView.value
             if (tv != null && tv.layout != null) {
                 tv.post {
-                    scrollTextViewToProgress(tv, book?.readingProgress ?: 0f)
+                    scrollTextViewToProgress(tv, readingProgress)
                 }
                 return@LaunchedEffect
             }
@@ -186,32 +512,11 @@ fun ReaderScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            if (showTopBarEffective) {
-                TopAppBar(
-                    title = {
-                        Column {
-                            Text(
-                                text = book?.title ?: "阅读中",
-                                style = MaterialTheme.typography.titleMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            if (chapterTitle != null) {
-                                Text(
-                                    text = chapterTitle,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = { navController.navigateUp() }) {
-                            Icon(Icons.Default.ArrowBack, contentDescription = "返回")
-                        }
-                    }
+            if (!immersiveReading) {
+                ReaderTopAppBar(
+                    title = book?.title ?: "阅读中",
+                    chapterTitle = chapterTitle,
+                    onNavigateBack = { navController.navigateUp() }
                 )
             }
         }
@@ -225,49 +530,70 @@ fun ReaderScreen(
             when (val err = loadError) {
                 null -> {
                     if (content.isNotEmpty()) {
-                        MarkdownReaderView(
-                            content = content,
-                            theme = currentTheme,
-                            fontSize = fontSize,
-                            readerPaddingDp = readerPaddingDp,
-                            readerLineSpacingMultiplier = readerLineSpacingMultiplier,
-                            highlights = highlights,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(
-                                    bottom = if (immersiveReading && showTopBar) {
-                                        ReaderImmersiveBottomBarHeight
-                                    } else {
-                                        0.dp
-                                    }
-                                ),
-                            onTextSelected = { text ->
-                                selectedText = text
-                                showHighlightMenu = text.isNotEmpty()
-                            },
-                            onScroll = { progress ->
-                                viewModel.updateReadingProgress(progress)
-                            },
-                            onReadingVerticalScroll = { deltaPx ->
-                                if (immersiveReading && showTopBar) {
-                                    scrollAccumForHideChrome += deltaPx
-                                    if (scrollAccumForHideChrome >= hideChromeScrollThresholdPx) {
-                                        showTopBar = false
+                        val onReaderTextSelected: (String) -> Unit = { text ->
+                            selectedText = text
+                            showHighlightMenu = text.isNotEmpty()
+                        }
+                        val onReaderVerticalScroll: (Int) -> Unit = { deltaPx ->
+                            if (immersiveReading && showTopBar) {
+                                scrollAccumForHideChrome += deltaPx
+                                if (scrollAccumForHideChrome >= hideChromeScrollThresholdPx) {
+                                    showTopBar = false
+                                }
+                            }
+                        }
+                        val onReaderSwipeBookmark: () -> Unit = {
+                            scope.launch {
+                                val tv = readerTextView.value
+                                val preview = tv?.let { previewPlainTextFromTextViewTop(it) }
+                                when (viewModel.toggleBookmarkAtSwipe(previewForAdd = preview)) {
+                                    true -> snackbarHostState.showBriefSnackbar("已添加书签")
+                                    false -> snackbarHostState.showBriefSnackbar("已取消书签")
+                                    null -> { }
+                                }
+                            }
+                        }
+                        if (pageTurnMode == ReaderPageTurnMode.VerticalScroll) {
+                            MarkdownReaderView(
+                                content = content,
+                                theme = currentTheme,
+                                fontSize = fontSize,
+                                readerPaddingDp = readerPaddingDp,
+                                readerLineSpacingMultiplier = readerLineSpacingMultiplier,
+                                highlights = highlights,
+                                modifier = Modifier.fillMaxSize(),
+                                onTextSelected = onReaderTextSelected,
+                                onScroll = { progress ->
+                                    viewModel.updateReadingProgress(progress)
+                                },
+                                onReadingVerticalScroll = onReaderVerticalScroll,
+                                onViewReady = { tv -> readerTextView.value = tv },
+                                onSwipeRightBookmark = onReaderSwipeBookmark,
+                                onCenterTap = { showTopBar = !showTopBar }
+                            )
+                        } else {
+                            ReaderPagedMarkdownHost(
+                                pages = pageSpecs,
+                                pageTurnMode = pageTurnMode,
+                                pagerState = pagerState,
+                                theme = currentTheme,
+                                fontSize = fontSize,
+                                readerPaddingDp = readerPaddingDp,
+                                readerLineSpacingMultiplier = readerLineSpacingMultiplier,
+                                highlights = highlights,
+                                pageTextViews = pageTextViews,
+                                modifier = Modifier.fillMaxSize(),
+                                onTextSelected = onReaderTextSelected,
+                                onReadingVerticalScroll = onReaderVerticalScroll,
+                                onSwipeRightBookmark = onReaderSwipeBookmark,
+                                onCenterTap = { showTopBar = !showTopBar },
+                                onPageTextViewReady = { pageIdx, tv ->
+                                    if (pageIdx == pagerState.currentPage) {
+                                        readerTextView.value = tv
                                     }
                                 }
-                            },
-                            onViewReady = { tv -> readerTextView.value = tv },
-                            onSwipeRightBookmark = {
-                                scope.launch {
-                                    when (viewModel.toggleBookmarkAtSwipe()) {
-                                        true -> snackbarHostState.showSnackbar("已添加书签")
-                                        false -> snackbarHostState.showSnackbar("已取消书签")
-                                        null -> { }
-                                    }
-                                }
-                            },
-                            onCenterTap = { showTopBar = !showTopBar }
-                        )
+                            )
+                        }
                     } else {
                         Box(
                             modifier = Modifier.fillMaxSize(),
@@ -298,27 +624,84 @@ fun ReaderScreen(
                 }
             }
 
-            if (immersiveReading && !showTopBar) {
-                Text(
-                    text = "${(readingProgress * 100).toInt()}%",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = currentTheme.textColor.copy(alpha = 0.55f),
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 16.dp, bottom = 16.dp)
-                )
-            }
-
             if (immersiveReading && showTopBar) {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .zIndex(1f),
+                    shape = RectangleShape,
+                    tonalElevation = 3.dp,
+                    shadowElevation = 8.dp,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh
+                ) {
+                    ReaderTopAppBar(
+                        title = book?.title ?: "阅读中",
+                        chapterTitle = chapterTitle,
+                        onNavigateBack = { navController.navigateUp() },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
                 ReaderImmersiveBottomBar(
-                    modifier = Modifier.align(Alignment.BottomCenter),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .zIndex(1f),
                     onToc = { showToc = true },
                     onBookmarks = { showBookmarks = true },
                     onThemeBackground = { showReaderThemeSheet = true },
-                    onFont = { showReaderFontSheet = true }
+                    onFont = { showReaderFontSheet = true },
+                    onPageTurn = { showReaderPageTurnSheet = true }
                 )
             }
+
+            if (immersiveReading && !showTopBar) {
+                chapterTitle?.let { title ->
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .fillMaxWidth()
+                            .height(26.dp)
+                            .padding(horizontal = 16.dp)
+                            .padding(top = 10.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = currentTheme.textColor.copy(alpha = 0.55f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .height(26.dp)
+                        .wrapContentWidth(align = Alignment.End)
+                        .padding(end = 16.dp, bottom = 10.dp),
+                    contentAlignment = Alignment.CenterEnd
+                ) {
+                    Text(
+                        text = "${(readingProgress * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = currentTheme.textColor.copy(alpha = 0.55f)
+                    )
+                }
+            }
         }
+    }
+
+    if (showReaderPageTurnSheet) {
+        ReaderPageTurnSheet(
+            currentMode = pageTurnMode,
+            onModeSelected = { viewModel.setPageTurnMode(it) },
+            onDismiss = {
+                showReaderPageTurnSheet = false
+                if (immersiveReading) showTopBar = false
+            }
+        )
     }
 
     if (showReaderThemeSheet) {
@@ -355,11 +738,27 @@ fun ReaderScreen(
             onBookmarkClick = { position ->
                 val b = book
                 if (b != null && b.totalChars > 0) {
-                    val p = (position.toFloat() / b.totalChars).coerceIn(0f, 1f)
-                    val tv = readerTextView.value
-                    tv?.post {
-                        scrollTextViewToProgress(tv, p)
-                        viewModel.updateReadingProgress(p)
+                    val totalC = b.totalChars
+                    val p = (position.toFloat() / totalC).coerceIn(0f, 1f)
+                    val charPos = position.coerceIn(0, (content.length - 1).coerceAtLeast(0))
+                    if (pageTurnMode != ReaderPageTurnMode.VerticalScroll && pageSpecs.isNotEmpty()) {
+                        val page = pageIndexForGlobalChar(pageSpecs, charPos).coerceIn(0, pageSpecs.lastIndex)
+                        val localP = localProgressOnPage(pageSpecs, content.length, charPos, page)
+                        scope.launch {
+                            pagerState.scrollToPage(page)
+                            delay(64)
+                            val tvJump = readerTextView.value
+                            tvJump?.post {
+                                scrollTextViewToProgress(tvJump, localP)
+                                viewModel.updateReadingProgress(p)
+                            }
+                        }
+                    } else {
+                        val tv = readerTextView.value
+                        tv?.post {
+                            scrollTextViewToProgress(tv, p)
+                            viewModel.updateReadingProgress(p)
+                        }
                     }
                 }
                 showBookmarks = false
@@ -381,10 +780,25 @@ fun ReaderScreen(
             onEntryClick = { entry ->
                 val total = book?.totalChars?.takeIf { it > 0 } ?: content.length.coerceAtLeast(1)
                 val p = (entry.sourceOffset.toFloat() / total).coerceIn(0f, 1f)
-                val tv = readerTextView.value
-                tv?.post {
-                    scrollTextViewToProgress(tv, p)
-                    viewModel.updateReadingProgress(p)
+                val charPos = entry.sourceOffset.coerceIn(0, (content.length - 1).coerceAtLeast(0))
+                if (pageTurnMode != ReaderPageTurnMode.VerticalScroll && pageSpecs.isNotEmpty()) {
+                    val page = pageIndexForGlobalChar(pageSpecs, charPos).coerceIn(0, pageSpecs.lastIndex)
+                    val localP = localProgressOnPage(pageSpecs, content.length, charPos, page)
+                    scope.launch {
+                        pagerState.scrollToPage(page)
+                        delay(64)
+                        val tvJump = readerTextView.value
+                        tvJump?.post {
+                            scrollTextViewToProgress(tvJump, localP)
+                            viewModel.updateReadingProgress(p)
+                        }
+                    }
+                } else {
+                    val tv = readerTextView.value
+                    tv?.post {
+                        scrollTextViewToProgress(tv, p)
+                        viewModel.updateReadingProgress(p)
+                    }
                 }
                 showToc = false
                 if (immersiveReading) showTopBar = false
@@ -430,6 +844,7 @@ private fun MarkdownReaderView(
     onReadingVerticalScroll: (verticalScrollDeltaPx: Int) -> Unit,
     onViewReady: (TextView) -> Unit,
     onSwipeRightBookmark: () -> Unit,
+    onSwipeDownBookmark: (() -> Unit)? = null,
     onCenterTap: () -> Unit
 ) {
     val context = LocalContext.current
@@ -490,6 +905,7 @@ private fun MarkdownReaderView(
                     onScroll = onScroll,
                     onReadingVerticalScroll = onReadingVerticalScroll,
                     onSwipeRightBookmark = onSwipeRightBookmark,
+                    onSwipeDownBookmark = onSwipeDownBookmark,
                     onCenterTap = onCenterTap
                 )
                 post { onViewReady(this) }
@@ -522,6 +938,7 @@ private fun MarkdownReaderView(
                 onScroll = onScroll,
                 onReadingVerticalScroll = onReadingVerticalScroll,
                 onSwipeRightBookmark = onSwipeRightBookmark,
+                onSwipeDownBookmark = onSwipeDownBookmark,
                 onCenterTap = onCenterTap
             )
             textView.post { onViewReady(textView) }
@@ -532,7 +949,8 @@ private fun MarkdownReaderView(
 
 private class ReaderTouchState(
     var downX: Float = 0f,
-    var downY: Float = 0f
+    var downY: Float = 0f,
+    var scrollYOnDown: Int = 0
 )
 
 private fun bindReaderGesturesAndScroll(
@@ -542,6 +960,7 @@ private fun bindReaderGesturesAndScroll(
     onScroll: (Float) -> Unit,
     onReadingVerticalScroll: (verticalScrollDeltaPx: Int) -> Unit,
     onSwipeRightBookmark: () -> Unit,
+    onSwipeDownBookmark: (() -> Unit)? = null,
     onCenterTap: () -> Unit
 ) {
     textView.setOnScrollChangeListener { v, _, scrollY, _, oldScrollY ->
@@ -563,10 +982,12 @@ private fun bindReaderGesturesAndScroll(
     }
 
     textView.setOnTouchListener { v, e ->
+        val tv = v as? TextView
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 touchState.downX = e.x
                 touchState.downY = e.y
+                touchState.scrollYOnDown = tv?.scrollY ?: 0
             }
             MotionEvent.ACTION_UP -> {
                 val dx = e.x - touchState.downX
@@ -584,6 +1005,14 @@ private fun bindReaderGesturesAndScroll(
                     }
                 } else if (dx > 120f && dx > ady * 2f) {
                     onSwipeRightBookmark()
+                } else if (onSwipeDownBookmark != null &&
+                    tv != null &&
+                    dy > 120f &&
+                    dy > adx * 2f &&
+                    touchState.scrollYOnDown == 0 &&
+                    tv.scrollY == 0
+                ) {
+                    onSwipeDownBookmark.invoke()
                 }
             }
         }
@@ -598,6 +1027,24 @@ private fun scrollTextViewToProgress(tv: TextView, progress: Float) {
     val maxScroll = (layout.height - innerH).coerceAtLeast(0)
     val y = (maxScroll * progress.coerceIn(0f, 1f)).toInt()
     tv.scrollTo(0, y)
+}
+
+/** 取 TextView 当前视口顶部附近可见的纯文本，用作书签预览。 */
+private fun previewPlainTextFromTextViewTop(tv: TextView): String {
+    val layout = tv.layout ?: return ""
+    val text = tv.text ?: return ""
+    val len = text.length
+    if (len == 0) return ""
+    val padTop = tv.compoundPaddingTop
+    val y = (tv.scrollY + padTop).coerceAtLeast(0)
+    val line = layout.getLineForVertical(y).coerceIn(0, (layout.lineCount - 1).coerceAtLeast(0))
+    val start = layout.getLineStart(line).coerceIn(0, (len - 1).coerceAtLeast(0))
+    val end = (start + 160).coerceAtMost(len)
+    return text.substring(start, end)
+        .replace('\n', ' ')
+        .trim()
+        .ifEmpty { "书签" }
+        .take(100)
 }
 
 private fun createMarkwon(context: Context): Markwon {
@@ -981,34 +1428,44 @@ private fun BookmarkItem(
     }
 
     Box(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .matchParentSize()
-                .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f)),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically
+        Box(
+            modifier = Modifier.matchParentSize(),
+            contentAlignment = Alignment.CenterEnd
         ) {
-            IconButton(
-                onClick = {
-                    onDelete()
-                    offsetPx = 0f
-                },
+            Box(
                 modifier = Modifier
                     .width(72.dp)
                     .fillMaxHeight()
+                    .background(MaterialTheme.colorScheme.error),
+                contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "删除",
-                    tint = MaterialTheme.colorScheme.error
-                )
+                val err = MaterialTheme.colorScheme.error
+                val deleteIconTint = iconTintForDeleteStrip(err)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable {
+                            onDelete()
+                            offsetPx = 0f
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "删除",
+                        modifier = Modifier.size(28.dp),
+                        tint = deleteIconTint
+                    )
+                }
             }
         }
 
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .offset { IntOffset(offsetPx.roundToInt(), 0) }
+                // 背景必须在「与位移同一层」或位移在内层，否则会整块铺宽不随 offset 移动，盖住下层红色删除条（点击能删但看不见）
+                .graphicsLayer { translationX = offsetPx }
+                .background(MaterialTheme.colorScheme.surface)
                 .pointerInput(bookmark.id, deleteWidthPx) {
                     detectHorizontalDragGestures(
                         onHorizontalDrag = { change, dragAmount ->

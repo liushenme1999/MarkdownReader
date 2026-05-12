@@ -1,5 +1,6 @@
 package com.example.markdownreader.ui.screens.profile
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -17,7 +18,9 @@ import androidx.navigation.NavController
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(navController: NavController) {
+    val shelfBg = MaterialTheme.colorScheme.surface
     Scaffold(
+        containerColor = shelfBg,
         topBar = {
             TopAppBar(
                 title = {
@@ -25,13 +28,20 @@ fun ProfileScreen(navController: NavController) {
                         "我的",
                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                     )
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = shelfBg,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurface
+                )
             )
         }
     ) { paddingValues ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(shelfBg)
                 .padding(paddingValues)
         ) {
             Row(

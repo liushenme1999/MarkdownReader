@@ -11,10 +11,13 @@ import com.example.markdownreader.data.repository.BookRepository
 import com.example.markdownreader.data.repository.BookmarkRepository
 import com.example.markdownreader.data.repository.HighlightRepository
 import com.example.markdownreader.data.repository.ReadingProgressRepository
+import com.example.markdownreader.data.repository.ReaderSettingsRepository
+import com.example.markdownreader.model.ReaderPageTurnMode
 import com.example.markdownreader.ui.theme.ReadingTheme
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -30,7 +33,8 @@ class ReaderViewModel @Inject constructor(
     private val bookRepository: BookRepository,
     private val bookmarkRepository: BookmarkRepository,
     private val highlightRepository: HighlightRepository,
-    private val readingProgressRepository: ReadingProgressRepository
+    private val readingProgressRepository: ReadingProgressRepository,
+    private val readerSettingsRepository: ReaderSettingsRepository
 ) : ViewModel() {
 
     private val _book = MutableStateFlow<BookEntity?>(null)
@@ -55,6 +59,13 @@ class ReaderViewModel @Inject constructor(
     /** 行距倍数，对应 [android.widget.TextView.setLineSpacing] 的 multiplier。 */
     private val _readerLineSpacingMultiplier = MutableStateFlow(1.5f)
     val readerLineSpacingMultiplier: StateFlow<Float> = _readerLineSpacingMultiplier.asStateFlow()
+
+    val pageTurnMode: StateFlow<ReaderPageTurnMode> = readerSettingsRepository.pageTurnMode
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = ReaderPageTurnMode.VerticalScroll
+        )
 
     private val _loadError = MutableStateFlow<String?>(null)
     val loadError: StateFlow<String?> = _loadError.asStateFlow()
@@ -146,10 +157,10 @@ class ReaderViewModel @Inject constructor(
     }
 
     /**
-     * 右滑：当前阅读位置附近已有书签则删除，否则添加。
-     * @return true 表示新增，false 表示删除，null 表示未执行（无书籍或正文为空）
+     * 右滑 / 分页模式下拉：当前阅读位置附近已有书签则删除，否则添加。
+     * @param previewForAdd 添加时用于书签列表的预览文案；非空则优先使用（一般为屏幕顶部可见文字），否则按源码位置估算。
      */
-    suspend fun toggleBookmarkAtSwipe(): Boolean? {
+    suspend fun toggleBookmarkAtSwipe(previewForAdd: String? = null): Boolean? {
         val book = _book.value ?: return null
         val total = book.totalChars.coerceAtLeast(1)
         val raw = _content.value
@@ -163,13 +174,19 @@ class ReaderViewModel @Inject constructor(
             bookmarkRepository.deleteBookmark(near)
             false
         } else {
-            val from = (pos - 60).coerceAtLeast(0)
-            val to = (pos + 80).coerceAtMost(raw.length)
-            val preview = raw.substring(from, to)
-                .replace('\n', ' ')
-                .trim()
-                .ifEmpty { "书签" }
-                .take(100)
+            val preview = previewForAdd
+                ?.replace('\n', ' ')
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                ?: run {
+                    val from = (pos - 60).coerceAtLeast(0)
+                    val to = (pos + 80).coerceAtMost(raw.length)
+                    raw.substring(from, to)
+                        .replace('\n', ' ')
+                        .trim()
+                        .ifEmpty { "书签" }
+                        .take(100)
+                }
             bookmarkRepository.addBookmark(
                 BookmarkEntity(
                     bookId = book.id,
@@ -220,6 +237,12 @@ class ReaderViewModel @Inject constructor(
     fun setReaderLineSpacingMultiplier(mult: Float) {
         val snapped = (mult * 20f).roundToInt() / 20f
         _readerLineSpacingMultiplier.value = snapped.coerceIn(1f, 2.5f)
+    }
+
+    fun setPageTurnMode(mode: ReaderPageTurnMode) {
+        viewModelScope.launch {
+            readerSettingsRepository.setPageTurnMode(mode)
+        }
     }
 
     private fun loadFileContent(context: Context, filePath: String): String {

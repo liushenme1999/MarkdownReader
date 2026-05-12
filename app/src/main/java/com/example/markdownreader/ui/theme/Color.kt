@@ -2,6 +2,15 @@ package com.example.markdownreader.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
+/** 书架页浅灰背景（浅色模式） */
+val BookshelfPageBackground = Color(0xFFF2F2F4)
+
+/** 书架页背景（深色模式，略带灰） */
+val BookshelfPageBackgroundDark = Color(0xFF252528)
+
+/** 底部主导航栏纯白 */
+val MainNavigationBarBackground = Color(0xFFFFFFFF)
+
 // 默认主题
 val Purple80 = Color(0xFFD0BCFF)
 val PurpleGrey80 = Color(0xFFCCC2DC)
