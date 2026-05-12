@@ -17,5 +17,10 @@ data class BookEntity(
     val readingProgress: Float = 0f,
     val lastReadTime: Date? = null,
     val addTime: Date = Date(),
-    val isFavorite: Boolean = false
+    val isFavorite: Boolean = false,
+    /** 书架分组名称，空字符串表示未分组 */
+    val shelfGroup: String = "",
+    val isPinned: Boolean = false,
+    /** 置顶排序，越大越靠前 */
+    val pinOrder: Long = 0L
 )

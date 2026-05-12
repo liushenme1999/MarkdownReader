@@ -1,15 +1,18 @@
 package com.example.markdownreader.ui.screens.bookshelf
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.markdownreader.data.local.entity.BookEntity
 import com.example.markdownreader.data.repository.BookRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.util.Date
@@ -27,7 +30,15 @@ class BookshelfViewModel @Inject constructor(
     fun importMarkdownFile(context: Context, uri: Uri) {
         viewModelScope.launch {
             try {
-                val content = readFileContent(context, uri)
+                try {
+                    context.contentResolver.takePersistableUriPermission(
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (_: SecurityException) {
+                    // 部分来源不支持持久权限，仍尝试当前会话内读取
+                }
+                val content = withContext(Dispatchers.IO) { readFileContent(context, uri) }
                 val fileName = getFileName(context, uri) ?: "未命名书籍"
                 val title = fileName.removeSuffix(".md").removeSuffix(".markdown")
 
@@ -59,6 +70,36 @@ class BookshelfViewModel @Inject constructor(
     fun deleteBook(book: BookEntity) {
         viewModelScope.launch {
             bookRepository.deleteBook(book)
+        }
+    }
+
+    fun deleteBooks(ids: Set<Long>) {
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            bookRepository.deleteBooksByIds(ids)
+        }
+    }
+
+    fun togglePinForSelection(ids: Set<Long>) {
+        viewModelScope.launch {
+            if (ids.isEmpty()) return@launch
+            val idList = ids.toList()
+            val loaded = idList.mapNotNull { bookRepository.getBookById(it) }
+            if (loaded.isEmpty()) return@launch
+            val allPinned = loaded.all { it.isPinned }
+            if (allPinned) {
+                bookRepository.unpinBooksByIds(idList)
+            } else {
+                bookRepository.pinBooksByIds(idList, System.currentTimeMillis())
+            }
+        }
+    }
+
+    fun moveSelectedToGroup(ids: Set<Long>, groupName: String) {
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            val name = groupName.trim()
+            bookRepository.updateShelfGroupByIds(ids, name)
         }
     }
 

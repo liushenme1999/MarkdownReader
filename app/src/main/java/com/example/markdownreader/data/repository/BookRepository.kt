@@ -32,4 +32,24 @@ class BookRepository @Inject constructor(
     }
 
     suspend fun getBookCount(): Int = bookDao.getBookCount()
+
+    suspend fun deleteBooksByIds(ids: Collection<Long>) {
+        if (ids.isEmpty()) return
+        bookDao.deleteBooksByIds(ids.toList())
+    }
+
+    suspend fun pinBooksByIds(ids: Collection<Long>, pinOrder: Long) {
+        if (ids.isEmpty()) return
+        bookDao.pinBooksByIds(ids.toList(), pinOrder)
+    }
+
+    suspend fun unpinBooksByIds(ids: Collection<Long>) {
+        if (ids.isEmpty()) return
+        bookDao.unpinBooksByIds(ids.toList())
+    }
+
+    suspend fun updateShelfGroupByIds(ids: Collection<Long>, groupName: String) {
+        if (ids.isEmpty()) return
+        bookDao.updateShelfGroupByIds(ids.toList(), groupName)
+    }
 }

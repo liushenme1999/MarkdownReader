@@ -1,13 +1,13 @@
 package com.example.markdownreader.ui.screens.bookshelf
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -19,6 +19,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
@@ -35,7 +36,7 @@ import com.example.markdownreader.ui.theme.BookCoverColors
 import java.text.SimpleDateFormat
 import java.util.*
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun BookshelfScreen(
     navController: NavController,
@@ -43,63 +44,76 @@ fun BookshelfScreen(
 ) {
     val books by viewModel.books.collectAsState()
     val context = LocalContext.current
-    var showMenu by remember { mutableStateOf(false) }
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf(setOf<Long>()) }
+    var showRemoveConfirm by remember { mutableStateOf(false) }
+    var showGroupDialog by remember { mutableStateOf(false) }
+    var groupInput by remember { mutableStateOf("") }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let { viewModel.importMarkdownFile(context, it) }
     }
+
+    fun exitSelection() {
+        selectionMode = false
+        selectedIds = emptySet()
+    }
+
+    BackHandler(enabled = selectionMode) { exitSelection() }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Text(
-                        "我的书架",
+                        if (selectionMode) "已选 ${selectedIds.size} 本" else "我的书架",
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.Bold
                         )
                     )
                 },
-                actions = {
-                    IconButton(onClick = { showMenu = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "更多")
-                    }
-                    DropdownMenu(
-                        expanded = showMenu,
-                        onDismissRequest = { showMenu = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("阅读统计") },
-                            onClick = {
-                                showMenu = false
-                                navController.navigate("statistics")
-                            },
-                            leadingIcon = {
-                                Icon(Icons.Default.BarChart, contentDescription = null)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("笔记管理") },
-                            onClick = {
-                                showMenu = false
-                                navController.navigate("notes")
-                            },
-                            leadingIcon = {
-                                Icon(Icons.Default.EditNote, contentDescription = null)
-                            }
-                        )
+                navigationIcon = {
+                    if (selectionMode) {
+                        IconButton(onClick = { exitSelection() }) {
+                            Icon(Icons.Default.Close, contentDescription = "退出管理")
+                        }
                     }
                 }
             )
         },
-        floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = { filePickerLauncher.launch("text/markdown") },
-                icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                text = { Text("导入书籍") }
-            )
+        bottomBar = {
+            if (selectionMode && selectedIds.isNotEmpty()) {
+                Surface(tonalElevation = 3.dp) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp, horizontal = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        ManagementBarButton(
+                            icon = Icons.Default.DeleteOutline,
+                            label = "移出书架",
+                            onClick = { showRemoveConfirm = true }
+                        )
+                        ManagementBarButton(
+                            icon = Icons.Default.PushPin,
+                            label = "置顶",
+                            onClick = { viewModel.togglePinForSelection(selectedIds) }
+                        )
+                        ManagementBarButton(
+                            icon = Icons.Default.FolderSpecial,
+                            label = "分组",
+                            onClick = {
+                                groupInput = ""
+                                showGroupDialog = true
+                            }
+                        )
+                    }
+                }
+            }
         }
     ) { paddingValues ->
         Box(
@@ -109,31 +123,140 @@ fun BookshelfScreen(
         ) {
             if (books.isEmpty()) {
                 EmptyBookshelf(
-                    onImportClick = { filePickerLauncher.launch("text/markdown") }
+                    onImportClick = {
+                        filePickerLauncher.launch(
+                            arrayOf("text/markdown", "text/plain", "text/x-markdown")
+                        )
+                    }
                 )
             } else {
+                val gridCount = if (selectionMode) books.size else books.size + 1
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
                     contentPadding = PaddingValues(16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    items(books, key = { it.id }) { book ->
-                        BookCard(
-                            book = book,
-                            onClick = {
-                                navController.navigate("reader/${book.id}")
-                            },
-                            onFavoriteClick = {
-                                viewModel.toggleFavorite(book)
-                            },
-                            onDeleteClick = {
-                                viewModel.deleteBook(book)
-                            }
-                        )
+                    items(
+                        count = gridCount,
+                        key = { index ->
+                            if (index < books.size) books[index].id else "import_card"
+                        }
+                    ) { index ->
+                        if (index < books.size) {
+                            val book = books[index]
+                            val selected = book.id in selectedIds
+                            BookCard(
+                                book = book,
+                                selected = selected,
+                                selectionMode = selectionMode,
+                                onClick = {
+                                    if (selectionMode) {
+                                        selectedIds =
+                                            if (selected) selectedIds - book.id else selectedIds + book.id
+                                    } else {
+                                        navController.navigate("reader/${book.id}")
+                                    }
+                                },
+                                onLongClick = {
+                                    if (!selectionMode) {
+                                        selectionMode = true
+                                        selectedIds = setOf(book.id)
+                                    } else {
+                                        selectedIds =
+                                            if (book.id in selectedIds) selectedIds - book.id
+                                            else selectedIds + book.id
+                                    }
+                                }
+                            )
+                        } else {
+                            ImportBookCard(
+                                onClick = {
+                                    filePickerLauncher.launch(
+                                        arrayOf(
+                                            "text/markdown",
+                                            "text/plain",
+                                            "text/x-markdown"
+                                        )
+                                    )
+                                }
+                            )
+                        }
                     }
                 }
             }
+        }
+    }
+
+    if (showRemoveConfirm) {
+        AlertDialog(
+            onDismissRequest = { showRemoveConfirm = false },
+            title = { Text("移出书架") },
+            text = { Text("确定将选中的 ${selectedIds.size} 本书从书架移除吗？") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteBooks(selectedIds)
+                        showRemoveConfirm = false
+                        exitSelection()
+                    }
+                ) {
+                    Text("移除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRemoveConfirm = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    if (showGroupDialog) {
+        AlertDialog(
+            onDismissRequest = { showGroupDialog = false },
+            title = { Text("设置分组") },
+            text = {
+                OutlinedTextField(
+                    value = groupInput,
+                    onValueChange = { groupInput = it },
+                    label = { Text("分组名称") },
+                    supportingText = { Text("留空则取消分组") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.moveSelectedToGroup(selectedIds, groupInput)
+                        showGroupDialog = false
+                        exitSelection()
+                    }
+                ) {
+                    Text("确定")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showGroupDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun ManagementBarButton(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
+    TextButton(onClick = onClick) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp))
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(label, style = MaterialTheme.typography.labelSmall)
         }
     }
 }
@@ -169,32 +292,104 @@ private fun EmptyBookshelf(
             textAlign = TextAlign.Center
         )
         Spacer(modifier = Modifier.height(24.dp))
-        Button(onClick = onImportClick) {
-            Icon(Icons.Default.Add, contentDescription = null)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("导入书籍")
-        }
+        ImportBookCard(onClick = onImportClick)
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BookCard(
-    book: BookEntity,
-    onClick: () -> Unit,
-    onFavoriteClick: () -> Unit,
-    onDeleteClick: () -> Unit
-) {
-    var showDeleteDialog by remember { mutableStateOf(false) }
-    val coverColor = BookCoverColors[book.coverColor % BookCoverColors.size]
-    val dateFormat = SimpleDateFormat("MM-dd", Locale.getDefault())
-
+private fun ImportBookCard(onClick: () -> Unit) {
+    val outline = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)
+    val dashSurface = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
     Column(
         modifier = Modifier
             .width(100.dp)
             .clickable(onClick = onClick)
     ) {
-        // 书籍封面
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(0.75f)
+                .shadow(2.dp, RoundedCornerShape(8.dp))
+                .clip(RoundedCornerShape(8.dp))
+                .border(1.dp, outline, RoundedCornerShape(8.dp))
+                .background(dashSurface),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier.padding(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = null,
+                    modifier = Modifier.size(28.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "导入",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 11.sp
+                    ),
+                    maxLines = 1
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "导入书籍",
+            style = MaterialTheme.typography.bodySmall.copy(
+                fontWeight = FontWeight.Medium
+            ),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = "Markdown / 文本",
+            style = MaterialTheme.typography.labelSmall.copy(
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            ),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun BookCard(
+    book: BookEntity,
+    selected: Boolean,
+    selectionMode: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
+    val coverColor = BookCoverColors[book.coverColor % BookCoverColors.size]
+    val dateFormat = SimpleDateFormat("MM-dd", Locale.getDefault())
+    val subtitle = when {
+        book.shelfGroup.isNotBlank() -> book.shelfGroup
+        book.author != null -> book.author
+        book.lastReadTime != null -> dateFormat.format(book.lastReadTime)
+        else -> "未读"
+    }
+    val borderColor = MaterialTheme.colorScheme.primary
+    val shape = RoundedCornerShape(10.dp)
+
+    Column(
+        modifier = Modifier
+            .width(100.dp)
+            .then(
+                if (selected) Modifier.border(2.dp, borderColor, shape) else Modifier
+            )
+            .clip(shape)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
+    ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -204,7 +399,6 @@ private fun BookCard(
                 .background(coverColor)
                 .padding(8.dp)
         ) {
-            // 书名
             Text(
                 text = book.title,
                 style = MaterialTheme.typography.bodySmall.copy(
@@ -217,7 +411,6 @@ private fun BookCard(
                 modifier = Modifier.align(Alignment.TopStart)
             )
 
-            // 阅读进度
             if (book.readingProgress > 0) {
                 Column(
                     modifier = Modifier.align(Alignment.BottomStart)
@@ -241,7 +434,6 @@ private fun BookCard(
                 }
             }
 
-            // 收藏标记
             if (book.isFavorite) {
                 Icon(
                     imageVector = Icons.Default.Favorite,
@@ -252,11 +444,40 @@ private fun BookCard(
                         .size(16.dp)
                 )
             }
+
+            if (book.isPinned && !selectionMode) {
+                Icon(
+                    imageVector = Icons.Default.PushPin,
+                    contentDescription = "已置顶",
+                    tint = Color.White.copy(alpha = 0.95f),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(2.dp)
+                        .size(14.dp)
+                )
+            }
+
+            if (selectionMode && selected) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .size(22.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // 书名
         Text(
             text = book.title,
             style = MaterialTheme.typography.bodySmall.copy(
@@ -266,38 +487,13 @@ private fun BookCard(
             overflow = TextOverflow.Ellipsis
         )
 
-        // 作者或最后阅读时间
         Text(
-            text = book.author ?: book.lastReadTime?.let { dateFormat.format(it) } ?: "未读",
+            text = subtitle,
             style = MaterialTheme.typography.labelSmall.copy(
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
             ),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
-        )
-    }
-
-    // 删除确认对话框
-    if (showDeleteDialog) {
-        AlertDialog(
-            onDismissRequest = { showDeleteDialog = false },
-            title = { Text("删除书籍") },
-            text = { Text("确定要从书架删除《${book.title}》吗？") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onDeleteClick()
-                        showDeleteDialog = false
-                    }
-                ) {
-                    Text("删除", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteDialog = false }) {
-                    Text("取消")
-                }
-            }
         )
     }
 }

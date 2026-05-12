@@ -21,7 +21,7 @@ import com.example.markdownreader.data.local.entity.ReadingProgressEntity
         HighlightEntity::class,
         ReadingProgressEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 @TypeConverters(Converters::class)

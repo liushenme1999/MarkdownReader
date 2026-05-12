@@ -13,12 +13,17 @@ import com.example.markdownreader.data.repository.HighlightRepository
 import com.example.markdownreader.data.repository.ReadingProgressRepository
 import com.example.markdownreader.ui.theme.ReadingTheme
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.util.Date
 import javax.inject.Inject
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @HiltViewModel
 class ReaderViewModel @Inject constructor(
@@ -43,37 +48,68 @@ class ReaderViewModel @Inject constructor(
     private val _fontSize = MutableStateFlow(16)
     val fontSize: StateFlow<Int> = _fontSize.asStateFlow()
 
+    /** 正文四周边距（dp），用于 TextView padding。 */
+    private val _readerPaddingDp = MutableStateFlow(32)
+    val readerPaddingDp: StateFlow<Int> = _readerPaddingDp.asStateFlow()
+
+    /** 行距倍数，对应 [android.widget.TextView.setLineSpacing] 的 multiplier。 */
+    private val _readerLineSpacingMultiplier = MutableStateFlow(1.5f)
+    val readerLineSpacingMultiplier: StateFlow<Float> = _readerLineSpacingMultiplier.asStateFlow()
+
+    private val _loadError = MutableStateFlow<String?>(null)
+    val loadError: StateFlow<String?> = _loadError.asStateFlow()
+
     val bookmarks = MutableStateFlow<List<BookmarkEntity>>(emptyList())
     val highlights = MutableStateFlow<List<HighlightEntity>>(emptyList())
 
     private var readingStartTime: Long = 0
     private var startPosition: Int = 0
 
+    private var loadBookJob: Job? = null
+    private var bookmarkCollectJob: Job? = null
+    private var highlightCollectJob: Job? = null
+
     fun loadBook(context: Context, bookId: Long) {
-        viewModelScope.launch {
-            // 加载书籍信息
+        loadBookJob?.cancel()
+        bookmarkCollectJob?.cancel()
+        highlightCollectJob?.cancel()
+
+        _loadError.value = null
+        bookmarks.value = emptyList()
+        highlights.value = emptyList()
+
+        loadBookJob = viewModelScope.launch {
             val bookEntity = bookRepository.getBookById(bookId)
             _book.value = bookEntity
 
-            bookEntity?.let {
-                // 加载内容
-                val content = loadFileContent(context, it.filePath)
-                _content.value = content
+            if (bookEntity == null) {
+                _content.value = ""
+                _loadError.value = "找不到该书，可能已被删除。"
+                return@launch
+            }
 
-                // 恢复阅读进度
-                _readingProgress.value = it.readingProgress
+            val text = withContext(Dispatchers.IO) {
+                loadFileContent(context, bookEntity.filePath)
+            }
+            _content.value = text
+            _readingProgress.value = bookEntity.readingProgress
 
-                // 加载书签和高亮
+            if (text.isEmpty()) {
+                _loadError.value =
+                    "无法读取正文（文件权限失效或路径无效）。请返回书架删除该书后，使用「导入」重新选择文件。"
+            }
+
+            readingStartTime = System.currentTimeMillis()
+            startPosition = bookEntity.currentPosition
+
+            bookmarkCollectJob = viewModelScope.launch {
                 bookmarkRepository.getBookmarksByBookId(bookId)
                     .collect { bookmarks.value = it }
             }
-
-            highlightRepository.getHighlightsByBookId(bookId)
-                .collect { highlights.value = it }
-
-            // 开始计时
-            readingStartTime = System.currentTimeMillis()
-            startPosition = bookEntity?.currentPosition ?: 0
+            highlightCollectJob = viewModelScope.launch {
+                highlightRepository.getHighlightsByBookId(bookId)
+                    .collect { highlights.value = it }
+            }
         }
     }
 
@@ -109,6 +145,44 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 右滑：当前阅读位置附近已有书签则删除，否则添加。
+     * @return true 表示新增，false 表示删除，null 表示未执行（无书籍或正文为空）
+     */
+    suspend fun toggleBookmarkAtSwipe(): Boolean? {
+        val book = _book.value ?: return null
+        val total = book.totalChars.coerceAtLeast(1)
+        val raw = _content.value
+        if (raw.isEmpty()) return null
+
+        val pos = (readingProgress.value * total).toInt().coerceIn(0, total)
+        val window = (total / 40).coerceIn(300, 1500)
+        val near = bookmarks.value.find { abs(it.position - pos) <= window }
+
+        return if (near != null) {
+            bookmarkRepository.deleteBookmark(near)
+            false
+        } else {
+            val from = (pos - 60).coerceAtLeast(0)
+            val to = (pos + 80).coerceAtMost(raw.length)
+            val preview = raw.substring(from, to)
+                .replace('\n', ' ')
+                .trim()
+                .ifEmpty { "书签" }
+                .take(100)
+            bookmarkRepository.addBookmark(
+                BookmarkEntity(
+                    bookId = book.id,
+                    position = pos,
+                    previewText = preview,
+                    note = null,
+                    createTime = Date()
+                )
+            )
+            true
+        }
+    }
+
     fun addHighlight(selectedText: String, color: androidx.compose.ui.graphics.Color) {
         viewModelScope.launch {
             _book.value?.let { book ->
@@ -136,7 +210,16 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun setFontSize(size: Int) {
-        _fontSize.value = size
+        _fontSize.value = size.coerceIn(10, 40)
+    }
+
+    fun setReaderPaddingDp(dp: Int) {
+        _readerPaddingDp.value = dp.coerceIn(8, 56)
+    }
+
+    fun setReaderLineSpacingMultiplier(mult: Float) {
+        val snapped = (mult * 20f).roundToInt() / 20f
+        _readerLineSpacingMultiplier.value = snapped.coerceIn(1f, 2.5f)
     }
 
     private fun loadFileContent(context: Context, filePath: String): String {
