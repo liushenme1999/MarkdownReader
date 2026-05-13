@@ -12,6 +12,9 @@ import com.example.markdownreader.data.repository.BookmarkRepository
 import com.example.markdownreader.data.repository.HighlightRepository
 import com.example.markdownreader.data.repository.ReadingProgressRepository
 import com.example.markdownreader.data.repository.ReaderSettingsRepository
+import com.example.markdownreader.importing.BookContentLoader
+import com.example.markdownreader.importing.ImportedBookFormat
+import com.example.markdownreader.importing.UrlBookDownloader
 import com.example.markdownreader.model.ReaderPageTurnMode
 import com.example.markdownreader.ui.theme.ReadingTheme
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -21,8 +24,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.util.Date
 import javax.inject.Inject
 import kotlin.math.abs
@@ -117,7 +118,7 @@ class ReaderViewModel @Inject constructor(
             }
 
             val text = withContext(Dispatchers.IO) {
-                loadFileContent(context, bookEntity.filePath)
+                loadFileContent(context, bookEntity)
             }
             _content.value = text
             _readingProgress.value = bookEntity.readingProgress
@@ -270,15 +271,24 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    private fun loadFileContent(context: Context, filePath: String): String {
+    private fun loadFileContent(context: Context, book: BookEntity): String {
+        val path = book.filePath
+        val format = ImportedBookFormat.fromStored(book.importFormat)
         return try {
-            val uri = Uri.parse(filePath)
-            context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                BufferedReader(InputStreamReader(inputStream)).use { reader ->
-                    reader.readText()
-                }
-            } ?: ""
-        } catch (e: Exception) {
+            if (path.startsWith("http://", ignoreCase = true) ||
+                path.startsWith("https://", ignoreCase = true)
+            ) {
+                val result = UrlBookDownloader.download(path)
+                BookContentLoader.loadFromUrlBytes(
+                    result.bytes,
+                    format,
+                    result.charsetFromHeader
+                )
+            } else {
+                val uri = Uri.parse(path)
+                BookContentLoader.loadFromUri(context, uri, format)
+            }
+        } catch (_: Exception) {
             ""
         }
     }

@@ -34,6 +34,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
@@ -44,6 +46,21 @@ import com.example.markdownreader.ui.theme.BookshelfPageBackgroundDark
 import com.example.markdownreader.ui.theme.MainNavigationBarBackground
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlinx.coroutines.flow.collectLatest
+
+private val BookshelfImportMimeTypes = arrayOf(
+    "text/markdown",
+    "text/x-markdown",
+    "text/plain",
+    "application/epub+zip",
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/msword",
+    "application/x-mobipocket-ebook",
+    "application/vnd.amazon.mobi8-ebook",
+    "application/vnd.amazon.ebook",
+    "application/octet-stream"
+)
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -59,11 +76,25 @@ fun BookshelfScreen(
     var showRemoveConfirm by remember { mutableStateOf(false) }
     var showGroupDialog by remember { mutableStateOf(false) }
     var groupInput by remember { mutableStateOf("") }
+    var showImportMethodDialog by remember { mutableStateOf(false) }
+    var showUrlImportDialog by remember { mutableStateOf(false) }
+    var urlImportText by remember { mutableStateOf("") }
+    val snackbarHostState = remember { SnackbarHostState() }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
-        uri?.let { viewModel.importMarkdownFile(context, it) }
+        uri?.let { viewModel.importFromLocalUri(context, it) }
+    }
+
+    fun openImportChooser() {
+        showImportMethodDialog = true
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.toastMessages.collectLatest { msg ->
+            snackbarHostState.showSnackbar(msg)
+        }
     }
 
     fun exitSelection() {
@@ -106,6 +137,7 @@ fun BookshelfScreen(
 
     Scaffold(
         containerColor = shelfBg,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -140,13 +172,7 @@ fun BookshelfScreen(
                 .padding(paddingValues)
         ) {
             if (books.isEmpty()) {
-                EmptyBookshelf(
-                    onImportClick = {
-                        filePickerLauncher.launch(
-                            arrayOf("text/markdown", "text/plain", "text/x-markdown")
-                        )
-                    }
-                )
+                EmptyBookshelf(onImportClick = { openImportChooser() })
             } else {
                 val gridCount = if (selectionMode) books.size else books.size + 1
                 LazyVerticalGrid(
@@ -193,17 +219,7 @@ fun BookshelfScreen(
                                 }
                             )
                         } else {
-                            ImportBookCard(
-                                onClick = {
-                                    filePickerLauncher.launch(
-                                        arrayOf(
-                                            "text/markdown",
-                                            "text/plain",
-                                            "text/x-markdown"
-                                        )
-                                    )
-                                }
-                            )
+                            ImportBookCard(onClick = { openImportChooser() })
                         }
                     }
                 }
@@ -305,6 +321,90 @@ fun BookshelfScreen(
             }
         )
     }
+
+    if (showImportMethodDialog) {
+        AlertDialog(
+            onDismissRequest = { showImportMethodDialog = false },
+            title = { Text("导入书籍") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        "支持 Markdown、TXT、EPUB、PDF、DOC、DOCX、MOBI、AZW3",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    TextButton(
+                        onClick = {
+                            showImportMethodDialog = false
+                            filePickerLauncher.launch(BookshelfImportMimeTypes)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("从本地导入", modifier = Modifier.fillMaxWidth())
+                    }
+                    TextButton(
+                        onClick = {
+                            showImportMethodDialog = false
+                            showUrlImportDialog = true
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("从网址导入", modifier = Modifier.fillMaxWidth())
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showImportMethodDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    if (showUrlImportDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showUrlImportDialog = false
+                urlImportText = ""
+            },
+            title = { Text("从网址导入") },
+            text = {
+                OutlinedTextField(
+                    value = urlImportText,
+                    onValueChange = { urlImportText = it },
+                    label = { Text("文件下载地址（https://…）") },
+                    singleLine = false,
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val url = urlImportText.trim()
+                        if (url.isNotEmpty()) {
+                            viewModel.importFromUrl(url)
+                        }
+                        showUrlImportDialog = false
+                        urlImportText = ""
+                    }
+                ) {
+                    Text("导入")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showUrlImportDialog = false
+                        urlImportText = ""
+                    }
+                ) {
+                    Text("取消")
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -351,7 +451,7 @@ private fun EmptyBookshelf(
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "点击导入你的第一本 Markdown 书籍",
+            text = "支持 Markdown、TXT、EPUB 等多种格式，点击下方导入",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
             textAlign = TextAlign.Center

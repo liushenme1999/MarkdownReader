@@ -7,14 +7,17 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.markdownreader.data.local.entity.BookEntity
 import com.example.markdownreader.data.repository.BookRepository
+import com.example.markdownreader.importing.BookContentLoader
+import com.example.markdownreader.importing.ImportedBookFormat
+import com.example.markdownreader.importing.UrlBookDownloader
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.util.Date
 import javax.inject.Inject
 import kotlin.random.Random
@@ -27,7 +30,10 @@ class BookshelfViewModel @Inject constructor(
     val books = bookRepository.getAllBooks()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    fun importMarkdownFile(context: Context, uri: Uri) {
+    private val toastChannel = Channel<String>(Channel.BUFFERED)
+    val toastMessages = toastChannel.receiveAsFlow()
+
+    fun importFromLocalUri(context: Context, uri: Uri) {
         viewModelScope.launch {
             try {
                 try {
@@ -38,27 +44,112 @@ class BookshelfViewModel @Inject constructor(
                 } catch (_: SecurityException) {
                     // 部分来源不支持持久权限，仍尝试当前会话内读取
                 }
-                val content = withContext(Dispatchers.IO) { readFileContent(context, uri) }
                 val fileName = getFileName(context, uri) ?: "未命名书籍"
-                val title = fileName.removeSuffix(".md").removeSuffix(".markdown")
-
-                // 简单提取作者（假设文件中有作者信息）
-                val author = extractAuthor(content)
-
-                val book = BookEntity(
-                    title = title,
-                    author = author,
+                val mime = context.contentResolver.getType(uri)
+                val format = detectFormat(fileName, mime)
+                val content = withContext(Dispatchers.IO) {
+                    BookContentLoader.loadFromUri(context, uri, format)
+                }
+                if (content.isBlank() && format.hasBuiltInTextExtract) {
+                    toastChannel.trySend("未能解析出正文，请确认文件未损坏。")
+                }
+                persistImportedBook(
+                    title = stripKnownExtension(fileName),
+                    content = content,
                     filePath = uri.toString(),
-                    coverColor = Random.nextInt(BookCoverColors.size),
-                    totalChars = content.length,
-                    addTime = Date()
+                    format = format
                 )
-
-                bookRepository.addBook(book)
             } catch (e: Exception) {
                 e.printStackTrace()
+                toastChannel.trySend("导入失败：${e.message ?: "未知错误"}")
             }
         }
+    }
+
+    fun importFromUrl(urlRaw: String) {
+        val trimmed = urlRaw.trim()
+        if (trimmed.isEmpty()) {
+            toastChannel.trySend("请输入有效的网址。")
+            return
+        }
+        val url = if (trimmed.startsWith("http://", true) || trimmed.startsWith("https://", true)) {
+            trimmed
+        } else {
+            "https://$trimmed"
+        }
+        viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) { UrlBookDownloader.download(url) }
+                val name = result.suggestedFileName ?: url.substringAfterLast('/').substringBefore('?')
+                val format = detectFormat(name, result.contentType)
+                val content = withContext(Dispatchers.IO) {
+                    BookContentLoader.loadFromUrlBytes(
+                        result.bytes,
+                        format,
+                        result.charsetFromHeader
+                    )
+                }
+                if (content.isBlank() && format.hasBuiltInTextExtract) {
+                    toastChannel.trySend("下载成功但未解析出正文。")
+                }
+                persistImportedBook(
+                    title = stripKnownExtension(name.ifBlank { "网络书籍" }),
+                    content = content,
+                    filePath = url,
+                    format = format
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+                toastChannel.trySend("从网址导入失败：${e.message ?: "网络错误"}")
+            }
+        }
+    }
+
+    private suspend fun persistImportedBook(
+        title: String,
+        content: String,
+        filePath: String,
+        format: ImportedBookFormat
+    ) {
+        val author = extractAuthor(content)
+        val book = BookEntity(
+            title = title.ifBlank { "未命名书籍" },
+            author = author,
+            filePath = filePath,
+            importFormat = format.storedKey,
+            coverColor = Random.nextInt(BookCoverColors.size),
+            totalChars = content.length,
+            addTime = Date()
+        )
+        bookRepository.addBook(book)
+        toastChannel.trySend("已导入「${book.title}」")
+    }
+
+    private fun detectFormat(fileName: String?, mime: String?): ImportedBookFormat {
+        val ext = fileName?.substringAfterLast('.', "")?.trim()?.lowercase().orEmpty()
+        val knownExt = ext in setOf(
+            "md", "markdown", "mdown", "mkd",
+            "txt", "text", "log",
+            "epub", "docx", "pdf", "doc", "mobi", "prc", "azw3", "azw"
+        )
+        return if (knownExt) ImportedBookFormat.fromFileName(fileName)
+        else ImportedBookFormat.fromMimeType(mime)
+    }
+
+    private fun stripKnownExtension(fileName: String): String {
+        var n = fileName.trim()
+        val suffixes = listOf(
+            ".markdown", ".mdown", ".mkd", ".md",
+            ".txt", ".text", ".log",
+            ".epub", ".docx", ".pdf", ".doc", ".mobi", ".prc", ".azw3", ".azw"
+        )
+        for (s in suffixes) {
+            if (n.endsWith(s, ignoreCase = true)) {
+                n = n.dropLast(s.length)
+                break
+            }
+        }
+        return n.ifBlank { fileName }
     }
 
     fun toggleFavorite(book: BookEntity) {
@@ -103,14 +194,6 @@ class BookshelfViewModel @Inject constructor(
         }
     }
 
-    private fun readFileContent(context: Context, uri: Uri): String {
-        return context.contentResolver.openInputStream(uri)?.use { inputStream ->
-            BufferedReader(InputStreamReader(inputStream)).use { reader ->
-                reader.readText()
-            }
-        } ?: ""
-    }
-
     private fun getFileName(context: Context, uri: Uri): String? {
         var result: String? = null
         if (uri.scheme == "content") {
@@ -134,7 +217,6 @@ class BookshelfViewModel @Inject constructor(
     }
 
     private fun extractAuthor(content: String): String? {
-        // 尝试从 YAML front matter 或内容中提取作者
         val authorRegex = Regex("^[Aa]uthor:\\s*(.+)$", RegexOption.MULTILINE)
         return authorRegex.find(content)?.groupValues?.get(1)?.trim()
     }

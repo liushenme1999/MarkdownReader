@@ -3,6 +3,7 @@ package com.example.markdownreader.ui.screens.reader
 import android.app.Activity
 import android.content.Context
 import android.text.Spannable
+import android.text.SpannableString
 import android.text.style.BackgroundColorSpan
 import android.view.ActionMode
 import android.view.Menu
@@ -55,10 +56,13 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.core.graphics.ColorUtils
+import androidx.core.text.PrecomputedTextCompat
 import androidx.core.view.WindowCompat
+import androidx.core.widget.TextViewCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.example.markdownreader.data.local.entity.HighlightEntity
+import com.example.markdownreader.importing.ImportedBookFormat
 import com.example.markdownreader.model.ReaderPageTurnMode
 import com.example.markdownreader.ui.theme.ReadingTheme
 import io.noties.markwon.Markwon
@@ -294,6 +298,7 @@ private fun ReaderPagedMarkdownHost(
     readerLineSpacingMultiplier: Float,
     highlights: List<HighlightEntity>,
     pageTextViews: MutableMap<Int, TextView>,
+    renderPlainText: Boolean,
     modifier: Modifier = Modifier,
     onTextSelected: (String) -> Unit,
     onReadingVerticalScroll: (Int) -> Unit,
@@ -346,6 +351,7 @@ private fun ReaderPagedMarkdownHost(
         Box(modifier = pageModifier) {
             MarkdownReaderView(
                 content = slice,
+                renderPlainText = renderPlainText,
                 theme = theme,
                 fontSize = fontSize,
                 readerPaddingDp = readerPaddingDp,
@@ -447,6 +453,10 @@ fun ReaderScreen(
     val pageTurnMode by viewModel.pageTurnMode.collectAsState()
     val configuration = LocalConfiguration.current
 
+    val renderPlainText = book?.let { b ->
+        ImportedBookFormat.fromStored(b.importFormat) == ImportedBookFormat.TXT
+    } == true
+
     var showReaderThemeSheet by remember { mutableStateOf(false) }
     var showReaderFontSheet by remember { mutableStateOf(false) }
     var showBookmarks by remember { mutableStateOf(false) }
@@ -461,7 +471,9 @@ fun ReaderScreen(
 
     val immersiveReading = content.isNotEmpty() && loadError == null
 
-    val tocEntries = remember(content) { parseMarkdownToc(content) }
+    val tocEntries = remember(content, renderPlainText) {
+        if (renderPlainText) parsePlainTextToc(content) else parseMarkdownToc(content)
+    }
     val totalChars = book?.totalChars?.takeIf { it > 0 } ?: content.length.coerceAtLeast(1)
     val chapterTitle = remember(tocEntries, readingProgress, totalChars) {
         currentChapterTitleForProgress(tocEntries, readingProgress, totalChars)
@@ -615,6 +627,7 @@ fun ReaderScreen(
                         if (pageTurnMode == ReaderPageTurnMode.VerticalScroll) {
                             MarkdownReaderView(
                                 content = content,
+                                renderPlainText = renderPlainText,
                                 theme = currentTheme,
                                 fontSize = fontSize,
                                 readerPaddingDp = readerPaddingDp,
@@ -641,6 +654,7 @@ fun ReaderScreen(
                                 readerLineSpacingMultiplier = readerLineSpacingMultiplier,
                                 highlights = highlights,
                                 pageTextViews = pageTextViews,
+                                renderPlainText = renderPlainText,
                                 modifier = Modifier.fillMaxSize(),
                                 onTextSelected = onReaderTextSelected,
                                 onReadingVerticalScroll = onReaderVerticalScroll,
@@ -839,6 +853,7 @@ fun ReaderScreen(
     if (showToc) {
         TocSheet(
             entries = tocEntries,
+            plainTextToc = renderPlainText,
             onEntryClick = { entry ->
                 val total = book?.totalChars?.takeIf { it > 0 } ?: content.length.coerceAtLeast(1)
                 val p = (entry.sourceOffset.toFloat() / total).coerceIn(0f, 1f)
@@ -892,9 +907,50 @@ fun ReaderScreen(
     }
 }
 
+/** 长纯文本 PrecomputedText 在后台算布局，减轻主线程测量（MIUI 上易触发 ANR 日志） */
+private val readerPlainTextPrecomputeExecutor =
+    java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "reader-plain-precompute").apply { isDaemon = true }
+    }
+
+private const val PLAIN_TEXT_PRECOMPUTE_THRESHOLD = 6000
+
+private fun applyReaderTextContent(
+    textView: TextView,
+    content: String,
+    renderPlainText: Boolean,
+    renderSig: String,
+    markwon: Markwon,
+    highlights: List<HighlightEntity>,
+    highlightColorArgb: Int
+) {
+    textView.setTag(TAG_READER_RENDER_SIG, renderSig)
+    if (!renderPlainText) {
+        markwon.setMarkdown(textView, content)
+        applyHighlightsToRenderedText(textView, highlights, highlightColorArgb)
+        return
+    }
+    if (content.length <= PLAIN_TEXT_PRECOMPUTE_THRESHOLD) {
+        val sp = SpannableString(content)
+        textView.setText(sp, TextView.BufferType.SPANNABLE)
+        applyHighlightsToRenderedText(textView, highlights, highlightColorArgb)
+        return
+    }
+    val params = TextViewCompat.getTextMetricsParams(textView)
+    readerPlainTextPrecomputeExecutor.execute {
+        val pre = PrecomputedTextCompat.create(content, params)
+        textView.post {
+            if (textView.getTag(TAG_READER_RENDER_SIG) != renderSig) return@post
+            TextViewCompat.setPrecomputedText(textView, pre)
+            applyHighlightsToRenderedText(textView, highlights, highlightColorArgb)
+        }
+    }
+}
+
 @Composable
 private fun MarkdownReaderView(
     content: String,
+    renderPlainText: Boolean,
     theme: ReadingTheme,
     fontSize: Int,
     readerPaddingDp: Int,
@@ -926,8 +982,18 @@ private fun MarkdownReaderView(
                 setPadding(padPx, padPx, padPx, padPx)
                 setLineSpacing(0f, readerLineSpacingMultiplier)
 
-                markwon.setMarkdown(this, content)
-                applyHighlightsToRenderedText(this, highlights, theme.highlightColor.toArgb())
+                val hlKey0 = highlights.joinToString("|") { "${it.id}_${it.startPosition}_${it.endPosition}" }
+                val sig0 =
+                    "${renderPlainText}_${content.length}_${content.hashCode()}_${theme::class.java.name}_${fontSize}_$hlKey0"
+                applyReaderTextContent(
+                    textView = this,
+                    content = content,
+                    renderPlainText = renderPlainText,
+                    renderSig = sig0,
+                    markwon = markwon,
+                    highlights = highlights,
+                    highlightColorArgb = theme.highlightColor.toArgb()
+                )
 
                 customSelectionActionModeCallback = object : ActionMode.Callback {
                     override fun onCreateActionMode(mode: ActionMode?, menu: Menu?): Boolean {
@@ -985,12 +1051,18 @@ private fun MarkdownReaderView(
 
             val hlKey = highlights.joinToString("|") { "${it.id}_${it.startPosition}_${it.endPosition}" }
             val renderSig =
-                "${content.length}_${content.hashCode()}_${theme::class.java.name}_${fontSize}_$hlKey"
+                "${renderPlainText}_${content.length}_${content.hashCode()}_${theme::class.java.name}_${fontSize}_$hlKey"
             val prevSig = textView.getTag(TAG_READER_RENDER_SIG) as? String
             if (prevSig != renderSig) {
-                textView.setTag(TAG_READER_RENDER_SIG, renderSig)
-                markwon.setMarkdown(textView, content)
-                applyHighlightsToRenderedText(textView, highlights, theme.highlightColor.toArgb())
+                applyReaderTextContent(
+                    textView = textView,
+                    content = content,
+                    renderPlainText = renderPlainText,
+                    renderSig = renderSig,
+                    markwon = markwon,
+                    highlights = highlights,
+                    highlightColorArgb = theme.highlightColor.toArgb()
+                )
             }
 
             bindReaderGesturesAndScroll(
@@ -1399,6 +1471,7 @@ private fun BookmarksSheet(
 @Composable
 private fun TocSheet(
     entries: List<MarkdownTocEntry>,
+    plainTextToc: Boolean,
     onEntryClick: (MarkdownTocEntry) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1418,7 +1491,11 @@ private fun TocSheet(
             Spacer(modifier = Modifier.height(12.dp))
             if (entries.isEmpty()) {
                 Text(
-                    "未识别到标题。请使用 Markdown ATX 语法，例如：\n# 一级标题\n## 二级标题",
+                    if (plainTextToc) {
+                        "未识别到章节。请将章节标题单独成行，例如：\n第一章 …、第1节 …、第一回 …、Chapter 1 …"
+                    } else {
+                        "未识别到标题。请使用 Markdown ATX 语法，例如：\n# 一级标题\n## 二级标题"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
                 )

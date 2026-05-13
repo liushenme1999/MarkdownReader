@@ -11,6 +11,8 @@ data class BookEntity(
     val title: String,
     val author: String? = null,
     val filePath: String,
+    /** 导入格式，与 ImportedBookFormat.storedKey 一致，如 markdown、txt、epub */
+    val importFormat: String = "markdown",
     val coverColor: Int = 0,
     val totalChars: Int = 0,
     val currentPosition: Int = 0,
