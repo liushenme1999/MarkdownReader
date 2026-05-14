@@ -1,6 +1,7 @@
 package com.example.markdownreader
 
 import android.os.Bundle
+import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
@@ -46,6 +47,22 @@ import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+
+    /**
+     * MIUI 等机型在 Compose + AndroidView（阅读器 TextView）场景下会派发 HOVER 事件；
+     * 主线程略卡时易触发 [AndroidComposeView] 内部
+     * `IllegalStateException: The ACTION_HOVER_EXIT event was not cleared` 闪退。
+     * 在 Activity 层消费悬停类事件，不影响普通触摸滚动与点击。
+     */
+    override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_HOVER_ENTER,
+            MotionEvent.ACTION_HOVER_MOVE,
+            MotionEvent.ACTION_HOVER_EXIT -> return true
+        }
+        return super.dispatchGenericMotionEvent(ev)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {

@@ -17,7 +17,16 @@ enum class ImportedBookFormat(val storedKey: String) {
         get() = this == MARKDOWN || this == TXT
 
     val hasBuiltInTextExtract: Boolean
-        get() = isPlainText || this == EPUB || this == DOCX
+        get() = isPlainText || this == EPUB || this == DOCX || this == MOBI || this == AZW3 || this == PDF
+
+    /**
+     * 阅读器是否用 TextView 纯文本渲染（非 Markwon）。
+     *
+     * 仅 TXT 用纯文本：EPUB/MOBI/AZW3/DOCX 在导入侧已经被 HtmlToMarkdownConverter 转成
+     * Markdown，统一走 Markwon 渲染以保留标题/列表/表格/强调/图片/公式等结构。
+     */
+    val usesReaderPlainBody: Boolean
+        get() = this == TXT
 
     companion object {
         fun fromStored(key: String?): ImportedBookFormat {

@@ -8,9 +8,15 @@ import androidx.lifecycle.viewModelScope
 import com.example.markdownreader.data.local.entity.BookEntity
 import com.example.markdownreader.data.repository.BookRepository
 import com.example.markdownreader.importing.BookContentLoader
+import com.example.markdownreader.importing.ExtractedBookText
 import com.example.markdownreader.importing.ImportedBookFormat
+import com.example.markdownreader.importing.ImportedTocEntry
+import com.example.markdownreader.importing.ParsedBookStorage
 import com.example.markdownreader.importing.UrlBookDownloader
+import com.example.markdownreader.ui.screens.reader.parseMarkdownToc
+import com.example.markdownreader.ui.screens.reader.parsePlainTextToc
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.SharingStarted
@@ -18,13 +24,15 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.Date
 import javax.inject.Inject
 import kotlin.random.Random
 
 @HiltViewModel
 class BookshelfViewModel @Inject constructor(
-    private val bookRepository: BookRepository
+    private val bookRepository: BookRepository,
+    @ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
     val books = bookRepository.getAllBooks()
@@ -47,15 +55,15 @@ class BookshelfViewModel @Inject constructor(
                 val fileName = getFileName(context, uri) ?: "未命名书籍"
                 val mime = context.contentResolver.getType(uri)
                 val format = detectFormat(fileName, mime)
-                val content = withContext(Dispatchers.IO) {
-                    BookContentLoader.loadFromUri(context, uri, format)
+                val extracted = withContext(Dispatchers.IO) {
+                    BookContentLoader.loadExtractedFromUri(context, uri, format)
                 }
-                if (content.isBlank() && format.hasBuiltInTextExtract) {
+                if (extracted.body.isBlank() && format.hasBuiltInTextExtract) {
                     toastChannel.trySend("未能解析出正文，请确认文件未损坏。")
                 }
                 persistImportedBook(
                     title = stripKnownExtension(fileName),
-                    content = content,
+                    extracted = extracted,
                     filePath = uri.toString(),
                     format = format
                 )
@@ -82,19 +90,19 @@ class BookshelfViewModel @Inject constructor(
                 val result = withContext(Dispatchers.IO) { UrlBookDownloader.download(url) }
                 val name = result.suggestedFileName ?: url.substringAfterLast('/').substringBefore('?')
                 val format = detectFormat(name, result.contentType)
-                val content = withContext(Dispatchers.IO) {
-                    BookContentLoader.loadFromUrlBytes(
+                val extracted = withContext(Dispatchers.IO) {
+                    BookContentLoader.loadExtractedFromUrlBytes(
                         result.bytes,
                         format,
                         result.charsetFromHeader
                     )
                 }
-                if (content.isBlank() && format.hasBuiltInTextExtract) {
+                if (extracted.body.isBlank() && format.hasBuiltInTextExtract) {
                     toastChannel.trySend("下载成功但未解析出正文。")
                 }
                 persistImportedBook(
                     title = stripKnownExtension(name.ifBlank { "网络书籍" }),
-                    content = content,
+                    extracted = extracted,
                     filePath = url,
                     format = format
                 )
@@ -107,10 +115,12 @@ class BookshelfViewModel @Inject constructor(
 
     private suspend fun persistImportedBook(
         title: String,
-        content: String,
+        extracted: ExtractedBookText,
         filePath: String,
         format: ImportedBookFormat
     ) {
+        val enriched = enrichExtractedForPersist(format, extracted)
+        val content = enriched.body
         val author = extractAuthor(content)
         val book = BookEntity(
             title = title.ifBlank { "未命名书籍" },
@@ -121,8 +131,60 @@ class BookshelfViewModel @Inject constructor(
             totalChars = content.length,
             addTime = Date()
         )
-        bookRepository.addBook(book)
-        toastChannel.trySend("已导入「${book.title}」")
+        val id = bookRepository.addBook(book)
+        if (id <= 0L) {
+            toastChannel.trySend("导入失败：无法写入书架。")
+            return
+        }
+        val writeOk = withContext(Dispatchers.IO) {
+            val dir = ParsedBookStorage.bundleDir(appContext, id)
+            val ok = ParsedBookStorage.writeBundle(dir, enriched, enriched.coverImageBytes)
+            if (!ok) {
+                ParsedBookStorage.deleteBundleDir(dir.absolutePath)
+                return@withContext false
+            }
+            val coverFile = when {
+                File(dir, ParsedBookStorage.COVER_JPG).isFile ->
+                    File(dir, ParsedBookStorage.COVER_JPG)
+                File(dir, ParsedBookStorage.COVER_PNG).isFile ->
+                    File(dir, ParsedBookStorage.COVER_PNG)
+                else -> null
+            }
+            bookRepository.updateBook(
+                book.copy(
+                    id = id,
+                    totalChars = content.length,
+                    parsedBundlePath = dir.absolutePath,
+                    coverImagePath = coverFile?.absolutePath
+                )
+            )
+            true
+        }
+        toastChannel.trySend(
+            if (writeOk) "已导入「${book.title}」"
+            else "「${book.title}」已加入书架，但解析缓存写入失败；阅读时将尝试从原文件重新解析。"
+        )
+    }
+
+    /** Markdown / TXT 在导入时补算目录，与阅读页规则一致，并写入解析包。 */
+    private fun enrichExtractedForPersist(
+        format: ImportedBookFormat,
+        extracted: ExtractedBookText
+    ): ExtractedBookText {
+        if (extracted.toc.isNotEmpty()) return extracted
+        return when (format) {
+            ImportedBookFormat.MARKDOWN -> extracted.copy(
+                toc = parseMarkdownToc(extracted.body).map {
+                    ImportedTocEntry(it.level, it.title, it.sourceOffset)
+                }
+            )
+            ImportedBookFormat.TXT -> extracted.copy(
+                toc = parsePlainTextToc(extracted.body).map {
+                    ImportedTocEntry(it.level, it.title, it.sourceOffset)
+                }
+            )
+            else -> extracted
+        }
     }
 
     private fun detectFormat(fileName: String?, mime: String?): ImportedBookFormat {

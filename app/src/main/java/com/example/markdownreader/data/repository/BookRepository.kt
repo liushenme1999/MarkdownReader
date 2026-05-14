@@ -2,7 +2,9 @@ package com.example.markdownreader.data.repository
 
 import com.example.markdownreader.data.local.dao.BookDao
 import com.example.markdownreader.data.local.entity.BookEntity
+import com.example.markdownreader.importing.ParsedBookStorage
 import kotlinx.coroutines.flow.Flow
+import java.io.File
 import java.util.Date
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -21,7 +23,13 @@ class BookRepository @Inject constructor(
 
     suspend fun updateBook(book: BookEntity) = bookDao.updateBook(book)
 
-    suspend fun deleteBook(book: BookEntity) = bookDao.deleteBook(book)
+    suspend fun deleteBook(book: BookEntity) {
+        ParsedBookStorage.deleteBundleDir(book.parsedBundlePath)
+        book.coverImagePath?.let { path ->
+            runCatching { File(path).delete() }
+        }
+        bookDao.deleteBook(book)
+    }
 
     suspend fun updateReadingProgress(bookId: Long, progress: Float, position: Int) {
         bookDao.updateReadingProgress(bookId, progress, position, Date().time)
@@ -35,6 +43,14 @@ class BookRepository @Inject constructor(
 
     suspend fun deleteBooksByIds(ids: Collection<Long>) {
         if (ids.isEmpty()) return
+        for (id in ids) {
+            bookDao.getBookById(id)?.let { book ->
+                ParsedBookStorage.deleteBundleDir(book.parsedBundlePath)
+                book.coverImagePath?.let { path ->
+                    runCatching { File(path).delete() }
+                }
+            }
+        }
         bookDao.deleteBooksByIds(ids.toList())
     }
 

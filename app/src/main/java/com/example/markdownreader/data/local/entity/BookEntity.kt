@@ -13,6 +13,13 @@ data class BookEntity(
     val filePath: String,
     /** 导入格式，与 ImportedBookFormat.storedKey 一致，如 markdown、txt、epub */
     val importFormat: String = "markdown",
+    /** 本地封面文件绝对路径（可为解析包内 cover.jpg / 旧版 book_covers 路径） */
+    val coverImagePath: String? = null,
+    /**
+     * 解析结果目录（[ParsedBookStorage]）：含 body.txt、toc.json、可选封面。
+     * 非空且目录有效时，阅读器只从此加载，不再访问 [filePath] 原始文件。
+     */
+    val parsedBundlePath: String? = null,
     val coverColor: Int = 0,
     val totalChars: Int = 0,
     val currentPosition: Int = 0,

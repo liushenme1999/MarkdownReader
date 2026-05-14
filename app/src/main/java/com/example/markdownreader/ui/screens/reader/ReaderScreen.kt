@@ -69,7 +69,11 @@ import io.noties.markwon.Markwon
 import io.noties.markwon.core.CorePlugin
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.ext.tables.TablePlugin
+import io.noties.markwon.ext.latex.JLatexMathPlugin
 import io.noties.markwon.html.HtmlPlugin
+import io.noties.markwon.image.ImagesPlugin
+import io.noties.markwon.image.file.FileSchemeHandler
+import io.noties.markwon.inlineparser.MarkwonInlineParserPlugin
 import io.noties.markwon.linkify.LinkifyPlugin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -251,6 +255,117 @@ private fun splitMarkdownToPages(content: String, targetChars: Int): List<Pair<S
         idx = end
     }
     return result
+}
+
+// ============== 章节惰性渲染窗口工具（仅用于 VerticalScroll 模式） ==============
+// 巨型 Markdown（>200KB）一次性 setText 后，TextView 必须 measure 整段——典型用时
+// 数百毫秒，触发 ANR 警告与 Skipped frames。这里把正文拆成 [0..displayWindowEndChar)
+// 的滑动窗口：首屏只渲染「当前阅读进度对应章节 + 缓冲」，滚到窗口接近底部时再扩窗。
+// 章节边界优先使用 TOC.sourceOffset，无 TOC 时按固定步长虚构边界，保证巨型 TXT 也能惰性化。
+
+/** 一次扩窗最少推进的字符数；同时也是无 TOC 时虚构边界的步长。 */
+private const val READER_EXPAND_CHUNK_CHARS = 32 * 1024
+
+/** 进入阅读时除目标位置外再多预渲染的字符数（为向下滚动预留缓冲）。 */
+private const val READER_INITIAL_LOOKAHEAD_CHARS = 32 * 1024
+
+/** 当窗口内 local 进度超过该比例且仍有未渲染章节，触发扩窗。 */
+private const val READER_EXPAND_TRIGGER_LOCAL_PROGRESS = 0.78f
+
+/** 计算章节边界数组（升序、含 0 与 content.length）。 */
+private fun computeChapterBoundaries(content: String, toc: List<MarkdownTocEntry>): IntArray {
+    if (content.isEmpty()) return intArrayOf(0)
+    val set = sortedSetOf(0, content.length)
+    for (e in toc) {
+        if (e.sourceOffset in 1 until content.length) set.add(e.sourceOffset)
+    }
+    // 无 TOC 或粗粒度时，按固定步长补齐切点，保证巨型 TXT/MD 也能惰性化
+    if (set.size <= 2 && content.length > READER_EXPAND_CHUNK_CHARS * 2) {
+        var p = READER_EXPAND_CHUNK_CHARS
+        while (p < content.length) {
+            set.add(p)
+            p += READER_EXPAND_CHUNK_CHARS
+        }
+    }
+    return set.toIntArray()
+}
+
+/** 把窗口右沿撑到「至少覆盖 atLeast」的下一个章节边界，硬上限 hardCap。 */
+private fun expandWindowEndToCover(boundaries: IntArray, atLeast: Int, hardCap: Int): Int {
+    if (hardCap <= 0) return 0
+    if (boundaries.isEmpty()) return hardCap
+    val target = atLeast.coerceIn(0, hardCap)
+    var lo = 0
+    var hi = boundaries.size - 1
+    while (lo < hi) {
+        val mid = (lo + hi) ushr 1
+        if (boundaries[mid] >= target) hi = mid else lo = mid + 1
+    }
+    return boundaries[lo].coerceAtMost(hardCap)
+}
+
+/** 在当前 windowEnd 基础上至少推进 [READER_EXPAND_CHUNK_CHARS] 并对齐到下一章节边界。 */
+private fun nextWindowEnd(boundaries: IntArray, currentEnd: Int, hardCap: Int): Int {
+    if (currentEnd >= hardCap) return hardCap
+    val target = (currentEnd + READER_EXPAND_CHUNK_CHARS).coerceAtMost(hardCap)
+    return expandWindowEndToCover(boundaries, target, hardCap)
+}
+
+/**
+ * 章节窗口模式的目录/书签跳转：
+ *   1. 计算「能覆盖 charPos + 缓冲」的目标 windowEnd；如果比当前 windowEnd 大，则扩窗。
+ *   2. 异步等待 TextView 文本长度匹配目标 windowEnd 并 layout 就绪，再按
+ *      `localProgress = charPos / targetWindowEnd` 调用 [scrollTextViewToProgress]。
+ *   3. 更新 ViewModel 的全局进度。
+ */
+private fun jumpToCharInChunkWindow(
+    scope: kotlinx.coroutines.CoroutineScope,
+    tvProvider: () -> TextView?,
+    contentLen: Int,
+    chapterBoundaries: IntArray,
+    windowEnd: Int,
+    charPos: Int,
+    setWindowEnd: (Int) -> Unit,
+    clearPendingRestore: () -> Unit,
+    onProgress: () -> Unit
+) {
+    val targetEnd = if (charPos >= windowEnd - 1) {
+        expandWindowEndToCover(
+            chapterBoundaries,
+            charPos + READER_INITIAL_LOOKAHEAD_CHARS,
+            contentLen
+        ).also {
+            clearPendingRestore()
+            setWindowEnd(it)
+        }
+    } else {
+        windowEnd
+    }
+
+    scope.launch {
+        // 等到 TextView 文本长度匹配目标窗口（且 layout 已基于真实文本构建）再 scroll
+        repeat(120) {
+            val tv = tvProvider()
+            val layout = tv?.layout
+            val tvTextLen = tv?.text?.length ?: 0
+            val layoutTextLen = layout?.text?.length ?: -1
+            if (tv != null && layout != null && tvTextLen > 0 &&
+                layoutTextLen == tvTextLen &&
+                tvTextLen == targetEnd
+            ) {
+                val effectiveWin = targetEnd.coerceAtLeast(1)
+                val localP = (charPos.toFloat() / effectiveWin).coerceIn(0f, 1f)
+                tv.post {
+                    scrollTextViewToProgress(tv, localP)
+                    onProgress()
+                }
+                return@launch
+            }
+            kotlinx.coroutines.delay(32)
+        }
+        // 兜底：超时也调一次，避免卡死跳转
+        onProgress()
+    }
 }
 
 private fun highlightsForPageSlice(
@@ -445,6 +560,7 @@ fun ReaderScreen(
     val bookmarks by viewModel.bookmarks.collectAsState()
     val highlights by viewModel.highlights.collectAsState()
     val readingProgress by viewModel.readingProgress.collectAsState()
+    val readerLoadEpoch by viewModel.readerLoadEpoch.collectAsState()
     val currentTheme by viewModel.currentTheme.collectAsState()
     val fontSize by viewModel.fontSize.collectAsState()
     val readerPaddingDp by viewModel.readerPaddingDp.collectAsState()
@@ -453,9 +569,8 @@ fun ReaderScreen(
     val pageTurnMode by viewModel.pageTurnMode.collectAsState()
     val configuration = LocalConfiguration.current
 
-    val renderPlainText = book?.let { b ->
-        ImportedBookFormat.fromStored(b.importFormat) == ImportedBookFormat.TXT
-    } == true
+    val importFormat = book?.let { ImportedBookFormat.fromStored(it.importFormat) }
+    val renderPlainText = importFormat?.usesReaderPlainBody == true
 
     var showReaderThemeSheet by remember { mutableStateOf(false) }
     var showReaderFontSheet by remember { mutableStateOf(false) }
@@ -471,8 +586,27 @@ fun ReaderScreen(
 
     val immersiveReading = content.isNotEmpty() && loadError == null
 
-    val tocEntries = remember(content, renderPlainText) {
-        if (renderPlainText) parsePlainTextToc(content) else parseMarkdownToc(content)
+    val structuredToc by viewModel.structuredToc.collectAsState()
+
+    val tocEntries = remember(content, renderPlainText, structuredToc) {
+        val fromLoader = structuredToc
+        if (!fromLoader.isNullOrEmpty()) fromLoader
+        else if (renderPlainText) parsePlainTextToc(content)
+        else parseMarkdownToc(content)
+    }
+    val emptyTocMessage = remember(importFormat, renderPlainText) {
+        when (importFormat) {
+            ImportedBookFormat.EPUB ->
+                "未解析到 EPUB 目录（toc.ncx 或 nav）。正文已按 spine 合并，仍可按进度阅读。"
+            ImportedBookFormat.MOBI, ImportedBookFormat.AZW3 ->
+                "未从正文识别到常见章节标题。若为 Huff/CDIC 压缩的 MOBI，当前版本可能无法解压。"
+            else ->
+                if (renderPlainText) {
+                    "未识别到章节。请将章节标题单独成行，例如：\n第一章 …、第1节 …、Chapter 1 …"
+                } else {
+                    "未识别到标题。请使用 Markdown ATX 语法，例如：\n# 一级标题\n## 二级标题"
+                }
+        }
     }
     val totalChars = book?.totalChars?.takeIf { it > 0 } ?: content.length.coerceAtLeast(1)
     val chapterTitle = remember(tocEntries, readingProgress, totalChars) {
@@ -491,7 +625,36 @@ fun ReaderScreen(
     val pageTextViews = remember(content) { mutableMapOf<Int, TextView>() }
     val pagerState = rememberPagerState(pageCount = { pageSpecs.size.coerceAtLeast(1) })
 
-    LaunchedEffect(bookId, content, pageSpecs) {
+    // ===== 章节惰性渲染窗口（仅 VerticalScroll 模式生效）=====
+    // displayWindowEndChar 是当前展示给 TextView 的字符数（即 content 的前缀长度）。
+    // pendingScrollRestoreY 用于扩窗后还原扩窗前 scrollY（避免内容增长后视口跳到顶部）。
+    val chapterBoundaries = remember(content, tocEntries) {
+        computeChapterBoundaries(content, tocEntries)
+    }
+    // 初值直接基于 content + 当前进度计算「覆盖目标位置 + 缓冲」的窗口，避免「先 setText
+    // 整本再缩小」浪费一次整段 measure。paged 模式不窗口化（横向分页本身就是窗口）。
+    var displayWindowEndChar by remember(content) {
+        val initial = when {
+            content.isEmpty() -> 0
+            else -> expandWindowEndToCover(
+                chapterBoundaries,
+                (readingProgress * content.length).toInt() + READER_INITIAL_LOOKAHEAD_CHARS,
+                content.length
+            )
+        }
+        mutableIntStateOf(initial)
+    }
+    var pendingScrollRestoreY by remember(content) { mutableStateOf<Int?>(null) }
+    val displayedContent = remember(content, displayWindowEndChar) {
+        when {
+            content.isEmpty() -> ""
+            displayWindowEndChar >= content.length -> content
+            displayWindowEndChar <= 0 -> ""
+            else -> content.substring(0, displayWindowEndChar)
+        }
+    }
+
+    LaunchedEffect(bookId, content, pageSpecs, readerLoadEpoch) {
         if (content.isEmpty()) return@LaunchedEffect
         if (pageTurnMode == ReaderPageTurnMode.VerticalScroll || pageSpecs.isEmpty()) return@LaunchedEffect
         val charPos = (readingProgress * totalChars).toInt().coerceIn(0, (content.length - 1).coerceAtLeast(0))
@@ -531,19 +694,72 @@ fun ReaderScreen(
         showTopBar = false
     }
 
-    LaunchedEffect(bookId, content, pageTurnMode) {
-        if (content.isEmpty()) return@LaunchedEffect
-        if (pageTurnMode != ReaderPageTurnMode.VerticalScroll) return@LaunchedEffect
-        repeat(40) {
+    LaunchedEffect(bookId, content, pageTurnMode, readerLoadEpoch) {
+        if (content.isEmpty()) {
+            displayWindowEndChar = 0
+            return@LaunchedEffect
+        }
+        // 非垂直滚动模式不走窗口化（横向分页本身就是窗口），直接喂完整正文
+        if (pageTurnMode != ReaderPageTurnMode.VerticalScroll) {
+            if (displayWindowEndChar != content.length) {
+                pendingScrollRestoreY = null
+                displayWindowEndChar = content.length
+            }
+            return@LaunchedEffect
+        }
+        // 纠正一致性：进入页面瞬间的目标进度对应字符必须落在窗口内
+        val targetProgress = readingProgress
+        val targetChar = (targetProgress * content.length).toInt().coerceIn(0, content.length)
+        if (targetChar >= displayWindowEndChar - 1) {
+            pendingScrollRestoreY = null
+            displayWindowEndChar = expandWindowEndToCover(
+                chapterBoundaries,
+                targetChar + READER_INITIAL_LOOKAHEAD_CHARS,
+                content.length
+            )
+        }
+        // 长文本走 PrecomputedText / 后台 Markwon 渲染，文本/Layout 就绪时机晚于 onViewReady，
+        // 这里要等到 layout 是基于「真实文本」构建的，否则 scrollTo 时 maxScroll≈0 会落到 0%。
+        repeat(80) {
             val tv = readerTextView.value
-            if (tv != null && tv.layout != null) {
+            val layout = tv?.layout
+            val tvTextLen = tv?.text?.length ?: 0
+            val layoutTextLen = layout?.text?.length ?: -1
+            if (tv != null && layout != null && tvTextLen > 0 && layoutTextLen == tvTextLen) {
                 tv.post {
-                    scrollTextViewToProgress(tv, readingProgress)
+                    // 窗口内本地进度 = targetChar / displayWindowEndChar
+                    val winEnd = displayWindowEndChar.coerceAtLeast(1)
+                    val localProgress = (targetChar.toFloat() / winEnd).coerceIn(0f, 1f)
+                    scrollTextViewToProgress(tv, localProgress)
                 }
                 return@LaunchedEffect
             }
             delay(32)
         }
+    }
+
+    // 扩窗（displayWindowEndChar 增加）后还原扩窗前 scrollY，避免视口跳到顶部。
+    // 因为 displayedContent 是前缀且只在尾部追加，前面字符的 layout 高度保持稳定，
+    // scrollY 可以直接复用扩窗前的像素值。
+    LaunchedEffect(displayWindowEndChar) {
+        val savedY = pendingScrollRestoreY ?: return@LaunchedEffect
+        val tv = readerTextView.value ?: run {
+            pendingScrollRestoreY = null
+            return@LaunchedEffect
+        }
+        repeat(120) {
+            val layout = tv.layout
+            val tvTextLen = tv.text?.length ?: 0
+            val layoutTextLen = layout?.text?.length ?: -1
+            if (layout != null && tvTextLen > 0 && layoutTextLen == tvTextLen) {
+                val maxScroll = (layout.height - (tv.height - tv.paddingTop - tv.paddingBottom)).coerceAtLeast(0)
+                tv.post { tv.scrollTo(0, savedY.coerceIn(0, maxScroll)) }
+                pendingScrollRestoreY = null
+                return@LaunchedEffect
+            }
+            delay(32)
+        }
+        pendingScrollRestoreY = null
     }
 
     val view = LocalView.current
@@ -626,7 +842,7 @@ fun ReaderScreen(
                         }
                         if (pageTurnMode == ReaderPageTurnMode.VerticalScroll) {
                             MarkdownReaderView(
-                                content = content,
+                                content = displayedContent,
                                 renderPlainText = renderPlainText,
                                 theme = currentTheme,
                                 fontSize = fontSize,
@@ -635,8 +851,25 @@ fun ReaderScreen(
                                 highlights = highlights,
                                 modifier = Modifier.fillMaxSize(),
                                 onTextSelected = onReaderTextSelected,
-                                onScroll = { progress ->
-                                    viewModel.updateReadingProgress(progress)
+                                onScroll = { localProgress ->
+                                    val winEnd = displayWindowEndChar
+                                    val total = content.length.coerceAtLeast(1)
+                                    // 把窗口内 [0..1] 进度换算回全书进度（窗口是 content 的前缀）
+                                    val globalProgress = if (winEnd <= 0) 0f
+                                    else (localProgress * winEnd / total).coerceIn(0f, 1f)
+                                    viewModel.updateReadingProgress(globalProgress)
+                                    // 接近窗口底部 → 异步扩窗到下一章节边界；扩窗前先记下 scrollY，
+                                    // 待新内容渲染就绪后由 LaunchedEffect(displayWindowEndChar) 复位。
+                                    if (winEnd < content.length &&
+                                        pendingScrollRestoreY == null &&
+                                        localProgress >= READER_EXPAND_TRIGGER_LOCAL_PROGRESS
+                                    ) {
+                                        val tv = readerTextView.value
+                                        pendingScrollRestoreY = tv?.scrollY ?: 0
+                                        displayWindowEndChar = nextWindowEnd(
+                                            chapterBoundaries, winEnd, content.length
+                                        )
+                                    }
                                 },
                                 onReadingVerticalScroll = onReaderVerticalScroll,
                                 onViewReady = { tv -> readerTextView.value = tv },
@@ -830,11 +1063,18 @@ fun ReaderScreen(
                             }
                         }
                     } else {
-                        val tv = readerTextView.value
-                        tv?.post {
-                            scrollTextViewToProgress(tv, p)
-                            viewModel.updateReadingProgress(p)
-                        }
+                        // 章节窗口模式：先把窗口撑到能覆盖目标字符位置，再 scroll
+                        jumpToCharInChunkWindow(
+                            scope = scope,
+                            tvProvider = { readerTextView.value },
+                            contentLen = content.length,
+                            chapterBoundaries = chapterBoundaries,
+                            windowEnd = displayWindowEndChar,
+                            charPos = charPos,
+                            setWindowEnd = { displayWindowEndChar = it },
+                            clearPendingRestore = { pendingScrollRestoreY = null },
+                            onProgress = { viewModel.updateReadingProgress(p) }
+                        )
                     }
                 }
                 showBookmarks = false
@@ -853,7 +1093,7 @@ fun ReaderScreen(
     if (showToc) {
         TocSheet(
             entries = tocEntries,
-            plainTextToc = renderPlainText,
+            emptyTocMessage = emptyTocMessage,
             onEntryClick = { entry ->
                 val total = book?.totalChars?.takeIf { it > 0 } ?: content.length.coerceAtLeast(1)
                 val p = (entry.sourceOffset.toFloat() / total).coerceIn(0f, 1f)
@@ -871,11 +1111,18 @@ fun ReaderScreen(
                         }
                     }
                 } else {
-                    val tv = readerTextView.value
-                    tv?.post {
-                        scrollTextViewToProgress(tv, p)
-                        viewModel.updateReadingProgress(p)
-                    }
+                    // 章节窗口模式：先把窗口撑到能覆盖目标章节字符位置，再 scroll
+                    jumpToCharInChunkWindow(
+                        scope = scope,
+                        tvProvider = { readerTextView.value },
+                        contentLen = content.length,
+                        chapterBoundaries = chapterBoundaries,
+                        windowEnd = displayWindowEndChar,
+                        charPos = charPos,
+                        setWindowEnd = { displayWindowEndChar = it },
+                        clearPendingRestore = { pendingScrollRestoreY = null },
+                        onProgress = { viewModel.updateReadingProgress(p) }
+                    )
                 }
                 showToc = false
                 if (immersiveReading) showTopBar = false
@@ -913,7 +1160,19 @@ private val readerPlainTextPrecomputeExecutor =
         Thread(r, "reader-plain-precompute").apply { isDaemon = true }
     }
 
+/** Markwon 解析 + 渲染（Markdown → Spanned）也搬到后台线程，主线程只剩 setText + measure。 */
+private val readerMarkwonRenderExecutor =
+    java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "reader-markwon-render").apply {
+            isDaemon = true
+            priority = Thread.NORM_PRIORITY - 1
+        }
+    }
+
 private const val PLAIN_TEXT_PRECOMPUTE_THRESHOLD = 6000
+
+/** Markwon 渲染的"小内容"门槛：< 该长度直接主线程同步，避免线程切换开销让首屏更慢。 */
+private const val MARKWON_BACKGROUND_RENDER_THRESHOLD = 4000
 
 private fun applyReaderTextContent(
     textView: TextView,
@@ -926,8 +1185,7 @@ private fun applyReaderTextContent(
 ) {
     textView.setTag(TAG_READER_RENDER_SIG, renderSig)
     if (!renderPlainText) {
-        markwon.setMarkdown(textView, content)
-        applyHighlightsToRenderedText(textView, highlights, highlightColorArgb)
+        applyMarkdownContent(textView, content, renderSig, markwon, highlights, highlightColorArgb)
         return
     }
     if (content.length <= PLAIN_TEXT_PRECOMPUTE_THRESHOLD) {
@@ -942,6 +1200,35 @@ private fun applyReaderTextContent(
         textView.post {
             if (textView.getTag(TAG_READER_RENDER_SIG) != renderSig) return@post
             TextViewCompat.setPrecomputedText(textView, pre)
+            applyHighlightsToRenderedText(textView, highlights, highlightColorArgb)
+        }
+    }
+}
+
+private fun applyMarkdownContent(
+    textView: TextView,
+    content: String,
+    renderSig: String,
+    markwon: Markwon,
+    highlights: List<HighlightEntity>,
+    highlightColorArgb: Int
+) {
+    if (content.length <= MARKWON_BACKGROUND_RENDER_THRESHOLD) {
+        // 短文本同步走完，UI 首帧响应更直接
+        markwon.setMarkdown(textView, content)
+        applyHighlightsToRenderedText(textView, highlights, highlightColorArgb)
+        return
+    }
+    // 长 Markdown：在后台线程做 CommonMark parse + Markwon render（产 Spanned），
+    // 这一步通常 200~500ms（取决于内容长度与图片数）。主线程只剩 setText + measure。
+    readerMarkwonRenderExecutor.execute {
+        val rendered: CharSequence = runCatching { markwon.toMarkdown(content) }
+            .getOrNull() ?: content
+        textView.post {
+            if (textView.getTag(TAG_READER_RENDER_SIG) != renderSig) return@post
+            // setParsedMarkdown 会在主线程上把 Spanned 应用到 TextView，并执行
+            // Markwon 各插件的 `afterSetText`（如启动 AsyncDrawable 图片加载）。
+            markwon.setParsedMarkdown(textView, rendered as? android.text.Spanned ?: android.text.SpannableString(rendered))
             applyHighlightsToRenderedText(textView, highlights, highlightColorArgb)
         }
     }
@@ -972,7 +1259,7 @@ private fun MarkdownReaderView(
 
     AndroidView(
         factory = { ctx ->
-            TextView(ctx).apply {
+            SafeReaderTextView(ctx).apply {
                 movementMethod = LinkMovementMethod.getInstance()
                 setTextColor(theme.textColor.toArgb())
                 setBackgroundColor(theme.backgroundColor.toArgb())
@@ -1181,13 +1468,79 @@ private fun previewPlainTextFromTextViewTop(tv: TextView): String {
         .take(100)
 }
 
+/**
+ * 阅读器用的 TextView 子类，吞掉两类已知 Android 框架 bug：
+ *
+ * 1. `Editor.performLongClick` 里访问尚未初始化的
+ *    `SelectionModifierCursorController` 抛 `NullPointerException`
+ *    （https://issuetracker.google.com/issues/37095917 起就存在，
+ *    MIUI / Android 11/12 上仍可复现）。
+ *
+ * 2. `ArrowKeyMovementMethod.onTouchEvent` 在长文 selection 边界
+ *    偶发 `IndexOutOfBoundsException`。
+ *
+ * 这些都是 framework 内部状态问题，无法在应用层根治；包一层 catch
+ * 让长按时退化为「不进入文本选择」即可，比直接 crash 体验好得多。
+ */
+private class SafeReaderTextView(context: Context) : TextView(context) {
+    init {
+        // 必须显式开启 textIsSelectable，否则 Editor.startSelectionActionMode() 会走
+        // textCanBeSelected() 检查直接取消选择，日志表现为
+        //   "TextView does not support text selection. Selection cancelled."
+        // setTextIsSelectable(true) 会顺带把 movementMethod 重置为 ArrowKeyMovementMethod，
+        // 立刻覆盖回 LinkMovementMethod 以保留 url 点击行为；mTextIsSelectable=true
+        // 不受影响，长按选词仍能进入 ActionMode。
+        setTextIsSelectable(true)
+        movementMethod = LinkMovementMethod.getInstance()
+    }
+
+    override fun performLongClick(): Boolean = try {
+        super.performLongClick()
+    } catch (_: NullPointerException) {
+        false
+    }
+
+    override fun performLongClick(x: Float, y: Float): Boolean = try {
+        super.performLongClick(x, y)
+    } catch (_: NullPointerException) {
+        false
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean = try {
+        super.onTouchEvent(event)
+    } catch (_: NullPointerException) {
+        false
+    } catch (_: IndexOutOfBoundsException) {
+        false
+    }
+}
+
 private fun createMarkwon(context: Context): Markwon {
     return Markwon.builder(context)
         .usePlugin(CorePlugin.create())
+        // JLatexMathPlugin 启用 inline `$...$` 模式后会 require 这个插件；
+        // 同时它的 commonmark inline parser 会替换 CorePlugin 默认的解析器，
+        // 让 `$...$` 不再被当作普通文本拆分。
+        .usePlugin(MarkwonInlineParserPlugin.create())
         .usePlugin(HtmlPlugin.create())
         .usePlugin(StrikethroughPlugin.create())
         .usePlugin(TablePlugin.create(context))
         .usePlugin(LinkifyPlugin.create())
+        .usePlugin(
+            ImagesPlugin.create { plugin ->
+                // 仅启用 file:// 本地图片：EPUB/MOBI 内嵌图已落盘到 parsed_books/<id>/assets/，
+                // ParsedBookStorage.readBundle 读取时把 book-asset:// 占位换成了 file://。
+                // 出于隐私 / 流量考虑暂不启用 HTTP 远程图片加载。
+                plugin.addSchemeHandler(FileSchemeHandler.create())
+            }
+        )
+        .usePlugin(
+            // `$$...$$` 块、`$...$` 内联 LaTeX 公式渲染（基于 jlatexmath）。
+            // EPUB/MOBI 中如有 MathML，HtmlToMarkdownConverter 会先把它转换为 $...$ / $$...$$。
+            JLatexMathPlugin.create(context.resources.getDimension(android.R.dimen.app_icon_size) / 2f) { builder ->
+                builder.inlinesEnabled(true)
+            }
+        )
         .build()
 }
 
@@ -1471,7 +1824,7 @@ private fun BookmarksSheet(
 @Composable
 private fun TocSheet(
     entries: List<MarkdownTocEntry>,
-    plainTextToc: Boolean,
+    emptyTocMessage: String,
     onEntryClick: (MarkdownTocEntry) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1491,11 +1844,7 @@ private fun TocSheet(
             Spacer(modifier = Modifier.height(12.dp))
             if (entries.isEmpty()) {
                 Text(
-                    if (plainTextToc) {
-                        "未识别到章节。请将章节标题单独成行，例如：\n第一章 …、第1节 …、第一回 …、Chapter 1 …"
-                    } else {
-                        "未识别到标题。请使用 Markdown ATX 语法，例如：\n# 一级标题\n## 二级标题"
-                    },
+                    emptyTocMessage,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
                 )

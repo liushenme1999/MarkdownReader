@@ -1,10 +1,12 @@
 package com.example.markdownreader.ui.screens.bookshelf
 
 import android.app.Activity
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,8 +26,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
@@ -45,8 +50,11 @@ import com.example.markdownreader.ui.theme.BookshelfPageBackground
 import com.example.markdownreader.ui.theme.BookshelfPageBackgroundDark
 import com.example.markdownreader.ui.theme.MainNavigationBarBackground
 import java.text.SimpleDateFormat
+import java.io.File
 import java.util.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.withContext
 
 private val BookshelfImportMimeTypes = arrayOf(
     "text/markdown",
@@ -174,7 +182,6 @@ fun BookshelfScreen(
             if (books.isEmpty()) {
                 EmptyBookshelf(onImportClick = { openImportChooser() })
             } else {
-                val gridCount = if (selectionMode) books.size else books.size + 1
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
                     contentPadding = PaddingValues(
@@ -186,39 +193,40 @@ fun BookshelfScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
+                    // 用 items(list, key={it.id}) + 末尾 item 写法，避免按 count+index 提供
+                    // key 时，gridCount 与 key lambda 跨 snapshot 读到不同 books.size，
+                    // 导致多个尾部 index 同时映射到 "import_card" 触发重复 key 崩溃。
                     items(
-                        count = gridCount,
-                        key = { index ->
-                            if (index < books.size) books[index].id else "import_card"
-                        }
-                    ) { index ->
-                        if (index < books.size) {
-                            val book = books[index]
-                            val selected = book.id in selectedIds
-                            BookCard(
-                                book = book,
-                                selected = selected,
-                                selectionMode = selectionMode,
-                                onClick = {
-                                    if (selectionMode) {
-                                        selectedIds =
-                                            if (selected) selectedIds - book.id else selectedIds + book.id
-                                    } else {
-                                        navController.navigate("reader/${book.id}")
-                                    }
-                                },
-                                onLongClick = {
-                                    if (!selectionMode) {
-                                        selectionMode = true
-                                        selectedIds = setOf(book.id)
-                                    } else {
-                                        selectedIds =
-                                            if (book.id in selectedIds) selectedIds - book.id
-                                            else selectedIds + book.id
-                                    }
+                        items = books,
+                        key = { it.id }
+                    ) { book ->
+                        val selected = book.id in selectedIds
+                        BookCard(
+                            book = book,
+                            selected = selected,
+                            selectionMode = selectionMode,
+                            onClick = {
+                                if (selectionMode) {
+                                    selectedIds =
+                                        if (selected) selectedIds - book.id else selectedIds + book.id
+                                } else {
+                                    navController.navigate("reader/${book.id}")
                                 }
-                            )
-                        } else {
+                            },
+                            onLongClick = {
+                                if (!selectionMode) {
+                                    selectionMode = true
+                                    selectedIds = setOf(book.id)
+                                } else {
+                                    selectedIds =
+                                        if (book.id in selectedIds) selectedIds - book.id
+                                        else selectedIds + book.id
+                                }
+                            }
+                        )
+                    }
+                    if (!selectionMode) {
+                        item(key = "import_card") {
                             ImportBookCard(onClick = { openImportChooser() })
                         }
                     }
@@ -502,6 +510,16 @@ private fun BookCard(
     onLongClick: () -> Unit
 ) {
     val coverColor = BookCoverColors[book.coverColor % BookCoverColors.size]
+    var coverImage by remember(book.id, book.coverImagePath) {
+        mutableStateOf<ImageBitmap?>(null)
+    }
+    LaunchedEffect(book.id, book.coverImagePath) {
+        coverImage = withContext(Dispatchers.IO) {
+            val p = book.coverImagePath ?: return@withContext null
+            if (!File(p).exists()) return@withContext null
+            BitmapFactory.decodeFile(p)?.asImageBitmap()
+        }
+    }
     val dateFormat = SimpleDateFormat("MM-dd", Locale.getDefault())
     val subtitle = when {
         book.shelfGroup.isNotBlank() -> book.shelfGroup
@@ -530,24 +548,37 @@ private fun BookCard(
                 .aspectRatio(0.75f)
                 .shadow(4.dp, RoundedCornerShape(8.dp))
                 .clip(RoundedCornerShape(8.dp))
-                .background(coverColor)
-                .padding(8.dp)
         ) {
-            Text(
-                text = book.title,
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    fontSize = 12.sp
-                ),
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.align(Alignment.TopStart)
-            )
+            val bmp = coverImage
+            if (bmp != null) {
+                Image(
+                    bitmap = bmp,
+                    contentDescription = book.title,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Box(Modifier.fillMaxSize().background(coverColor))
+                Text(
+                    text = book.title,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        fontSize = 12.sp
+                    ),
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp)
+                )
+            }
 
             if (book.readingProgress > 0) {
                 Column(
-                    modifier = Modifier.align(Alignment.BottomStart)
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(8.dp)
                 ) {
                     LinearProgressIndicator(
                         progress = book.readingProgress,
@@ -575,6 +606,7 @@ private fun BookCard(
                     tint = Color.White,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
+                        .padding(6.dp)
                         .size(16.dp)
                 )
             }

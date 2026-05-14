@@ -13,7 +13,9 @@ import com.example.markdownreader.data.repository.HighlightRepository
 import com.example.markdownreader.data.repository.ReadingProgressRepository
 import com.example.markdownreader.data.repository.ReaderSettingsRepository
 import com.example.markdownreader.importing.BookContentLoader
+import com.example.markdownreader.importing.ExtractedBookText
 import com.example.markdownreader.importing.ImportedBookFormat
+import com.example.markdownreader.importing.ParsedBookStorage
 import com.example.markdownreader.importing.UrlBookDownloader
 import com.example.markdownreader.model.ReaderPageTurnMode
 import com.example.markdownreader.ui.theme.ReadingTheme
@@ -23,7 +25,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.Date
 import javax.inject.Inject
 import kotlin.math.abs
@@ -43,6 +47,14 @@ class ReaderViewModel @Inject constructor(
 
     private val _content = MutableStateFlow("")
     val content: StateFlow<String> = _content.asStateFlow()
+
+    /** EPUB/MOBI 等由导入器提供的目录；非空时阅读页优先使用，不再从正文猜标题。 */
+    private val _structuredToc = MutableStateFlow<List<MarkdownTocEntry>?>(null)
+    val structuredToc: StateFlow<List<MarkdownTocEntry>?> = _structuredToc.asStateFlow()
+
+    /** 每次 [loadBook] 完成正文/进度装载后递增，用于强制触发滚动恢复（避免与上次正文相同导致 StateFlow 不发射）。 */
+    private val _readerLoadEpoch = MutableStateFlow(0L)
+    val readerLoadEpoch: StateFlow<Long> = _readerLoadEpoch.asStateFlow()
 
     private val _readingProgress = MutableStateFlow(0f)
     val readingProgress: StateFlow<Float> = _readingProgress.asStateFlow()
@@ -106,6 +118,7 @@ class ReaderViewModel @Inject constructor(
         _loadError.value = null
         bookmarks.value = emptyList()
         highlights.value = emptyList()
+        _structuredToc.value = null
 
         loadBookJob = viewModelScope.launch {
             val bookEntity = bookRepository.getBookById(bookId)
@@ -114,15 +127,21 @@ class ReaderViewModel @Inject constructor(
             if (bookEntity == null) {
                 _content.value = ""
                 _loadError.value = "找不到该书，可能已被删除。"
+                _readerLoadEpoch.value = _readerLoadEpoch.value + 1L
                 return@launch
             }
 
-            val text = withContext(Dispatchers.IO) {
-                loadFileContent(context, bookEntity)
+            val extracted = withContext(Dispatchers.IO) {
+                loadFileExtracted(context, bookEntity)
             }
-            _content.value = text
+            _content.value = extracted.body
+            _structuredToc.value = extracted.toc
+                .map { MarkdownTocEntry(it.level, it.title, it.sourceOffset) }
+                .takeIf { it.isNotEmpty() }
             _readingProgress.value = bookEntity.readingProgress
+            _readerLoadEpoch.value = _readerLoadEpoch.value + 1L
 
+            val text = extracted.body
             if (text.isEmpty()) {
                 _loadError.value =
                     "无法读取正文（文件权限失效或路径无效）。请返回书架删除该书后，使用「导入」重新选择文件。"
@@ -271,7 +290,14 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    private fun loadFileContent(context: Context, book: BookEntity): String {
+    private fun loadFileExtracted(context: Context, book: BookEntity): ExtractedBookText {
+        val bundlePath = book.parsedBundlePath
+        if (!bundlePath.isNullOrBlank()) {
+            val dir = File(bundlePath)
+            ParsedBookStorage.readBundle(dir)
+                ?.takeIf { it.body.isNotEmpty() }
+                ?.let { return it }
+        }
         val path = book.filePath
         val format = ImportedBookFormat.fromStored(book.importFormat)
         return try {
@@ -279,34 +305,38 @@ class ReaderViewModel @Inject constructor(
                 path.startsWith("https://", ignoreCase = true)
             ) {
                 val result = UrlBookDownloader.download(path)
-                BookContentLoader.loadFromUrlBytes(
+                BookContentLoader.loadExtractedFromUrlBytes(
                     result.bytes,
                     format,
                     result.charsetFromHeader
                 )
             } else {
                 val uri = Uri.parse(path)
-                BookContentLoader.loadFromUri(context, uri, format)
+                BookContentLoader.loadExtractedFromUri(context, uri, format)
             }
         } catch (_: Exception) {
-            ""
+            ExtractedBookText.plainBody("")
         }
     }
 
     override fun onCleared() {
-        super.onCleared()
-        // 记录阅读时长
-        viewModelScope.launch {
-            _book.value?.let { book ->
-                val endTime = System.currentTimeMillis()
-                val minutesRead = ((endTime - readingStartTime) / 60000).toInt()
-                val endPosition = (readingProgress.value * book.totalChars).toInt()
-                val charsRead = (endPosition - startPosition).coerceAtLeast(0)
-
+        val book = _book.value
+        if (book != null) {
+            // onCleared 调用时 viewModelScope 已被取消，必须用 runBlocking 同步落盘，
+            // 否则在此处 launch 出来的协程会被立即取消，进度与阅读时长会丢失。
+            val p = _readingProgress.value.coerceIn(0f, 1f)
+            val total = book.totalChars.coerceAtLeast(1)
+            val endPosition = (p * total).toInt()
+            val endTime = System.currentTimeMillis()
+            val minutesRead = ((endTime - readingStartTime) / 60_000).toInt()
+            val charsRead = (endPosition - startPosition).coerceAtLeast(0)
+            runBlocking {
+                bookRepository.updateReadingProgress(book.id, p, endPosition)
                 if (minutesRead > 0 || charsRead > 0) {
                     readingProgressRepository.recordReading(book.id, charsRead, minutesRead)
                 }
             }
         }
+        super.onCleared()
     }
 }
