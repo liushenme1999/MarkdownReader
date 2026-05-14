@@ -3,9 +3,11 @@ package com.example.markdownreader.ui.screens.bookshelf
 import android.app.Activity
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.LruCache
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,13 +25,19 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -88,6 +96,8 @@ fun BookshelfScreen(
     var showUrlImportDialog by remember { mutableStateOf(false) }
     var urlImportText by remember { mutableStateOf("") }
     val snackbarHostState = remember { SnackbarHostState() }
+    var searchQuery by remember { mutableStateOf("") }
+    val coverImageCache = remember { LruCache<String, ImageBitmap>(20) }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -124,7 +134,7 @@ fun BookshelfScreen(
         val prevColor = window.statusBarColor
         val prevLightStatusBars = controller.isAppearanceLightStatusBars
         window.statusBarColor = shelfBg.toArgb()
-        controller.isAppearanceLightStatusBars = systemInDarkTheme
+        controller.isAppearanceLightStatusBars = !systemInDarkTheme
         onDispose {
             window.statusBarColor = prevColor
             controller.isAppearanceLightStatusBars = prevLightStatusBars
@@ -143,34 +153,96 @@ fun BookshelfScreen(
         onSelectionModeChange(selectionMode)
     }
 
+    // 搜索过滤逻辑
+    val filteredBooks = remember(books, searchQuery) {
+        val query = searchQuery.trim().lowercase(Locale.getDefault())
+        if (query.isEmpty()) {
+            books
+        } else {
+            books.filter { book ->
+                book.title.lowercase(Locale.getDefault()).contains(query) ||
+                    (book.author?.lowercase(Locale.getDefault())?.contains(query) == true)
+            }
+        }
+    }
+
     Scaffold(
         containerColor = shelfBg,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        if (selectionMode) "已选 ${selectedIds.size} 本" else "书架",
-                        style = MaterialTheme.typography.titleLarge.copy(
-                            fontFamily = FontFamily.SansSerif,
-                            fontWeight = FontWeight.Black
+            Column(
+                modifier = Modifier.statusBarsPadding()
+            ) {
+                TopAppBar(
+                    title = {
+                        Text(
+                            if (selectionMode) "已选 ${selectedIds.size} 本"
+                            else "书架 (${books.size})",
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontFamily = FontFamily.SansSerif,
+                                fontWeight = FontWeight.Black
+                            )
                         )
-                    )
-                },
-                navigationIcon = {
-                    if (selectionMode) {
-                        IconButton(onClick = { exitSelection() }) {
-                            Icon(Icons.Default.Close, contentDescription = "退出管理")
+                    },
+                    navigationIcon = {
+                        if (selectionMode) {
+                            IconButton(onClick = { exitSelection() }) {
+                                Icon(Icons.Default.Close, contentDescription = "退出管理")
+                            }
                         }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = shelfBg,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
-                    actionIconContentColor = MaterialTheme.colorScheme.onSurface
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        titleContentColor = MaterialTheme.colorScheme.onSurface,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                        actionIconContentColor = MaterialTheme.colorScheme.onSurface
+                    )
                 )
-            )
+                // 搜索栏
+                if (!selectionMode) {
+                    SearchBar(
+                        query = searchQuery,
+                        onQueryChange = { searchQuery = it },
+                        onSearch = {},
+                        active = false,
+                        onActiveChange = {},
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                            .padding(bottom = 4.dp),
+                        placeholder = {
+                            Text(
+                                "搜索书名或作者...",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Search,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                            )
+                        },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "清除搜索",
+                                        modifier = Modifier.size(18.dp),
+                                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                    )
+                                }
+                            }
+                        },
+                        colors = SearchBarDefaults.colors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            dividerColor = Color.Transparent
+                        ),
+                        shape = RoundedCornerShape(24.dp)
+                    ) {}
+                }
+            }
         }
     ) { paddingValues ->
         Box(
@@ -181,9 +253,37 @@ fun BookshelfScreen(
         ) {
             if (books.isEmpty()) {
                 EmptyBookshelf(onImportClick = { openImportChooser() })
+            } else if (filteredBooks.isEmpty()) {
+                // 搜索无结果
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SearchOff,
+                        contentDescription = null,
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "未找到匹配的书籍",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "尝试其他关键词",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
+                    )
+                }
             } else {
                 LazyVerticalGrid(
-                    columns = GridCells.Fixed(3),
+                    columns = GridCells.Adaptive(minSize = 100.dp),
                     contentPadding = PaddingValues(
                         start = 16.dp,
                         end = 16.dp,
@@ -193,11 +293,8 @@ fun BookshelfScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    // 用 items(list, key={it.id}) + 末尾 item 写法，避免按 count+index 提供
-                    // key 时，gridCount 与 key lambda 跨 snapshot 读到不同 books.size，
-                    // 导致多个尾部 index 同时映射到 "import_card" 触发重复 key 崩溃。
                     items(
-                        items = books,
+                        items = filteredBooks,
                         key = { it.id }
                     ) { book ->
                         val selected = book.id in selectedIds
@@ -205,6 +302,7 @@ fun BookshelfScreen(
                             book = book,
                             selected = selected,
                             selectionMode = selectionMode,
+                            coverImageCache = coverImageCache,
                             onClick = {
                                 if (selectionMode) {
                                     selectedIds =
@@ -225,7 +323,7 @@ fun BookshelfScreen(
                             }
                         )
                     }
-                    if (!selectionMode) {
+                    if (!selectionMode && searchQuery.isEmpty()) {
                         item(key = "import_card") {
                             ImportBookCard(onClick = { openImportChooser() })
                         }
@@ -258,6 +356,15 @@ fun BookshelfScreen(
                             icon = Icons.Default.PushPin,
                             label = "置顶",
                             onClick = { viewModel.togglePinForSelection(selectedIds) }
+                        )
+                        ManagementBarButton(
+                            icon = Icons.Default.FavoriteBorder,
+                            label = "收藏",
+                            onClick = {
+                                filteredBooks
+                                    .filter { it.id in selectedIds }
+                                    .forEach { viewModel.toggleFavorite(it) }
+                            }
                         )
                         ManagementBarButton(
                             icon = Icons.Default.FolderSpecial,
@@ -437,6 +544,28 @@ private fun EmptyBookshelf(
     val shelfBg =
         if (isSystemInDarkTheme()) BookshelfPageBackgroundDark
         else BookshelfPageBackground
+
+    // 呼吸动画 - alpha 脉冲
+    val infiniteTransition = rememberInfiniteTransition(label = "breathing")
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.7f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = EaseInOutSine),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "breathing_alpha"
+    )
+    val scale by infiniteTransition.animateFloat(
+        initialValue = 0.95f,
+        targetValue = 1.05f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = EaseInOutSine),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "breathing_scale"
+    )
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -448,8 +577,14 @@ private fun EmptyBookshelf(
         Icon(
             imageVector = Icons.Default.MenuBook,
             contentDescription = null,
-            modifier = Modifier.size(80.dp),
-            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+            modifier = Modifier
+                .size(80.dp)
+                .graphicsLayer {
+                    this.alpha = alpha
+                    scaleX = scale
+                    scaleY = scale
+                },
+            tint = MaterialTheme.colorScheme.primary.copy(alpha = alpha)
         )
         Spacer(modifier = Modifier.height(16.dp))
         Text(
@@ -465,17 +600,36 @@ private fun EmptyBookshelf(
             textAlign = TextAlign.Center
         )
         Spacer(modifier = Modifier.height(24.dp))
-        ImportBookCard(onClick = onImportClick)
+        ImportBookCard(
+            onClick = onImportClick,
+            modifier = Modifier.width(100.dp)
+        )
     }
 }
 
 @Composable
-private fun ImportBookCard(onClick: () -> Unit) {
+private fun ImportBookCard(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val outline = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)
     val dashSurface = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+    val primaryColor = MaterialTheme.colorScheme.primary
+
+    val infiniteTransition = rememberInfiniteTransition(label = "dash_offset")
+    val dashOffset by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 30f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "dash_offset"
+    )
+
     Column(
-        modifier = Modifier
-            .width(100.dp)
+        modifier = modifier
+            .fillMaxWidth()
             .clickable(onClick = onClick)
     ) {
         Box(
@@ -484,19 +638,45 @@ private fun ImportBookCard(onClick: () -> Unit) {
                 .aspectRatio(0.75f)
                 .shadow(2.dp, RoundedCornerShape(8.dp))
                 .clip(RoundedCornerShape(8.dp))
-                .border(1.dp, outline, RoundedCornerShape(8.dp))
-                .background(dashSurface),
+                .background(dashSurface)
+                .drawBehind {
+                    val strokeWidth = 2.dp.toPx()
+                    val cornerRadius = 8.dp.toPx()
+                    drawRoundRect(
+                        color = outline,
+                        style = Stroke(
+                            width = strokeWidth,
+                            pathEffect = PathEffect.dashPathEffect(
+                                floatArrayOf(10f, 6f),
+                                dashOffset
+                            )
+                        ),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(cornerRadius)
+                    )
+                },
             contentAlignment = Alignment.Center
         ) {
-            Icon(
-                imageVector = Icons.Default.Add,
-                contentDescription = "导入书籍",
-                modifier = Modifier.size(32.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "导入书籍",
+                    modifier = Modifier.size(28.dp),
+                    tint = primaryColor
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "导入",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = primaryColor.copy(alpha = 0.8f)
+                )
+            }
         }
         Spacer(modifier = Modifier.height(8.dp))
-        Spacer(modifier = Modifier.height(36.dp))
+        // 与 BookCard 标题 + 副标题占位对齐，保持网格行高一致
+        Spacer(modifier = Modifier.height(32.dp))
     }
 }
 
@@ -506,6 +686,7 @@ private fun BookCard(
     book: BookEntity,
     selected: Boolean,
     selectionMode: Boolean,
+    coverImageCache: LruCache<String, ImageBitmap>,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
@@ -514,10 +695,19 @@ private fun BookCard(
         mutableStateOf<ImageBitmap?>(null)
     }
     LaunchedEffect(book.id, book.coverImagePath) {
-        coverImage = withContext(Dispatchers.IO) {
-            val p = book.coverImagePath ?: return@withContext null
-            if (!File(p).exists()) return@withContext null
-            BitmapFactory.decodeFile(p)?.asImageBitmap()
+        val cacheKey = book.coverImagePath ?: return@LaunchedEffect
+        val cached = coverImageCache.get(cacheKey)
+        if (cached != null) {
+            coverImage = cached
+        } else {
+            val decoded = withContext(Dispatchers.IO) {
+                if (!File(cacheKey).exists()) return@withContext null
+                BitmapFactory.decodeFile(cacheKey)?.asImageBitmap()
+            }
+            if (decoded != null) {
+                coverImageCache.put(cacheKey, decoded)
+            }
+            coverImage = decoded
         }
     }
     val dateFormat = SimpleDateFormat("MM-dd", Locale.getDefault())
@@ -530,9 +720,39 @@ private fun BookCard(
     val borderColor = MaterialTheme.colorScheme.primary
     val shape = RoundedCornerShape(10.dp)
 
+    // 点击缩放动画
+    var isPressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.95f else 1f,
+        animationSpec = spring(
+            stiffness = 400f,
+            dampingRatio = 0.6f
+        ),
+        label = "card_scale"
+    )
+
     Column(
         modifier = Modifier
-            .width(100.dp)
+            .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        when (event.type) {
+                            androidx.compose.ui.input.pointer.PointerEventType.Press -> {
+                                isPressed = true
+                            }
+                            androidx.compose.ui.input.pointer.PointerEventType.Release -> {
+                                isPressed = false
+                            }
+                        }
+                    }
+                }
+            }
             .then(
                 if (selected) Modifier.border(2.dp, borderColor, shape) else Modifier
             )
@@ -546,8 +766,13 @@ private fun BookCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(0.75f)
-                .shadow(4.dp, RoundedCornerShape(8.dp))
-                .clip(RoundedCornerShape(8.dp))
+                .shadow(
+                    elevation = 4.dp,
+                    shape = RoundedCornerShape(10.dp),
+                    ambientColor = Color.Black.copy(alpha = 0.12f),
+                    spotColor = Color.Black.copy(alpha = 0.16f)
+                )
+                .clip(RoundedCornerShape(10.dp))
         ) {
             val bmp = coverImage
             if (bmp != null) {
@@ -556,6 +781,23 @@ private fun BookCard(
                     contentDescription = book.title,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
+                )
+                // 封面底部渐变遮罩，让标题文字更清晰
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(40.dp)
+                        .align(Alignment.BottomCenter)
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.Transparent,
+                                    Color.Black.copy(alpha = 0.6f)
+                                ),
+                                startY = 0f,
+                                endY = 40f
+                            )
+                        )
                 )
             } else {
                 Box(Modifier.fillMaxSize().background(coverColor))
@@ -571,6 +813,23 @@ private fun BookCard(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(8.dp)
+                )
+                // 无封面时也添加底部渐变遮罩
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(40.dp)
+                        .align(Alignment.BottomCenter)
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.Transparent,
+                                    Color.Black.copy(alpha = 0.4f)
+                                ),
+                                startY = 0f,
+                                endY = 40f
+                            )
+                        )
                 )
             }
 

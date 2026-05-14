@@ -14,19 +14,29 @@ import android.text.method.LinkMovementMethod
 import android.view.View
 import android.widget.TextView
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -36,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.lerp
@@ -930,12 +941,25 @@ fun ReaderScreen(
                 }
             }
 
-            if (immersiveReading && showTopBar) {
+            AnimatedVisibility(
+                visible = immersiveReading && showTopBar,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .zIndex(1f),
+                enter = slideInVertically(
+                    initialOffsetY = { -it },
+                    animationSpec = tween(300)
+                ) + fadeIn(animationSpec = tween(300)),
+                exit = slideOutVertically(
+                    targetOffsetY = { -it },
+                    animationSpec = tween(300)
+                ) + fadeOut(animationSpec = tween(300)),
+            ) {
                 Surface(
                     modifier = Modifier
-                        .align(Alignment.TopCenter)
                         .fillMaxWidth()
-                        .zIndex(1f),
+                        .statusBarsPadding(),
                     shape = RectangleShape,
                     tonalElevation = 3.dp,
                     shadowElevation = 8.dp,
@@ -949,10 +973,26 @@ fun ReaderScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
+            }
+
+            AnimatedVisibility(
+                visible = immersiveReading && showTopBar,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .zIndex(1f),
+                enter = slideInVertically(
+                    initialOffsetY = { it },
+                    animationSpec = tween(300)
+                ) + fadeIn(animationSpec = tween(300)),
+                exit = slideOutVertically(
+                    targetOffsetY = { it },
+                    animationSpec = tween(300)
+                ) + fadeOut(animationSpec = tween(300)),
+            ) {
                 ReaderImmersiveBottomBar(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .zIndex(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     theme = currentTheme,
                     chromeBackground = readingChromeShade(currentTheme.backgroundColor),
                     onToc = { showToc = true },
@@ -969,7 +1009,8 @@ fun ReaderScreen(
                         modifier = Modifier
                             .align(Alignment.TopStart)
                             .fillMaxWidth()
-                            .height(26.dp)
+                            .statusBarsPadding()
+                            .height(32.dp)
                             .padding(horizontal = 16.dp)
                             .padding(top = 10.dp),
                         contentAlignment = Alignment.CenterStart
@@ -977,17 +1018,28 @@ fun ReaderScreen(
                         Text(
                             text = title,
                             style = MaterialTheme.typography.labelMedium,
-                            color = currentTheme.textColor.copy(alpha = 0.55f),
+                            color = currentTheme.textColor.copy(alpha = 0.7f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    brush = Brush.verticalGradient(
+                                        colors = listOf(
+                                            currentTheme.backgroundColor.copy(alpha = 0.7f),
+                                            currentTheme.backgroundColor.copy(alpha = 0f)
+                                        )
+                                    ),
+                                    shape = RoundedCornerShape(6.dp)
+                                )
+                                .padding(vertical = 2.dp, horizontal = 8.dp)
                         )
                     }
                 }
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .height(26.dp)
+                        .height(32.dp)
                         .wrapContentWidth(align = Alignment.End)
                         .padding(end = 16.dp, bottom = 10.dp),
                     contentAlignment = Alignment.CenterEnd
@@ -995,7 +1047,13 @@ fun ReaderScreen(
                     Text(
                         text = "${(readingProgress * 100).toInt()}%",
                         style = MaterialTheme.typography.labelMedium,
-                        color = currentTheme.textColor.copy(alpha = 0.55f)
+                        color = currentTheme.textColor.copy(alpha = 0.7f),
+                        modifier = Modifier
+                            .background(
+                                color = currentTheme.backgroundColor.copy(alpha = 0.6f),
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                            .padding(vertical = 2.dp, horizontal = 8.dp)
                     )
                 }
             }
@@ -1619,13 +1677,17 @@ private fun ReaderThemeSheet(
     onThemeChange: (ReadingTheme) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val allThemes = ReadingTheme.allThemes()
+    val firstRow = allThemes.take(3)
+    val secondRow = allThemes.drop(3)
+
     ModalBottomSheet(
         onDismissRequest = onDismiss
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(24.dp)
+                .padding(horizontal = 24.dp, vertical = 8.dp)
         ) {
             Text(
                 text = "阅读主题",
@@ -1633,18 +1695,42 @@ private fun ReaderThemeSheet(
                 fontWeight = FontWeight.Bold
             )
             Spacer(modifier = Modifier.height(16.dp))
+
+            // 第一行：3个主题
             Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                ReadingTheme.allThemes().forEach { theme ->
-                    ThemeOption(
+                firstRow.forEach { theme ->
+                    ThemeCardOption(
                         theme = theme,
                         isSelected = theme == currentTheme,
-                        onClick = { onThemeChange(theme) }
+                        onClick = { onThemeChange(theme) },
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // 第二行：剩余主题居中
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Spacer(modifier = Modifier.weight(1f))
+                secondRow.forEach { theme ->
+                    ThemeCardOption(
+                        theme = theme,
+                        isSelected = theme == currentTheme,
+                        onClick = { onThemeChange(theme) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Spacer(modifier = Modifier.weight(1f))
+            }
+
             Spacer(modifier = Modifier.height(24.dp))
         }
     }
@@ -1712,39 +1798,87 @@ private fun ReaderFontSheet(
 }
 
 @Composable
-private fun ThemeOption(
+private fun ThemeCardOption(
     theme: ReadingTheme,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
+    val accentColor = MaterialTheme.colorScheme.primary
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.clickable(onClick = onClick)
+        modifier = modifier.clickable(onClick = onClick)
     ) {
-        Box(
+        Card(
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = theme.backgroundColor
+            ),
             modifier = Modifier
-                .size(48.dp)
-                .clip(CircleShape)
-                .background(theme.backgroundColor)
+                .fillMaxWidth()
+                .aspectRatio(1f)
                 .then(
                     if (isSelected) {
-                        Modifier.padding(2.dp)
-                    } else Modifier
-                )
+                        Modifier.border(
+                            width = 2.5.dp,
+                            color = accentColor,
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                    } else {
+                        Modifier.border(
+                            width = 1.dp,
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                    }
+                ),
+            elevation = CardDefaults.cardElevation(
+                defaultElevation = if (isSelected) 4.dp else 1.dp
+            )
         ) {
-            if (isSelected) {
-                Icon(
-                    imageVector = Icons.Default.Check,
-                    contentDescription = null,
-                    tint = theme.textColor,
-                    modifier = Modifier.align(Alignment.Center)
-                )
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(6.dp)
+                ) {
+                    // 文字颜色预览行
+                    Text(
+                        text = "Aa",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = theme.textColor,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "文字",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = theme.secondaryTextColor
+                    )
+                }
+
+                // 选中勾选标记
+                if (isSelected) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = accentColor,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(4.dp)
+                            .size(18.dp)
+                    )
+                }
             }
         }
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(6.dp))
         Text(
             theme.name,
-            style = MaterialTheme.typography.labelSmall
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+            color = if (isSelected) accentColor else MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
@@ -2062,11 +2196,41 @@ private fun HighlightActionSheet(
 
             // 高亮颜色选择
             Text("选择高亮颜色", style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
             Row(
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
+                // "无颜色"选项
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                shape = CircleShape
+                            )
+                            .border(
+                                width = 1.5.dp,
+                                color = MaterialTheme.colorScheme.outlineVariant,
+                                shape = CircleShape
+                            )
+                            .clickable { onHighlight(Color.Transparent) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "无颜色",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text("无", style = MaterialTheme.typography.labelSmall)
+                }
+
                 val colors = listOf(
                     Color(0xFFFFFF00) to "黄色",
                     Color(0xFF00FF00) to "绿色",
@@ -2078,12 +2242,17 @@ private fun HighlightActionSheet(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(
                             modifier = Modifier
-                                .size(40.dp)
+                                .size(36.dp)
                                 .clip(CircleShape)
                                 .background(color)
+                                .border(
+                                    width = 2.dp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
+                                    shape = CircleShape
+                                )
                                 .clickable { onHighlight(color) }
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(3.dp))
                         Text(name, style = MaterialTheme.typography.labelSmall)
                     }
                 }

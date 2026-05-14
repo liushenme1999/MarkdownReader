@@ -97,7 +97,7 @@ val BookCoverColors = listOf(
     Color(0xFFAED581),
     Color(0xFFFF8A65),
     Color(0xFFFFB74D),
-    Color(0xFFFFB74D),
+    Color(0xFFFFCC80),
     Color(0xFF90A4AE),
     Color(0xFFB0BEC5)
 )

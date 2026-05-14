@@ -1,8 +1,11 @@
 package com.example.markdownreader.ui.screens.notes
 
+import android.app.Activity
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -16,11 +19,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.example.markdownreader.data.local.entity.HighlightEntity
@@ -43,6 +49,34 @@ fun NotesScreen(
     val bookmarks by viewModel.allBookmarks.collectAsState()
     var selectedTab by remember { mutableIntStateOf(0) }
     var showExportDialog by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+
+    // 状态栏适配
+    val view = LocalView.current
+    val systemInDarkTheme = isSystemInDarkTheme()
+    DisposableEffect(systemInDarkTheme) {
+        val window = (view.context as Activity).window
+        val controller = WindowCompat.getInsetsController(window, view)
+        controller.isAppearanceLightStatusBars = !systemInDarkTheme
+        onDispose { }
+    }
+
+    // 根据搜索关键词过滤数据
+    val filteredHighlights = remember(highlights, searchQuery) {
+        if (searchQuery.isBlank()) highlights
+        else highlights.filter {
+            it.highlight.highlightedText.contains(searchQuery, ignoreCase = true) ||
+                    it.bookTitle.contains(searchQuery, ignoreCase = true)
+        }
+    }
+
+    val filteredBookmarks = remember(bookmarks, searchQuery) {
+        if (searchQuery.isBlank()) bookmarks
+        else bookmarks.filter {
+            it.bookmark.previewText.contains(searchQuery, ignoreCase = true) ||
+                    it.bookTitle.contains(searchQuery, ignoreCase = true)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -73,30 +107,71 @@ fun NotesScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
+            // 搜索框
+            SearchBar(
+                query = searchQuery,
+                onQueryChange = { searchQuery = it },
+                onSearch = { /* 搜索已实时过滤 */ },
+                active = false,
+                onActiveChange = {},
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                placeholder = {
+                    Text(
+                        if (selectedTab == 0) "搜索划线内容或书名..."
+                        else "搜索书签内容或书名..."
+                    )
+                },
+                leadingIcon = {
+                    Icon(Icons.Default.Search, contentDescription = "搜索")
+                },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(Icons.Default.Clear, contentDescription = "清除")
+                        }
+                    }
+                },
+                shape = RoundedCornerShape(12.dp)
+            ) {}
+
             // 标签页切换
             TabRow(selectedTabIndex = selectedTab) {
                 Tab(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
-                    text = { Text("划线笔记 (${highlights.size})") }
+                    text = { Text("划线笔记 (${filteredHighlights.size})") }
                 )
                 Tab(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
-                    text = { Text("书签 (${bookmarks.size})") }
+                    text = { Text("书签 (${filteredBookmarks.size})") }
                 )
             }
 
             // 内容列表
             when (selectedTab) {
-                0 -> HighlightsList(
-                    highlights = highlights,
-                    onDelete = { viewModel.deleteHighlight(it) }
-                )
-                1 -> BookmarksList(
-                    bookmarks = bookmarks,
-                    onDelete = { viewModel.deleteBookmark(it) }
-                )
+                0 -> Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                ) {
+                    HighlightsList(
+                        highlights = filteredHighlights,
+                        onDelete = { viewModel.deleteHighlight(it) }
+                    )
+                }
+                1 -> Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                ) {
+                    BookmarksList(
+                        bookmarks = filteredBookmarks,
+                        onDelete = { viewModel.deleteBookmark(it) }
+                    )
+                }
             }
         }
     }
@@ -117,9 +192,13 @@ private fun HighlightsList(
     onDelete: (HighlightEntity) -> Unit
 ) {
     if (highlights.isEmpty()) {
-        EmptyState(message = "还没有划线笔记")
+        EmptyState(
+            message = "还没有划线笔记",
+            modifier = Modifier.fillMaxSize()
+        )
     } else {
         LazyColumn(
+            modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -145,9 +224,13 @@ private fun BookmarksList(
     }
 
     if (bookmarks.isEmpty()) {
-        EmptyState(message = "还没有书签")
+        EmptyState(
+            message = "还没有书签",
+            modifier = Modifier.fillMaxSize()
+        )
     } else {
         LazyColumn(
+            modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -174,81 +257,101 @@ private fun HighlightCard(
     onDelete: () -> Unit
 ) {
     val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+    val highlightColor = Color(highlight.highlight.color)
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
+        Row(
+            modifier = Modifier.fillMaxHeight()
         ) {
-            // 书籍信息
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(8.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color(highlight.highlight.color))
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = highlight.bookTitle,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.weight(1f))
-                Text(
-                    text = dateFormat.format(highlight.highlight.createTime),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // 高亮内容
-            Text(
-                text = highlight.highlight.highlightedText,
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = FontWeight.Medium
-                ),
+            // 左侧彩色竖条装饰
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .width(5.dp)
+                    .fillMaxHeight()
                     .background(
-                        color = Color(highlight.highlight.color).copy(alpha = 0.3f),
-                        shape = RoundedCornerShape(4.dp)
+                        color = highlightColor,
+                        shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)
                     )
-                    .padding(12.dp)
             )
 
-            // 笔记
-            if (!highlight.highlight.note.isNullOrEmpty()) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "笔记: ${highlight.highlight.note}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // 操作按钮
-            Row(
-                horizontalArrangement = Arrangement.End,
-                modifier = Modifier.fillMaxWidth()
+            Column(
+                modifier = Modifier.padding(18.dp)
             ) {
-                TextButton(onClick = onDelete) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
+                // 书籍信息
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(highlightColor)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("删除")
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = highlight.bookTitle,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        text = dateFormat.format(highlight.highlight.createTime),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // 高亮内容
+                Text(
+                    text = highlight.highlight.highlightedText,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontWeight = FontWeight.Medium
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            color = highlightColor.copy(alpha = 0.3f),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .padding(12.dp)
+                )
+
+                // 笔记
+                if (!highlight.highlight.note.isNullOrEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "笔记: ${highlight.highlight.note}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // 操作按钮
+                Row(
+                    horizontalArrangement = Arrangement.End,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    TextButton(onClick = onDelete) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("删除")
+                    }
                 }
             }
         }
@@ -331,10 +434,14 @@ private fun BookmarkCard(
                         }
                     )
                 },
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface
+            )
         ) {
             Column(
-                modifier = Modifier.padding(16.dp)
+                modifier = Modifier.padding(18.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -379,7 +486,7 @@ private fun BookmarkCard(
                             .fillMaxWidth()
                             .background(
                                 color = MaterialTheme.colorScheme.surfaceVariant,
-                                shape = RoundedCornerShape(4.dp)
+                                shape = RoundedCornerShape(8.dp)
                             )
                             .padding(8.dp)
                     )
@@ -390,9 +497,21 @@ private fun BookmarkCard(
 }
 
 @Composable
-private fun EmptyState(message: String) {
+private fun EmptyState(message: String, modifier: Modifier = Modifier) {
+    // 呼吸动画：alpha 脉冲
+    val infiniteTransition = rememberInfiniteTransition(label = "breathing")
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 0.6f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1200, easing = EaseInOutSine),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "breathingAlpha"
+    )
+
     Box(
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -402,7 +521,7 @@ private fun EmptyState(message: String) {
                 imageVector = Icons.Default.NoteAlt,
                 contentDescription = null,
                 modifier = Modifier.size(64.dp),
-                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+                tint = MaterialTheme.colorScheme.primary.copy(alpha = alpha)
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(

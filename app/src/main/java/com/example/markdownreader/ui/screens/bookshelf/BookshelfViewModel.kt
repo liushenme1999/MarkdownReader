@@ -127,7 +127,7 @@ class BookshelfViewModel @Inject constructor(
             author = author,
             filePath = filePath,
             importFormat = format.storedKey,
-            coverColor = Random.nextInt(BookCoverColors.size),
+            coverColor = Random.nextInt(BOOK_COVER_COLOR_COUNT),
             totalChars = content.length,
             addTime = Date()
         )
@@ -284,22 +284,7 @@ class BookshelfViewModel @Inject constructor(
     }
 
     companion object {
-        val BookCoverColors = listOf(
-            android.graphics.Color.parseColor("#E57373"),
-            android.graphics.Color.parseColor("#F06292"),
-            android.graphics.Color.parseColor("#BA68C8"),
-            android.graphics.Color.parseColor("#9575CD"),
-            android.graphics.Color.parseColor("#7986CB"),
-            android.graphics.Color.parseColor("#64B5F6"),
-            android.graphics.Color.parseColor("#4FC3F7"),
-            android.graphics.Color.parseColor("#4DD0E1"),
-            android.graphics.Color.parseColor("#4DB6AC"),
-            android.graphics.Color.parseColor("#81C784"),
-            android.graphics.Color.parseColor("#AED581"),
-            android.graphics.Color.parseColor("#FF8A65"),
-            android.graphics.Color.parseColor("#FFB74D"),
-            android.graphics.Color.parseColor("#90A4AE"),
-            android.graphics.Color.parseColor("#B0BEC5")
-        )
+        /** 封面颜色数量，与 [com.example.markdownreader.ui.theme.BookCoverColors] 保持同步 */
+        const val BOOK_COVER_COLOR_COUNT = 16
     }
 }

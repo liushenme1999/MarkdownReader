@@ -4,11 +4,9 @@ import android.os.Bundle
 import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -26,11 +24,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.unit.dp
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -64,6 +60,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContent {
             MarkdownReaderTheme {
@@ -82,9 +79,7 @@ class MainActivity : ComponentActivity() {
                     Scaffold(
                         bottomBar = {
                             if (showBottomBar) {
-                                // Material3 默认约 80.dp，高度改为约 3/4
                                 NavigationBar(
-                                    modifier = Modifier.height(60.dp),
                                     containerColor = MainNavigationBarBackground
                                 ) {
                                     MainBottomNavItem(
@@ -162,27 +157,23 @@ private fun RowScope.MainBottomNavItem(
     icon: ImageVector,
     label: String,
 ) {
-    val tint =
-        if (selected) MainNavTabSelectedTint
-        else MaterialTheme.colorScheme.onSurfaceVariant
     NavigationBarItem(
         icon = {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                Icon(icon, contentDescription = label, tint = tint)
-                Text(
-                    label,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = tint
-                )
-            }
+            Icon(icon, contentDescription = label)
         },
-        label = null,
+        label = {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium
+            )
+        },
         selected = selected,
         onClick = onClick,
         colors = NavigationBarItemDefaults.colors(
+            selectedIconColor = MainNavTabSelectedTint,
+            selectedTextColor = MainNavTabSelectedTint,
+            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
             indicatorColor = Color.Transparent
         )
     )
