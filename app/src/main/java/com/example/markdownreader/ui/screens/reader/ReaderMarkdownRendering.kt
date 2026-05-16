@@ -2,6 +2,7 @@ package com.example.markdownreader.ui.screens.reader
 
 import android.app.Activity
 import android.content.Context
+import android.text.Selection
 import android.text.Spannable
 import android.text.SpannableString
 import android.text.Spanned
@@ -246,17 +247,14 @@ internal fun MarkdownReaderView(
                         val start = selectionStart
                         val end = selectionEnd
                         val len = text.length
-                        if (start < 0 || end < 0 || len == 0) {
-                            onTextSelected("")
-                            return
+                        if (start >= 0 && end >= 0 && len > 0) {
+                            val from = start.coerceAtMost(end).coerceIn(0, len)
+                            val to = start.coerceAtLeast(end).coerceIn(0, len)
+                            if (from < to) {
+                                onTextSelected(text.substring(from, to))
+                            }
                         }
-                        val from = start.coerceAtMost(end).coerceIn(0, len)
-                        val to = start.coerceAtLeast(end).coerceIn(0, len)
-                        if (from >= to) {
-                            onTextSelected("")
-                            return
-                        }
-                        onTextSelected(text.substring(from, to))
+                        exitSelectionMode()
                     }
                 }
 
@@ -365,11 +363,19 @@ internal fun bindReaderGesturesAndScroll(
                 touchState.downX = e.x
                 touchState.downY = e.y
                 touchState.scrollYOnDown = tv?.scrollY ?: 0
+                (tv as? SafeReaderTextView)?.prepareForNewTouch()
                 if (!allowVerticalScroll) {
                     v.parent?.requestDisallowInterceptTouchEvent(false)
                 }
             }
             MotionEvent.ACTION_MOVE -> {
+                if (allowVerticalScroll && tv is SafeReaderTextView) {
+                    val dx = e.x - touchState.downX
+                    val dy = e.y - touchState.downY
+                    if (kotlin.math.abs(dy) > slop && kotlin.math.abs(dy) > kotlin.math.abs(dx)) {
+                        tv.markVerticalScrollDrag()
+                    }
+                }
                 if (!allowVerticalScroll && tv != null) {
                     val dx = e.x - touchState.downX
                     val dy = e.y - touchState.downY
@@ -451,33 +457,69 @@ internal fun previewPlainTextFromTextViewTop(tv: TextView): String {
 }
 
 /**
- * 阅读器用的 TextView 子类，吞掉两类已知 Android 框架 bug：
+ * 阅读器 TextView：默认不可拖选，**仅长按**进入选词；纵向滑动时主动取消误触发的选区。
  *
- * 1. `Editor.performLongClick` 里访问尚未初始化的
- *    `SelectionModifierCursorController` 抛 `NullPointerException`
- *    （https://issuetracker.google.com/issues/37095917 起就存在，
- *    MIUI / Android 11/12 上仍可复现）。
- *
- * 2. `ArrowKeyMovementMethod.onTouchEvent` 在长文 selection 边界
- *    偶发 `IndexOutOfBoundsException`。
- *
- * 这些都是 framework 内部状态问题，无法在应用层根治；包一层 catch
- * 让长按时退化为「不进入文本选择」即可，比直接 crash 体验好得多。
+ * 另吞掉 MIUI 等机型上 `Editor.performLongClick` / `ArrowKeyMovementMethod` 的已知 NPE、越界。
  */
 internal class SafeReaderTextView(context: Context) : TextView(context) {
     /** 分页翻页模式下为 false：禁止上下滚动，仅由 HorizontalPager 横向翻页 */
     var allowVerticalScroll: Boolean = true
 
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private var touchDownX = 0f
+    private var touchDownY = 0f
+    /** 当前手势是否为上下滑动（超过 slop 的纵向位移） */
+    private var isVerticalScrollDrag = false
+    private var activeActionMode: ActionMode? = null
+
     init {
-        // 必须显式开启 textIsSelectable，否则 Editor.startSelectionActionMode() 会走
-        // textCanBeSelected() 检查直接取消选择，日志表现为
-        //   "TextView does not support text selection. Selection cancelled."
-        // setTextIsSelectable(true) 会顺带把 movementMethod 重置为 ArrowKeyMovementMethod，
-        // 立刻覆盖回 LinkMovementMethod 以保留 url 点击行为；mTextIsSelectable=true
-        // 不受影响，长按选词仍能进入 ActionMode。
-        setTextIsSelectable(true)
+        // 默认关闭：避免滑动时系统 Editor 误开选区；长按前再临时打开。
+        setTextIsSelectable(false)
         movementMethod = LinkMovementMethod.getInstance()
         isVerticalScrollBarEnabled = false
+        isLongClickable = true
+    }
+
+    /** 新一次触摸开始：收起上一轮选区，避免滑动时拖着旧选区走。 */
+    fun prepareForNewTouch() {
+        isVerticalScrollDrag = false
+        exitSelectionMode()
+    }
+
+    /** 由外层手势层或本 View 在判定为纵向滑动时调用。 */
+    fun markVerticalScrollDrag() {
+        if (!isVerticalScrollDrag) {
+            isVerticalScrollDrag = true
+            exitSelectionMode()
+        }
+    }
+
+    /** 结束选词模式并关闭 ActionMode（划线面板依赖 onDestroyActionMode 回调）。 */
+    fun exitSelectionMode() {
+        activeActionMode?.finish()
+        activeActionMode = null
+        setTextIsSelectable(false)
+        val spannable = text
+        if (spannable is Spannable) {
+            val selStart = Selection.getSelectionStart(spannable)
+            val selEnd = Selection.getSelectionEnd(spannable)
+            if (selStart >= 0 && selEnd >= 0 && selStart != selEnd) {
+                val collapsed = selEnd.coerceIn(0, spannable.length)
+                Selection.setSelection(spannable, collapsed, collapsed)
+            }
+        }
+    }
+
+    override fun startActionMode(callback: ActionMode.Callback): ActionMode? {
+        val mode = super.startActionMode(callback)
+        activeActionMode = mode
+        return mode
+    }
+
+    override fun startActionMode(callback: ActionMode.Callback?, type: Int): ActionMode? {
+        val mode = super.startActionMode(callback, type)
+        activeActionMode = mode
+        return mode
     }
 
     override fun canScrollVertically(direction: Int): Boolean =
@@ -491,21 +533,57 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         }
     }
 
-    override fun performLongClick(): Boolean = try {
-        super.performLongClick()
+    override fun performLongClick(): Boolean {
+        if (isVerticalScrollDrag) return false
+        return performLongClickForSelection()
+    }
+
+    override fun performLongClick(x: Float, y: Float): Boolean {
+        if (isVerticalScrollDrag) return false
+        return performLongClickForSelection(x, y)
+    }
+
+    private fun performLongClickForSelection(x: Float? = null, y: Float? = null): Boolean = try {
+        setTextIsSelectable(true)
+        val ok = if (x != null && y != null) {
+            super.performLongClick(x, y)
+        } else {
+            super.performLongClick()
+        }
+        if (!ok) {
+            setTextIsSelectable(false)
+        }
+        ok
     } catch (_: NullPointerException) {
+        setTextIsSelectable(false)
         false
     }
 
-    override fun performLongClick(x: Float, y: Float): Boolean = try {
-        super.performLongClick(x, y)
-    } catch (_: NullPointerException) {
-        false
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                touchDownX = event.x
+                touchDownY = event.y
+                isVerticalScrollDrag = false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (allowVerticalScroll) {
+                    val dx = kotlin.math.abs(event.x - touchDownX)
+                    val dy = kotlin.math.abs(event.y - touchDownY)
+                    if (dy > touchSlop && dy > dx) {
+                        markVerticalScrollDrag()
+                    }
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                isVerticalScrollDrag = false
+            }
+        }
+        return dispatchReaderTouchEvent(event)
     }
 
-    override fun onTouchEvent(event: MotionEvent): Boolean = try {
+    private fun dispatchReaderTouchEvent(event: MotionEvent): Boolean = try {
         if (!allowVerticalScroll) {
-            // 分页模式：禁用纵向滚动，保留链接点击
             val spannable = text as? Spannable
             movementMethod?.onTouchEvent(this, spannable, event) == true
         } else {

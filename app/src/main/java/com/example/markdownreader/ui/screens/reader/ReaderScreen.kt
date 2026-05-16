@@ -196,6 +196,8 @@ fun ReaderScreen(
     var displayWindowStartChar by remember(content, readerLoadEpoch) { mutableIntStateOf(0) }
     var displayWindowEndChar by remember(content, readerLoadEpoch) { mutableIntStateOf(0) }
     var pendingScrollRestoreY by remember(content) { mutableStateOf<Int?>(null) }
+    /** 向上扩窗后，按全书字符锚点恢复视口，避免跳到章节顶部。 */
+    var pendingScrollRestoreGlobalChar by remember(content) { mutableStateOf<Int?>(null) }
     val displayedContent = remember(content, displayWindowStartChar, displayWindowEndChar) {
         when {
             content.isEmpty() -> ""
@@ -308,9 +310,7 @@ fun ReaderScreen(
         }
     }
 
-    // 扩窗（displayWindowEndChar 增加）后还原扩窗前 scrollY，避免视口跳到顶部。
-    // 因为 displayedContent 是前缀且只在尾部追加，前面字符的 layout 高度保持稳定，
-    // scrollY 可以直接复用扩窗前的像素值。
+    // 向下扩窗：复用扩窗前的 scrollY（尾部追加，前面 layout 高度不变）。
     LaunchedEffect(displayWindowEndChar) {
         val savedY = pendingScrollRestoreY ?: return@LaunchedEffect
         val tv = readerTextView.value ?: run {
@@ -330,6 +330,40 @@ fun ReaderScreen(
             delay(32)
         }
         pendingScrollRestoreY = null
+    }
+
+    // 向上扩窗：按全书字符锚点滚动，避免视口卡在章节第一行。
+    LaunchedEffect(displayWindowStartChar, pendingScrollRestoreGlobalChar) {
+        val anchorGlobal = pendingScrollRestoreGlobalChar ?: return@LaunchedEffect
+        if (content.isEmpty()) {
+            pendingScrollRestoreGlobalChar = null
+            return@LaunchedEffect
+        }
+        val tv = awaitReaderTextViewLayout({ readerTextView.value }, maxAttempts = 120) ?: run {
+            pendingScrollRestoreGlobalChar = null
+            return@LaunchedEffect
+        }
+        val winStart = displayWindowStartChar
+        repeat(120) {
+            val layout = tv.layout
+            val tvTextLen = tv.text?.length ?: 0
+            val layoutTextLen = layout?.text?.length ?: -1
+            if (layout != null && tvTextLen > 0 && layoutTextLen == tvTextLen) {
+                val offset = resolveDisplayedCharOffset(
+                    sourceContent = content,
+                    sourceOffset = anchorGlobal.coerceIn(0, content.length - 1),
+                    displayedText = tv.text,
+                    renderPlainText = renderPlainText,
+                    windowStart = winStart,
+                    tocEntries = tocEntries,
+                )
+                tv.post { scrollTextViewToCharOffset(tv, offset) }
+                pendingScrollRestoreGlobalChar = null
+                return@LaunchedEffect
+            }
+            delay(32)
+        }
+        pendingScrollRestoreGlobalChar = null
     }
 
     val view = LocalView.current
@@ -457,11 +491,22 @@ fun ReaderScreen(
                                         viewModel.updateReadingProgress(
                                             globalChar.toFloat() / total
                                         )
-                                        if (winEnd < content.length &&
+                                        val tv = readerTextView.value
+                                        if (winStart > 0 &&
+                                            pendingScrollRestoreGlobalChar == null &&
                                             pendingScrollRestoreY == null &&
+                                            localProgress <= READER_EXPAND_TRIGGER_NEAR_START_PROGRESS
+                                        ) {
+                                            val topGlobal = winStart + (tv?.let { charOffsetAtScrollTop(it) } ?: 0)
+                                            pendingScrollRestoreGlobalChar = topGlobal.coerceIn(0, content.length)
+                                            displayWindowStartChar = previousWindowStart(
+                                                chapterBoundaries, winStart, 0
+                                            )
+                                        } else if (winEnd < content.length &&
+                                            pendingScrollRestoreY == null &&
+                                            pendingScrollRestoreGlobalChar == null &&
                                             localProgress >= READER_EXPAND_TRIGGER_LOCAL_PROGRESS
                                         ) {
-                                            val tv = readerTextView.value
                                             pendingScrollRestoreY = tv?.scrollY ?: 0
                                             displayWindowEndChar = nextWindowEnd(
                                                 chapterBoundaries, winEnd, content.length
@@ -719,7 +764,10 @@ fun ReaderScreen(
                                 displayWindowStartChar = start
                                 displayWindowEndChar = end
                             },
-                            clearPendingRestore = { pendingScrollRestoreY = null },
+                            clearPendingRestore = {
+                                pendingScrollRestoreY = null
+                                pendingScrollRestoreGlobalChar = null
+                            },
                             onProgress = { viewModel.updateReadingProgress(p) }
                         )
                     }
@@ -776,7 +824,10 @@ fun ReaderScreen(
                                 displayWindowStartChar = start
                                 displayWindowEndChar = end
                             },
-                            clearPendingRestore = { pendingScrollRestoreY = null },
+                            clearPendingRestore = {
+                                pendingScrollRestoreY = null
+                                pendingScrollRestoreGlobalChar = null
+                            },
                             onProgress = { viewModel.updateReadingProgress(p) }
                         )
                     }

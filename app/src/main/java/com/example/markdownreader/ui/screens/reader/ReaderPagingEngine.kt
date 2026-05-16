@@ -144,11 +144,17 @@ internal const val READER_EXPAND_CHUNK_CHARS = 32 * 1024
 /** 进入阅读 / 跳转时目标位置之后的预读缓冲。 */
 internal const val READER_INITIAL_LOOKAHEAD_CHARS = 16 * 1024
 
+/** 进入阅读 / 跳转时目标位置之前的预读缓冲，便于跳章后仍能上滑回看上一章。 */
+internal const val READER_INITIAL_LOOKBEHIND_CHARS = 16 * 1024
+
 /** 单窗口最大字符数，防止单章过长再次卡顿。 */
 internal const val READER_MAX_WINDOW_CHARS = 96 * 1024
 
-/** 当窗口内 local 进度超过该比例且仍有未渲染章节，触发扩窗。 */
+/** 当窗口内 local 进度超过该比例且仍有未渲染章节，触发向下扩窗。 */
 internal const val READER_EXPAND_TRIGGER_LOCAL_PROGRESS = 0.78f
+
+/** 当窗口内滚动接近顶部且 start > 0 时，触发向上扩窗。 */
+internal const val READER_EXPAND_TRIGGER_NEAR_START_PROGRESS = 0.22f
 
 /** 计算章节边界数组（升序、含 0 与 content.length）。 */
 internal fun computeChapterBoundaries(content: String, toc: List<MarkdownTocEntry>): IntArray {
@@ -189,6 +195,37 @@ internal fun nextWindowEnd(boundaries: IntArray, currentEnd: Int, hardCap: Int):
     return expandWindowEndToCover(boundaries, target, hardCap)
 }
 
+/** 把窗口左沿至少回退 [atLeastChars]，并对齐到章节边界。 */
+internal fun expandWindowStartBackward(
+    boundaries: IntArray,
+    currentStart: Int,
+    atLeastChars: Int,
+    hardMin: Int = 0,
+): Int {
+    if (currentStart <= hardMin) return hardMin
+    if (boundaries.isEmpty()) {
+        return (currentStart - atLeastChars).coerceAtLeast(hardMin)
+    }
+    val target = (currentStart - atLeastChars).coerceAtLeast(hardMin)
+    val idx = boundaries.indexOfLast { it <= target }.coerceAtLeast(0)
+    return boundaries[idx].coerceAtLeast(hardMin)
+}
+
+/** 在当前 windowStart 基础上至少回退 [READER_EXPAND_CHUNK_CHARS] 并对齐到上一章节边界。 */
+internal fun previousWindowStart(
+    boundaries: IntArray,
+    currentStart: Int,
+    hardMin: Int = 0,
+): Int {
+    if (currentStart <= hardMin) return hardMin
+    return expandWindowStartBackward(
+        boundaries,
+        currentStart,
+        READER_EXPAND_CHUNK_CHARS,
+        hardMin
+    )
+}
+
 internal fun chapterStartBefore(boundaries: IntArray, charPos: Int): Int {
     if (boundaries.isEmpty()) return 0
     val idx = boundaries.indexOfLast { it <= charPos }.coerceAtLeast(0)
@@ -201,14 +238,24 @@ internal fun computeReadingWindow(
     charPos: Int,
     contentLen: Int,
     lookaheadChars: Int = READER_INITIAL_LOOKAHEAD_CHARS,
+    lookbehindChars: Int = READER_INITIAL_LOOKBEHIND_CHARS,
 ): Pair<Int, Int> {
     if (contentLen <= 0) return 0 to 0
     val safe = charPos.coerceIn(0, contentLen - 1)
     var start = chapterStartBefore(boundaries, safe)
+    if (lookbehindChars > 0 && start > 0) {
+        start = expandWindowStartBackward(boundaries, start, lookbehindChars, 0)
+    }
     var end = expandWindowEndToCover(boundaries, safe + lookaheadChars, contentLen)
     if (end <= start) end = (start + 1).coerceAtMost(contentLen)
     if (end - start > READER_MAX_WINDOW_CHARS) {
-        start = (safe - READER_MAX_WINDOW_CHARS / 5).coerceAtLeast(chapterStartBefore(boundaries, safe))
+        val chapterStart = chapterStartBefore(boundaries, safe)
+        val minStart = if (lookbehindChars > 0) {
+            expandWindowStartBackward(boundaries, chapterStart, lookbehindChars, 0)
+        } else {
+            chapterStart
+        }
+        start = (safe - READER_MAX_WINDOW_CHARS / 5).coerceAtLeast(minStart)
         end = (start + READER_MAX_WINDOW_CHARS).coerceAtMost(contentLen)
         if (safe >= end) end = (safe + 1).coerceAtMost(contentLen)
     }
@@ -396,6 +443,16 @@ internal suspend fun awaitReaderTextViewLayout(
         kotlinx.coroutines.delay(32)
     }
     return tvProvider()
+}
+
+/** 当前视口顶部对应的正文字符下标（相对 TextView 内文本）。 */
+internal fun charOffsetAtScrollTop(tv: TextView): Int {
+    val layout = tv.layout ?: return 0
+    val len = tv.text?.length ?: 0
+    if (len == 0) return 0
+    val y = (tv.scrollY + tv.paddingTop).coerceAtLeast(0)
+    val line = layout.getLineForVertical(y).coerceIn(0, (layout.lineCount - 1).coerceAtLeast(0))
+    return layout.getLineStart(line).coerceIn(0, (len - 1).coerceAtLeast(0))
 }
 
 /** 按 layout 行顶滚动到字符偏移，比「字符比例 ≈ scrollY」更贴近目录/书签目标。 */
