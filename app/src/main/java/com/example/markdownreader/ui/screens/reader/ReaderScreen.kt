@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.text.Spannable
 import android.text.SpannableString
+import android.text.Spanned
 import android.text.style.BackgroundColorSpan
 import android.view.ActionMode
 import android.view.Menu
@@ -29,7 +30,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
@@ -64,6 +64,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.core.graphics.ColorUtils
@@ -75,9 +76,11 @@ import androidx.navigation.NavController
 import com.example.markdownreader.data.local.entity.HighlightEntity
 import com.example.markdownreader.importing.ImportedBookFormat
 import com.example.markdownreader.model.ReaderPageTurnMode
+import com.example.markdownreader.ui.theme.MarkdownReaderTheme
 import com.example.markdownreader.ui.theme.ReadingTheme
 import io.noties.markwon.Markwon
 import io.noties.markwon.core.CorePlugin
+import io.noties.markwon.core.spans.HeadingSpan
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.ext.tables.TablePlugin
 import io.noties.markwon.ext.latex.JLatexMathPlugin
@@ -111,6 +114,38 @@ private val ReaderHideChromeScrollThreshold = 56.dp
 
 private val ReaderImmersiveBottomBarHeight = 56.dp
 
+/** 沉浸章节条显示时，正文 TextView 顶部额外留白（dp），略小于常规页边距 */
+private const val ReaderChapterStripBodyTopPaddingDp = 4
+
+@Composable
+private fun ReaderImmersiveChapterTitleBar(
+    title: String,
+    theme: ReadingTheme,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(theme.backgroundColor)
+    ) {
+        Spacer(
+            Modifier
+                .fillMaxWidth()
+                .windowInsetsTopHeight(WindowInsets.statusBars)
+        )
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelMedium,
+            color = theme.textColor.copy(alpha = 0.7f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 2.dp)
+        )
+    }
+}
+
 @Composable
 private fun ReaderImmersiveBottomBar(
     modifier: Modifier = Modifier,
@@ -128,13 +163,14 @@ private fun ReaderImmersiveBottomBar(
         shadowElevation = 8.dp,
         color = chromeBackground
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(ReaderImmersiveBottomBarHeight),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(ReaderImmersiveBottomBarHeight),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
             val iconTint = theme.textColor
             IconButton(onClick = onToc) {
                 Icon(
@@ -171,6 +207,13 @@ private fun ReaderImmersiveBottomBar(
                     tint = iconTint
                 )
             }
+            }
+            // 底栏背景延伸到屏幕底，图标区在导航条/小白条之上
+            Spacer(
+                Modifier
+                    .fillMaxWidth()
+                    .windowInsetsBottomHeight(WindowInsets.navigationBars)
+            )
         }
     }
 }
@@ -186,6 +229,8 @@ private fun ReaderTopAppBar(
 ) {
     TopAppBar(
         modifier = modifier,
+        // Scaffold topBar 或外层 statusBarsPadding 已处理顶 inset，避免与 TopAppBar 默认 insets 叠加
+        windowInsets = WindowInsets(),
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = readingChromeShade(theme.backgroundColor),
             titleContentColor = theme.textColor,
@@ -269,16 +314,17 @@ private fun splitMarkdownToPages(content: String, targetChars: Int): List<Pair<S
 }
 
 // ============== 章节惰性渲染窗口工具（仅用于 VerticalScroll 模式） ==============
-// 巨型 Markdown（>200KB）一次性 setText 后，TextView 必须 measure 整段——典型用时
-// 数百毫秒，触发 ANR 警告与 Skipped frames。这里把正文拆成 [0..displayWindowEndChar)
-// 的滑动窗口：首屏只渲染「当前阅读进度对应章节 + 缓冲」，滚到窗口接近底部时再扩窗。
-// 章节边界优先使用 TOC.sourceOffset，无 TOC 时按固定步长虚构边界，保证巨型 TXT 也能惰性化。
+// 仅渲染 [windowStart, windowEnd) 片段，避免目录跳转到书末时把 0..目标 整段前缀塞进 TextView。
+// 章节边界优先使用 TOC.sourceOffset，无 TOC 时按固定步长虚构边界。
 
 /** 一次扩窗最少推进的字符数；同时也是无 TOC 时虚构边界的步长。 */
 private const val READER_EXPAND_CHUNK_CHARS = 32 * 1024
 
-/** 进入阅读时除目标位置外再多预渲染的字符数（为向下滚动预留缓冲）。 */
-private const val READER_INITIAL_LOOKAHEAD_CHARS = 32 * 1024
+/** 进入阅读 / 跳转时目标位置之后的预读缓冲。 */
+private const val READER_INITIAL_LOOKAHEAD_CHARS = 16 * 1024
+
+/** 单窗口最大字符数，防止单章过长再次卡顿。 */
+private const val READER_MAX_WINDOW_CHARS = 96 * 1024
 
 /** 当窗口内 local 进度超过该比例且仍有未渲染章节，触发扩窗。 */
 private const val READER_EXPAND_TRIGGER_LOCAL_PROGRESS = 0.78f
@@ -322,60 +368,317 @@ private fun nextWindowEnd(boundaries: IntArray, currentEnd: Int, hardCap: Int): 
     return expandWindowEndToCover(boundaries, target, hardCap)
 }
 
+private fun chapterStartBefore(boundaries: IntArray, charPos: Int): Int {
+    if (boundaries.isEmpty()) return 0
+    val idx = boundaries.indexOfLast { it <= charPos }.coerceAtLeast(0)
+    return boundaries[idx]
+}
+
+/** 围绕 [charPos] 计算阅读窗口 [start, end)，不再从全书开头截取。 */
+private fun computeReadingWindow(
+    boundaries: IntArray,
+    charPos: Int,
+    contentLen: Int,
+    lookaheadChars: Int = READER_INITIAL_LOOKAHEAD_CHARS,
+): Pair<Int, Int> {
+    if (contentLen <= 0) return 0 to 0
+    val safe = charPos.coerceIn(0, contentLen - 1)
+    var start = chapterStartBefore(boundaries, safe)
+    var end = expandWindowEndToCover(boundaries, safe + lookaheadChars, contentLen)
+    if (end <= start) end = (start + 1).coerceAtMost(contentLen)
+    if (end - start > READER_MAX_WINDOW_CHARS) {
+        start = (safe - READER_MAX_WINDOW_CHARS / 5).coerceAtLeast(chapterStartBefore(boundaries, safe))
+        end = (start + READER_MAX_WINDOW_CHARS).coerceAtMost(contentLen)
+        if (safe >= end) end = (safe + 1).coerceAtMost(contentLen)
+    }
+    return start to end
+}
+
+private fun extractSourceLineAt(source: String, sourceOffset: Int): String {
+    if (source.isEmpty()) return ""
+    val safe = sourceOffset.coerceIn(0, source.lastIndex.coerceAtLeast(0))
+    val lineStart = source.lastIndexOf('\n', safe - 1).let { if (it < 0) 0 else it + 1 }
+    val lineEnd = source.indexOf('\n', safe).let { if (it < 0) source.length else it }
+    return source.substring(lineStart, lineEnd).trim().take(200)
+}
+
+private fun anchorSearchCandidates(line: String, tocTitle: String? = null): List<String> {
+    val out = mutableListOf<String>()
+    if (!tocTitle.isNullOrBlank()) out += tocTitle.trim()
+    if (line.isNotEmpty()) {
+        val plain = line.trimStart('#').trim()
+        val stripped = plain.replace(Regex("""[*_`>#\[\]()!]"""), "").trim()
+        out += listOf(line, plain, stripped)
+    }
+    return out
+        .map { it.trim() }
+        .filter { it.length >= 2 }
+        .distinct()
+}
+
+private fun normalizeAnchorKey(text: String): String =
+    text.replace(Regex("""[*_`~>#\[\]()!]"""), "")
+        .replace(Regex("""\s+"""), " ")
+        .trim()
+        .lowercase()
+
+private fun titleMatchesRenderedLine(renderedLine: String, tocTitle: String): Boolean {
+    val a = normalizeAnchorKey(renderedLine)
+    val b = normalizeAnchorKey(tocTitle)
+    if (a.isEmpty() || b.isEmpty()) return false
+    return a == b || a.contains(b) || b.contains(a)
+}
+
+private fun lineAt(text: String, start: Int): String {
+    if (start < 0 || start >= text.length) return ""
+    val end = text.indexOf('\n', start).let { if (it < 0) text.length else it }
+    return text.substring(start, end).trim()
+}
+
+/** Markwon 为 ATX 标题打的 span；顺序与正文中的标题出现顺序一致。 */
+private fun markdownHeadingSpanStarts(text: CharSequence): List<Int> {
+    if (text !is Spanned) return emptyList()
+    val spans = text.getSpans(0, text.length, HeadingSpan::class.java)
+    if (spans.isEmpty()) return emptyList()
+    return spans
+        .map { text.getSpanStart(it) }
+        .distinct()
+        .sorted()
+}
+
+/** 当前窗口内、位于 [sourceOffset] 之前的目录标题个数（用于第 N 个标题定位）。 */
+private fun headingRankInWindow(
+    tocEntries: List<MarkdownTocEntry>,
+    sourceOffset: Int,
+    windowStart: Int,
+): Int = tocEntries.count { it.sourceOffset >= windowStart && it.sourceOffset < sourceOffset }
+
+private fun tocIndexForSourceOffset(
+    tocEntries: List<MarkdownTocEntry>,
+    sourceOffset: Int,
+): Int {
+    val exact = tocEntries.indexOfFirst { it.sourceOffset == sourceOffset }
+    if (exact >= 0) return exact
+    return tocEntries.indexOfLast { it.sourceOffset <= sourceOffset }.coerceAtLeast(0)
+}
+
+/** 在 [haystack] 中查找 [needle] 的第 [occurrence] 次出现（0-based），忽略大小写。 */
+private fun findOccurrenceIndex(haystack: String, needle: String, occurrence: Int): Int {
+    if (needle.length < 2 || occurrence < 0) return -1
+    var count = 0
+    var from = 0
+    while (from < haystack.length) {
+        val idx = haystack.indexOf(needle, from, ignoreCase = true)
+        if (idx < 0) return -1
+        if (count == occurrence) return idx
+        count++
+        from = idx + 1
+    }
+    return -1
+}
+
 /**
- * 章节窗口模式的目录/书签跳转：
- *   1. 计算「能覆盖 charPos + 缓冲」的目标 windowEnd；如果比当前 windowEnd 大，则扩窗。
- *   2. 异步等待 TextView 文本长度匹配目标 windowEnd 并 layout 就绪，再按
- *      `localProgress = charPos / targetWindowEnd` 调用 [scrollTextViewToProgress]。
- *   3. 更新 ViewModel 的全局进度。
+ * 将「源码字符下标」映射到当前 TextView 已渲染文本中的下标。
+ * Markwon 渲染后长度与 Markdown 源码不一致：优先用 HeadingSpan 序号，其次按窗口内第 N 次标题文本匹配。
+ */
+private fun resolveDisplayedCharOffset(
+    sourceContent: String,
+    sourceOffset: Int,
+    displayedText: CharSequence?,
+    renderPlainText: Boolean,
+    windowStart: Int,
+    tocEntries: List<MarkdownTocEntry>,
+    preferredEntry: MarkdownTocEntry? = null,
+): Int {
+    val displayed = displayedText?.toString().orEmpty()
+    val len = displayed.length
+    if (len == 0) return 0
+    if (renderPlainText) {
+        return (sourceOffset - windowStart).coerceIn(0, (len - 1).coerceAtLeast(0))
+    }
+
+    val entry = preferredEntry
+        ?: tocEntries.getOrNull(tocIndexForSourceOffset(tocEntries, sourceOffset))
+    val rankInWindow = headingRankInWindow(tocEntries, sourceOffset, windowStart)
+    val rankByTitleInWindow = entry?.let { e ->
+        tocEntries.count {
+            it.sourceOffset >= windowStart &&
+                it.sourceOffset < e.sourceOffset &&
+                normalizeAnchorKey(it.title) == normalizeAnchorKey(e.title)
+        }
+    } ?: rankInWindow
+
+    val headingStarts = markdownHeadingSpanStarts(displayedText ?: displayed)
+    if (headingStarts.isNotEmpty()) {
+        if (rankInWindow in headingStarts.indices) {
+            val atRank = headingStarts[rankInWindow]
+            if (entry == null || titleMatchesRenderedLine(lineAt(displayed, atRank), entry.title)) {
+                return atRank.coerceIn(0, (len - 1).coerceAtLeast(0))
+            }
+        }
+        if (entry != null) {
+            var titleMatchIndex = 0
+            for (start in headingStarts) {
+                if (titleMatchesRenderedLine(lineAt(displayed, start), entry.title)) {
+                    if (titleMatchIndex == rankByTitleInWindow) {
+                        return start.coerceIn(0, (len - 1).coerceAtLeast(0))
+                    }
+                    titleMatchIndex++
+                }
+            }
+        }
+    }
+
+    val anchorLine = extractSourceLineAt(sourceContent, sourceOffset)
+    val candidates = anchorSearchCandidates(anchorLine, entry?.title)
+    for (candidate in candidates) {
+        val idx = findOccurrenceIndex(displayed, candidate, rankByTitleInWindow)
+        if (idx >= 0) return idx.coerceIn(0, (len - 1).coerceAtLeast(0))
+    }
+
+    return (sourceOffset - windowStart).coerceIn(0, (len - 1).coerceAtLeast(0))
+}
+
+/** 将存储坐标（书签 position / totalChars）映射到当前正文字符下标。 */
+private fun resolveGlobalCharPos(
+    storedOffset: Int,
+    contentLength: Int,
+    totalChars: Int,
+): Int {
+    if (contentLength <= 0) return 0
+    val mapped = when {
+        totalChars <= 0 || totalChars == contentLength -> storedOffset
+        else -> (storedOffset.toLong() * contentLength / totalChars.toLong()).toInt()
+    }
+    return mapped.coerceIn(0, (contentLength - 1).coerceAtLeast(0))
+}
+
+private fun readingProgressForCharPos(charPos: Int, contentLength: Int): Float =
+    (charPos.toFloat() / contentLength.coerceAtLeast(1)).coerceIn(0f, 1f)
+
+/** layout 已基于当前文本测量完成。 */
+private fun isReaderTextViewLayoutReady(tv: TextView): Boolean {
+    val layout = tv.layout ?: return false
+    val len = tv.text?.length ?: 0
+    return len > 0 && layout.text?.length == len
+}
+
+private suspend fun awaitReaderTextViewLayout(
+    tvProvider: () -> TextView?,
+    maxAttempts: Int = 100,
+): TextView? {
+    repeat(maxAttempts) {
+        val tv = tvProvider()
+        if (tv != null && isReaderTextViewLayoutReady(tv)) {
+            return tv
+        }
+        kotlinx.coroutines.delay(32)
+    }
+    return tvProvider()
+}
+
+/** 按 layout 行顶滚动到字符偏移，比「字符比例 ≈ scrollY」更贴近目录/书签目标。 */
+private fun scrollTextViewToCharOffset(tv: TextView, charOffsetInText: Int) {
+    val layout = tv.layout ?: return
+    val len = tv.text?.length ?: 0
+    if (len == 0) return
+    val offset = charOffsetInText.coerceIn(0, (len - 1).coerceAtLeast(0))
+    val line = layout.getLineForOffset(offset).coerceIn(0, (layout.lineCount - 1).coerceAtLeast(0))
+    val innerH = tv.height - tv.paddingTop - tv.paddingBottom
+    if (innerH <= 0) return
+    val lineTop = layout.getLineTop(line)
+    val maxScroll = (layout.height - innerH).coerceAtLeast(0)
+    tv.scrollTo(0, lineTop.coerceIn(0, maxScroll))
+}
+
+/**
+ * 章节窗口模式的目录/书签跳转：切换窗口片段 → 等待渲染 → 锚点定位滚动。
  */
 private fun jumpToCharInChunkWindow(
     scope: kotlinx.coroutines.CoroutineScope,
     tvProvider: () -> TextView?,
+    sourceContent: String,
+    renderPlainText: Boolean,
     contentLen: Int,
     chapterBoundaries: IntArray,
-    windowEnd: Int,
     charPos: Int,
-    setWindowEnd: (Int) -> Unit,
+    tocEntries: List<MarkdownTocEntry>,
+    preferredTocEntry: MarkdownTocEntry? = null,
+    setReadingWindow: (start: Int, end: Int) -> Unit,
     clearPendingRestore: () -> Unit,
-    onProgress: () -> Unit
+    onProgress: () -> Unit,
 ) {
-    val targetEnd = if (charPos >= windowEnd - 1) {
-        expandWindowEndToCover(
-            chapterBoundaries,
-            charPos + READER_INITIAL_LOOKAHEAD_CHARS,
-            contentLen
-        ).also {
-            clearPendingRestore()
-            setWindowEnd(it)
-        }
-    } else {
-        windowEnd
-    }
+    val safeCharPos = charPos.coerceIn(0, (contentLen - 1).coerceAtLeast(0))
+    val (winStart, winEnd) = computeReadingWindow(chapterBoundaries, safeCharPos, contentLen)
+    clearPendingRestore()
+    setReadingWindow(winStart, winEnd)
 
     scope.launch {
-        // 等到 TextView 文本长度匹配目标窗口（且 layout 已基于真实文本构建）再 scroll
-        repeat(120) {
-            val tv = tvProvider()
-            val layout = tv?.layout
-            val tvTextLen = tv?.text?.length ?: 0
-            val layoutTextLen = layout?.text?.length ?: -1
-            if (tv != null && layout != null && tvTextLen > 0 &&
-                layoutTextLen == tvTextLen &&
-                tvTextLen == targetEnd
-            ) {
-                val effectiveWin = targetEnd.coerceAtLeast(1)
-                val localP = (charPos.toFloat() / effectiveWin).coerceIn(0f, 1f)
-                tv.post {
-                    scrollTextViewToProgress(tv, localP)
-                    onProgress()
-                }
-                return@launch
+        val tv = awaitReaderTextViewLayout(tvProvider)
+        if (tv != null) {
+            tv.post {
+                val displayedOffset = resolveDisplayedCharOffset(
+                    sourceContent = sourceContent,
+                    sourceOffset = safeCharPos,
+                    displayedText = tv.text,
+                    renderPlainText = renderPlainText,
+                    windowStart = winStart,
+                    tocEntries = tocEntries,
+                    preferredEntry = preferredTocEntry,
+                )
+                scrollTextViewToCharOffset(tv, displayedOffset)
+                onProgress()
             }
-            kotlinx.coroutines.delay(32)
+        } else {
+            onProgress()
         }
-        // 兜底：超时也调一次，避免卡死跳转
+    }
+}
+
+/** 横向分页模式：切页后按锚点/页内偏移滚动。 */
+private fun jumpToGlobalCharInPager(
+    scope: kotlinx.coroutines.CoroutineScope,
+    charPos: Int,
+    contentLen: Int,
+    sourceContent: String,
+    renderPlainText: Boolean,
+    tocEntries: List<MarkdownTocEntry>,
+    preferredTocEntry: MarkdownTocEntry? = null,
+    pageSpecs: List<Pair<String, Int>>,
+    pagerState: PagerState,
+    pageTextViews: MutableMap<Int, TextView>,
+    assignActiveTextView: (TextView) -> Unit,
+    onProgress: () -> Unit,
+) {
+    if (pageSpecs.isEmpty()) {
         onProgress()
+        return
+    }
+    val safeCharPos = charPos.coerceIn(0, (contentLen - 1).coerceAtLeast(0))
+    val page = pageIndexForGlobalChar(pageSpecs, safeCharPos).coerceIn(0, pageSpecs.lastIndex)
+    val globalStart = pageSpecs[page].second
+
+    scope.launch {
+        pagerState.scrollToPage(page)
+        val tv = awaitReaderTextViewLayout({ pageTextViews[page] })
+        if (tv != null) {
+            assignActiveTextView(tv)
+            tv.post {
+                val displayedOffset = resolveDisplayedCharOffset(
+                    sourceContent = sourceContent,
+                    sourceOffset = safeCharPos,
+                    displayedText = tv.text,
+                    renderPlainText = renderPlainText,
+                    windowStart = globalStart,
+                    tocEntries = tocEntries,
+                    preferredEntry = preferredTocEntry,
+                )
+                scrollTextViewToCharOffset(tv, displayedOffset)
+                onProgress()
+            }
+        } else {
+            onProgress()
+        }
     }
 }
 
@@ -400,18 +703,6 @@ private fun highlightsForPageSlice(
 private fun pageIndexForGlobalChar(pages: List<Pair<String, Int>>, charPos: Int): Int =
     pages.indexOfLast { it.second <= charPos }.coerceAtLeast(0)
 
-private fun localProgressOnPage(
-    pages: List<Pair<String, Int>>,
-    contentLength: Int,
-    charPos: Int,
-    pageIndex: Int
-): Float {
-    val start = pages[pageIndex].second
-    val end = if (pageIndex + 1 < pages.size) pages[pageIndex + 1].second else contentLength
-    val span = (end - start).coerceAtLeast(1)
-    return ((charPos - start).toFloat() / span.toFloat()).coerceIn(0f, 1f)
-}
-
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ReaderPagedMarkdownHost(
@@ -421,6 +712,7 @@ private fun ReaderPagedMarkdownHost(
     theme: ReadingTheme,
     fontSize: Int,
     readerPaddingDp: Int,
+    readerPaddingTopDp: Int = readerPaddingDp,
     readerLineSpacingMultiplier: Float,
     highlights: List<HighlightEntity>,
     pageTextViews: MutableMap<Int, TextView>,
@@ -428,7 +720,7 @@ private fun ReaderPagedMarkdownHost(
     modifier: Modifier = Modifier,
     onTextSelected: (String) -> Unit,
     onReadingVerticalScroll: (Int) -> Unit,
-    onSwipeRightBookmark: () -> Unit,
+    onSwipeDownBookmark: () -> Unit,
     onCenterTap: () -> Unit,
     onPageTextViewReady: (Int, TextView) -> Unit
 ) {
@@ -481,6 +773,7 @@ private fun ReaderPagedMarkdownHost(
                 theme = theme,
                 fontSize = fontSize,
                 readerPaddingDp = readerPaddingDp,
+                readerPaddingTopDp = readerPaddingTopDp,
                 readerLineSpacingMultiplier = readerLineSpacingMultiplier,
                 highlights = pageHighlights,
                 modifier = Modifier.fillMaxSize(),
@@ -491,8 +784,9 @@ private fun ReaderPagedMarkdownHost(
                     pageTextViews[pageIndex] = tv
                     onPageTextViewReady(pageIndex, tv)
                 },
-                onSwipeRightBookmark = onSwipeRightBookmark,
-                onSwipeDownBookmark = onSwipeRightBookmark,
+                allowVerticalScroll = false,
+                onSwipeDownBookmark = onSwipeDownBookmark,
+                onSwipeRightBookmark = {},
                 onCenterTap = onCenterTap
             )
         }
@@ -519,7 +813,7 @@ private fun ReaderPageTurnSheet(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "横向模式按段落估算分页，复杂排版可能与上下滚动略有差异。左右滑动/仿真/覆盖翻页时：在页顶向下拉可添加或取消书签。",
+                text = "横向模式按段落估算分页，复杂排版可能与上下滚动略有差异。左右滑动/仿真/覆盖翻页时：仅可左右翻页，向下滑动添加书签，再次滑动取消书签。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -599,11 +893,22 @@ fun ReaderScreen(
 
     val structuredToc by viewModel.structuredToc.collectAsState()
 
-    val tocEntries = remember(content, renderPlainText, structuredToc) {
-        val fromLoader = structuredToc
-        if (!fromLoader.isNullOrEmpty()) fromLoader
-        else if (renderPlainText) parsePlainTextToc(content)
-        else parseMarkdownToc(content)
+    val tocEntries = remember(content, renderPlainText, structuredToc, importFormat) {
+        val stored = structuredToc.orEmpty()
+        when {
+            renderPlainText -> parsePlainTextToc(content)
+            importFormat == ImportedBookFormat.MOBI || importFormat == ImportedBookFormat.AZW3 -> {
+                val fromBody = parseMarkdownToc(content)
+                when {
+                    fromBody.isNotEmpty() -> fromBody
+                    stored.isNotEmpty() -> stored
+                    else -> parsePlainTextToc(content)
+                }
+            }
+            importFormat == ImportedBookFormat.EPUB && stored.isNotEmpty() -> stored
+            stored.isNotEmpty() -> stored
+            else -> parseMarkdownToc(content)
+        }
     }
     val emptyTocMessage = remember(importFormat, renderPlainText) {
         when (importFormat) {
@@ -637,40 +942,54 @@ fun ReaderScreen(
     val pagerState = rememberPagerState(pageCount = { pageSpecs.size.coerceAtLeast(1) })
 
     // ===== 章节惰性渲染窗口（仅 VerticalScroll 模式生效）=====
-    // displayWindowEndChar 是当前展示给 TextView 的字符数（即 content 的前缀长度）。
-    // pendingScrollRestoreY 用于扩窗后还原扩窗前 scrollY（避免内容增长后视口跳到顶部）。
     val chapterBoundaries = remember(content, tocEntries) {
         computeChapterBoundaries(content, tocEntries)
     }
-    // 初值直接基于 content + 当前进度计算「覆盖目标位置 + 缓冲」的窗口，避免「先 setText
-    // 整本再缩小」浪费一次整段 measure。paged 模式不窗口化（横向分页本身就是窗口）。
-    var displayWindowEndChar by remember(content) {
-        val initial = when {
-            content.isEmpty() -> 0
-            else -> expandWindowEndToCover(
-                chapterBoundaries,
-                (readingProgress * content.length).toInt() + READER_INITIAL_LOOKAHEAD_CHARS,
-                content.length
-            )
-        }
-        mutableIntStateOf(initial)
-    }
+    var displayWindowStartChar by remember(content, readerLoadEpoch) { mutableIntStateOf(0) }
+    var displayWindowEndChar by remember(content, readerLoadEpoch) { mutableIntStateOf(0) }
     var pendingScrollRestoreY by remember(content) { mutableStateOf<Int?>(null) }
-    val displayedContent = remember(content, displayWindowEndChar) {
+    val displayedContent = remember(content, displayWindowStartChar, displayWindowEndChar) {
         when {
             content.isEmpty() -> ""
-            displayWindowEndChar >= content.length -> content
-            displayWindowEndChar <= 0 -> ""
-            else -> content.substring(0, displayWindowEndChar)
+            displayWindowStartChar >= content.length -> ""
+            displayWindowEndChar <= displayWindowStartChar -> ""
+            displayWindowEndChar >= content.length -> content.substring(displayWindowStartChar)
+            else -> content.substring(displayWindowStartChar, displayWindowEndChar)
         }
     }
+    val displayedHighlights = remember(highlights, displayWindowStartChar, displayWindowEndChar, displayedContent) {
+        highlightsForPageSlice(
+            displayWindowStartChar,
+            displayWindowEndChar,
+            highlights,
+            displayedContent
+        )
+    }
 
-    LaunchedEffect(bookId, content, pageSpecs, readerLoadEpoch) {
+    LaunchedEffect(bookId, content, pageSpecs, readerLoadEpoch, pageTurnMode, readingProgress) {
         if (content.isEmpty()) return@LaunchedEffect
         if (pageTurnMode == ReaderPageTurnMode.VerticalScroll || pageSpecs.isEmpty()) return@LaunchedEffect
-        val charPos = (readingProgress * totalChars).toInt().coerceIn(0, (content.length - 1).coerceAtLeast(0))
-        val page = pageIndexForGlobalChar(pageSpecs, charPos).coerceIn(0, pageSpecs.lastIndex.coerceAtLeast(0))
-        pagerState.scrollToPage(page)
+        val totalC = book?.totalChars?.takeIf { it > 0 } ?: content.length
+        val charPos = resolveGlobalCharPos(
+            (readingProgress * totalC).toInt(),
+            content.length,
+            totalC
+        )
+        jumpToGlobalCharInPager(
+            scope = this,
+            charPos = charPos,
+            contentLen = content.length,
+            sourceContent = content,
+            renderPlainText = renderPlainText,
+            tocEntries = tocEntries,
+            pageSpecs = pageSpecs,
+            pagerState = pagerState,
+            pageTextViews = pageTextViews,
+            assignActiveTextView = { readerTextView.value = it },
+            onProgress = {
+                viewModel.updateReadingProgress(readingProgressForCharPos(charPos, content.length))
+            }
+        )
     }
 
     LaunchedEffect(pagerState.currentPage, pageTurnMode, content) {
@@ -707,45 +1026,37 @@ fun ReaderScreen(
 
     LaunchedEffect(bookId, content, pageTurnMode, readerLoadEpoch) {
         if (content.isEmpty()) {
+            displayWindowStartChar = 0
             displayWindowEndChar = 0
             return@LaunchedEffect
         }
-        // 非垂直滚动模式不走窗口化（横向分页本身就是窗口），直接喂完整正文
         if (pageTurnMode != ReaderPageTurnMode.VerticalScroll) {
-            if (displayWindowEndChar != content.length) {
-                pendingScrollRestoreY = null
-                displayWindowEndChar = content.length
-            }
+            pendingScrollRestoreY = null
+            displayWindowStartChar = 0
+            displayWindowEndChar = content.length
             return@LaunchedEffect
         }
-        // 纠正一致性：进入页面瞬间的目标进度对应字符必须落在窗口内
-        val targetProgress = readingProgress
-        val targetChar = (targetProgress * content.length).toInt().coerceIn(0, content.length)
-        if (targetChar >= displayWindowEndChar - 1) {
-            pendingScrollRestoreY = null
-            displayWindowEndChar = expandWindowEndToCover(
-                chapterBoundaries,
-                targetChar + READER_INITIAL_LOOKAHEAD_CHARS,
-                content.length
+        val totalC = book?.totalChars?.takeIf { it > 0 } ?: content.length
+        val targetChar = resolveGlobalCharPos(
+            (readingProgress * totalC).toInt(),
+            content.length,
+            totalC
+        )
+        val (start, end) = computeReadingWindow(chapterBoundaries, targetChar, content.length)
+        pendingScrollRestoreY = null
+        displayWindowStartChar = start
+        displayWindowEndChar = end
+        val tv = awaitReaderTextViewLayout({ readerTextView.value }, maxAttempts = 80)
+        tv?.post {
+            val offset = resolveDisplayedCharOffset(
+                sourceContent = content,
+                sourceOffset = targetChar,
+                displayedText = tv.text,
+                renderPlainText = renderPlainText,
+                windowStart = start,
+                tocEntries = tocEntries,
             )
-        }
-        // 长文本走 PrecomputedText / 后台 Markwon 渲染，文本/Layout 就绪时机晚于 onViewReady，
-        // 这里要等到 layout 是基于「真实文本」构建的，否则 scrollTo 时 maxScroll≈0 会落到 0%。
-        repeat(80) {
-            val tv = readerTextView.value
-            val layout = tv?.layout
-            val tvTextLen = tv?.text?.length ?: 0
-            val layoutTextLen = layout?.text?.length ?: -1
-            if (tv != null && layout != null && tvTextLen > 0 && layoutTextLen == tvTextLen) {
-                tv.post {
-                    // 窗口内本地进度 = targetChar / displayWindowEndChar
-                    val winEnd = displayWindowEndChar.coerceAtLeast(1)
-                    val localProgress = (targetChar.toFloat() / winEnd).coerceIn(0f, 1f)
-                    scrollTextViewToProgress(tv, localProgress)
-                }
-                return@LaunchedEffect
-            }
-            delay(32)
+            scrollTextViewToCharOffset(tv, offset)
         }
     }
 
@@ -808,6 +1119,11 @@ fun ReaderScreen(
     Scaffold(
         containerColor = currentTheme.backgroundColor,
         snackbarHost = { SnackbarHost(snackbarHostState) },
+        contentWindowInsets = if (immersiveReading) {
+            WindowInsets(0, 0, 0, 0)
+        } else {
+            ScaffoldDefaults.contentWindowInsets
+        },
         topBar = {
             if (!immersiveReading) {
                 ReaderTopAppBar(
@@ -819,12 +1135,21 @@ fun ReaderScreen(
             }
         }
     ) { paddingValues ->
+        val readerContentPadding = if (immersiveReading) {
+            PaddingValues(0.dp)
+        } else {
+            paddingValues
+        }
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
                 .background(currentTheme.backgroundColor)
         ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(readerContentPadding)
+            ) {
             when (val err = loadError) {
                 null -> {
                     if (content.isNotEmpty()) {
@@ -851,65 +1176,97 @@ fun ReaderScreen(
                                 }
                             }
                         }
-                        if (pageTurnMode == ReaderPageTurnMode.VerticalScroll) {
-                            MarkdownReaderView(
-                                content = displayedContent,
-                                renderPlainText = renderPlainText,
-                                theme = currentTheme,
-                                fontSize = fontSize,
-                                readerPaddingDp = readerPaddingDp,
-                                readerLineSpacingMultiplier = readerLineSpacingMultiplier,
-                                highlights = highlights,
-                                modifier = Modifier.fillMaxSize(),
-                                onTextSelected = onReaderTextSelected,
-                                onScroll = { localProgress ->
-                                    val winEnd = displayWindowEndChar
-                                    val total = content.length.coerceAtLeast(1)
-                                    // 把窗口内 [0..1] 进度换算回全书进度（窗口是 content 的前缀）
-                                    val globalProgress = if (winEnd <= 0) 0f
-                                    else (localProgress * winEnd / total).coerceIn(0f, 1f)
-                                    viewModel.updateReadingProgress(globalProgress)
-                                    // 接近窗口底部 → 异步扩窗到下一章节边界；扩窗前先记下 scrollY，
-                                    // 待新内容渲染就绪后由 LaunchedEffect(displayWindowEndChar) 复位。
-                                    if (winEnd < content.length &&
-                                        pendingScrollRestoreY == null &&
-                                        localProgress >= READER_EXPAND_TRIGGER_LOCAL_PROGRESS
-                                    ) {
-                                        val tv = readerTextView.value
-                                        pendingScrollRestoreY = tv?.scrollY ?: 0
-                                        displayWindowEndChar = nextWindowEnd(
-                                            chapterBoundaries, winEnd, content.length
-                                        )
-                                    }
-                                },
-                                onReadingVerticalScroll = onReaderVerticalScroll,
-                                onViewReady = { tv -> readerTextView.value = tv },
-                                onSwipeRightBookmark = onReaderSwipeBookmark,
-                                onCenterTap = { showTopBar = !showTopBar }
-                            )
+                        // 沉浸模式章节小标题常驻，不随大顶栏/底栏显隐改变布局（避免点击唤出工具栏时正文跳动）
+                        val immersiveChapterTitle = chapterTitle.takeIf { immersiveReading }
+                        val readerPaddingTopDp = if (immersiveChapterTitle != null) {
+                            minOf(ReaderChapterStripBodyTopPaddingDp, readerPaddingDp)
                         } else {
-                            ReaderPagedMarkdownHost(
-                                pages = pageSpecs,
-                                pageTurnMode = pageTurnMode,
-                                pagerState = pagerState,
-                                theme = currentTheme,
-                                fontSize = fontSize,
-                                readerPaddingDp = readerPaddingDp,
-                                readerLineSpacingMultiplier = readerLineSpacingMultiplier,
-                                highlights = highlights,
-                                pageTextViews = pageTextViews,
-                                renderPlainText = renderPlainText,
-                                modifier = Modifier.fillMaxSize(),
-                                onTextSelected = onReaderTextSelected,
-                                onReadingVerticalScroll = onReaderVerticalScroll,
-                                onSwipeRightBookmark = onReaderSwipeBookmark,
-                                onCenterTap = { showTopBar = !showTopBar },
-                                onPageTextViewReady = { pageIdx, tv ->
-                                    if (pageIdx == pagerState.currentPage) {
-                                        readerTextView.value = tv
+                            readerPaddingDp
+                        }
+
+                        @Composable
+                        fun ReaderHost(modifier: Modifier) {
+                            if (pageTurnMode == ReaderPageTurnMode.VerticalScroll) {
+                                MarkdownReaderView(
+                                    content = displayedContent,
+                                    renderPlainText = renderPlainText,
+                                    theme = currentTheme,
+                                    fontSize = fontSize,
+                                    readerPaddingDp = readerPaddingDp,
+                                    readerPaddingTopDp = readerPaddingTopDp,
+                                    readerLineSpacingMultiplier = readerLineSpacingMultiplier,
+                                    highlights = displayedHighlights,
+                                    modifier = modifier,
+                                    onTextSelected = onReaderTextSelected,
+                                    onScroll = { localProgress ->
+                                        val winStart = displayWindowStartChar
+                                        val winEnd = displayWindowEndChar
+                                        val winSpan = (winEnd - winStart).coerceAtLeast(1)
+                                        val total = content.length.coerceAtLeast(1)
+                                        val globalChar = (winStart + localProgress * winSpan)
+                                            .toInt()
+                                            .coerceIn(0, content.length)
+                                        viewModel.updateReadingProgress(
+                                            globalChar.toFloat() / total
+                                        )
+                                        if (winEnd < content.length &&
+                                            pendingScrollRestoreY == null &&
+                                            localProgress >= READER_EXPAND_TRIGGER_LOCAL_PROGRESS
+                                        ) {
+                                            val tv = readerTextView.value
+                                            pendingScrollRestoreY = tv?.scrollY ?: 0
+                                            displayWindowEndChar = nextWindowEnd(
+                                                chapterBoundaries, winEnd, content.length
+                                            )
+                                        }
+                                    },
+                                    onReadingVerticalScroll = onReaderVerticalScroll,
+                                    onViewReady = { tv -> readerTextView.value = tv },
+                                    allowVerticalScroll = true,
+                                    onSwipeRightBookmark = onReaderSwipeBookmark,
+                                    onCenterTap = { showTopBar = !showTopBar }
+                                )
+                            } else {
+                                ReaderPagedMarkdownHost(
+                                    pages = pageSpecs,
+                                    pageTurnMode = pageTurnMode,
+                                    pagerState = pagerState,
+                                    theme = currentTheme,
+                                    fontSize = fontSize,
+                                    readerPaddingDp = readerPaddingDp,
+                                    readerPaddingTopDp = readerPaddingTopDp,
+                                    readerLineSpacingMultiplier = readerLineSpacingMultiplier,
+                                    highlights = highlights,
+                                    pageTextViews = pageTextViews,
+                                    renderPlainText = renderPlainText,
+                                    modifier = modifier,
+                                    onTextSelected = onReaderTextSelected,
+                                    onReadingVerticalScroll = onReaderVerticalScroll,
+                                    onSwipeDownBookmark = onReaderSwipeBookmark,
+                                    onCenterTap = { showTopBar = !showTopBar },
+                                    onPageTextViewReady = { pageIdx, tv ->
+                                        if (pageIdx == pagerState.currentPage) {
+                                            readerTextView.value = tv
+                                        }
                                     }
-                                }
-                            )
+                                )
+                            }
+                        }
+
+                        if (immersiveChapterTitle != null) {
+                            Column(Modifier.fillMaxSize()) {
+                                ReaderImmersiveChapterTitleBar(
+                                    title = immersiveChapterTitle,
+                                    theme = currentTheme
+                                )
+                                ReaderHost(
+                                    Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth()
+                                )
+                            }
+                        } else {
+                            ReaderHost(Modifier.fillMaxSize())
                         }
                     } else {
                         Box(
@@ -941,12 +1298,41 @@ fun ReaderScreen(
                 }
             }
 
+            }
+
+            // 阅读进度：浮层，不随大顶栏/底栏挤占正文布局
+            if (immersiveReading && !showTopBar) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .height(32.dp)
+                        .wrapContentWidth(align = Alignment.End)
+                        .navigationBarsPadding()
+                        .padding(end = 16.dp, bottom = 10.dp)
+                        .zIndex(0.5f),
+                    contentAlignment = Alignment.CenterEnd
+                ) {
+                    Text(
+                        text = "${(readingProgress * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = currentTheme.textColor.copy(alpha = 0.7f),
+                        modifier = Modifier
+                            .background(
+                                color = currentTheme.backgroundColor.copy(alpha = 0.6f),
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                            .padding(vertical = 2.dp, horizontal = 8.dp)
+                    )
+                }
+            }
+
+            // 大顶栏 / 底栏：浮层，显隐不改变正文与章节小标题的布局
             AnimatedVisibility(
                 visible = immersiveReading && showTopBar,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
-                    .zIndex(1f),
+                    .zIndex(2f),
                 enter = slideInVertically(
                     initialOffsetY = { -it },
                     animationSpec = tween(300)
@@ -957,21 +1343,26 @@ fun ReaderScreen(
                 ) + fadeOut(animationSpec = tween(300)),
             ) {
                 Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .statusBarsPadding(),
+                    modifier = Modifier.fillMaxWidth(),
                     shape = RectangleShape,
                     tonalElevation = 3.dp,
                     shadowElevation = 8.dp,
                     color = readingChromeShade(currentTheme.backgroundColor)
                 ) {
-                    ReaderTopAppBar(
-                        title = book?.title ?: "阅读中",
-                        chapterTitle = chapterTitle,
-                        onNavigateBack = { navController.navigateUp() },
-                        theme = currentTheme,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    Column(Modifier.fillMaxWidth()) {
+                        Spacer(
+                            Modifier
+                                .fillMaxWidth()
+                                .windowInsetsTopHeight(WindowInsets.statusBars)
+                        )
+                        ReaderTopAppBar(
+                            title = book?.title ?: "阅读中",
+                            chapterTitle = chapterTitle,
+                            onNavigateBack = { navController.navigateUp() },
+                            theme = currentTheme,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
 
@@ -980,8 +1371,7 @@ fun ReaderScreen(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .zIndex(1f),
+                    .zIndex(2f),
                 enter = slideInVertically(
                     initialOffsetY = { it },
                     animationSpec = tween(300)
@@ -1001,61 +1391,6 @@ fun ReaderScreen(
                     onFont = { showReaderFontSheet = true },
                     onPageTurn = { showReaderPageTurnSheet = true }
                 )
-            }
-
-            if (immersiveReading && !showTopBar) {
-                chapterTitle?.let { title ->
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .fillMaxWidth()
-                            .statusBarsPadding()
-                            .height(32.dp)
-                            .padding(horizontal = 16.dp)
-                            .padding(top = 10.dp),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        Text(
-                            text = title,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = currentTheme.textColor.copy(alpha = 0.7f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(
-                                    brush = Brush.verticalGradient(
-                                        colors = listOf(
-                                            currentTheme.backgroundColor.copy(alpha = 0.7f),
-                                            currentTheme.backgroundColor.copy(alpha = 0f)
-                                        )
-                                    ),
-                                    shape = RoundedCornerShape(6.dp)
-                                )
-                                .padding(vertical = 2.dp, horizontal = 8.dp)
-                        )
-                    }
-                }
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .height(32.dp)
-                        .wrapContentWidth(align = Alignment.End)
-                        .padding(end = 16.dp, bottom = 10.dp),
-                    contentAlignment = Alignment.CenterEnd
-                ) {
-                    Text(
-                        text = "${(readingProgress * 100).toInt()}%",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = currentTheme.textColor.copy(alpha = 0.7f),
-                        modifier = Modifier
-                            .background(
-                                color = currentTheme.backgroundColor.copy(alpha = 0.6f),
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .padding(vertical = 2.dp, horizontal = 8.dp)
-                    )
-                }
             }
         }
     }
@@ -1103,33 +1438,39 @@ fun ReaderScreen(
             bookmarks = bookmarks,
             totalChars = book?.totalChars?.takeIf { it > 0 } ?: content.length.coerceAtLeast(1),
             onBookmarkClick = { position ->
-                val b = book
-                if (b != null && b.totalChars > 0) {
-                    val totalC = b.totalChars
-                    val p = (position.toFloat() / totalC).coerceIn(0f, 1f)
-                    val charPos = position.coerceIn(0, (content.length - 1).coerceAtLeast(0))
+                if (content.isNotEmpty()) {
+                    val contentLen = content.length
+                    val totalC = book?.totalChars?.takeIf { it > 0 } ?: contentLen
+                    val charPos = resolveGlobalCharPos(position, contentLen, totalC)
+                    val p = readingProgressForCharPos(charPos, contentLen)
                     if (pageTurnMode != ReaderPageTurnMode.VerticalScroll && pageSpecs.isNotEmpty()) {
-                        val page = pageIndexForGlobalChar(pageSpecs, charPos).coerceIn(0, pageSpecs.lastIndex)
-                        val localP = localProgressOnPage(pageSpecs, content.length, charPos, page)
-                        scope.launch {
-                            pagerState.scrollToPage(page)
-                            delay(64)
-                            val tvJump = readerTextView.value
-                            tvJump?.post {
-                                scrollTextViewToProgress(tvJump, localP)
-                                viewModel.updateReadingProgress(p)
-                            }
-                        }
+                        jumpToGlobalCharInPager(
+                            scope = scope,
+                            charPos = charPos,
+                            contentLen = contentLen,
+                            sourceContent = content,
+                            renderPlainText = renderPlainText,
+                            tocEntries = tocEntries,
+                            pageSpecs = pageSpecs,
+                            pagerState = pagerState,
+                            pageTextViews = pageTextViews,
+                            assignActiveTextView = { readerTextView.value = it },
+                            onProgress = { viewModel.updateReadingProgress(p) }
+                        )
                     } else {
-                        // 章节窗口模式：先把窗口撑到能覆盖目标字符位置，再 scroll
                         jumpToCharInChunkWindow(
                             scope = scope,
                             tvProvider = { readerTextView.value },
-                            contentLen = content.length,
+                            sourceContent = content,
+                            renderPlainText = renderPlainText,
+                            contentLen = contentLen,
                             chapterBoundaries = chapterBoundaries,
-                            windowEnd = displayWindowEndChar,
                             charPos = charPos,
-                            setWindowEnd = { displayWindowEndChar = it },
+                            tocEntries = tocEntries,
+                            setReadingWindow = { start, end ->
+                                displayWindowStartChar = start
+                                displayWindowEndChar = end
+                            },
                             clearPendingRestore = { pendingScrollRestoreY = null },
                             onProgress = { viewModel.updateReadingProgress(p) }
                         )
@@ -1153,34 +1494,44 @@ fun ReaderScreen(
             entries = tocEntries,
             emptyTocMessage = emptyTocMessage,
             onEntryClick = { entry ->
-                val total = book?.totalChars?.takeIf { it > 0 } ?: content.length.coerceAtLeast(1)
-                val p = (entry.sourceOffset.toFloat() / total).coerceIn(0f, 1f)
-                val charPos = entry.sourceOffset.coerceIn(0, (content.length - 1).coerceAtLeast(0))
-                if (pageTurnMode != ReaderPageTurnMode.VerticalScroll && pageSpecs.isNotEmpty()) {
-                    val page = pageIndexForGlobalChar(pageSpecs, charPos).coerceIn(0, pageSpecs.lastIndex)
-                    val localP = localProgressOnPage(pageSpecs, content.length, charPos, page)
-                    scope.launch {
-                        pagerState.scrollToPage(page)
-                        delay(64)
-                        val tvJump = readerTextView.value
-                        tvJump?.post {
-                            scrollTextViewToProgress(tvJump, localP)
-                            viewModel.updateReadingProgress(p)
-                        }
+                if (content.isNotEmpty()) {
+                    val contentLen = content.length
+                    val charPos = entry.sourceOffset.coerceIn(0, (contentLen - 1).coerceAtLeast(0))
+                    val p = readingProgressForCharPos(charPos, contentLen)
+                    if (pageTurnMode != ReaderPageTurnMode.VerticalScroll && pageSpecs.isNotEmpty()) {
+                        jumpToGlobalCharInPager(
+                            scope = scope,
+                            charPos = charPos,
+                            contentLen = contentLen,
+                            sourceContent = content,
+                            renderPlainText = renderPlainText,
+                            tocEntries = tocEntries,
+                            preferredTocEntry = entry,
+                            pageSpecs = pageSpecs,
+                            pagerState = pagerState,
+                            pageTextViews = pageTextViews,
+                            assignActiveTextView = { readerTextView.value = it },
+                            onProgress = { viewModel.updateReadingProgress(p) }
+                        )
+                    } else {
+                        jumpToCharInChunkWindow(
+                            scope = scope,
+                            tvProvider = { readerTextView.value },
+                            sourceContent = content,
+                            renderPlainText = renderPlainText,
+                            contentLen = contentLen,
+                            chapterBoundaries = chapterBoundaries,
+                            charPos = charPos,
+                            tocEntries = tocEntries,
+                            preferredTocEntry = entry,
+                            setReadingWindow = { start, end ->
+                                displayWindowStartChar = start
+                                displayWindowEndChar = end
+                            },
+                            clearPendingRestore = { pendingScrollRestoreY = null },
+                            onProgress = { viewModel.updateReadingProgress(p) }
+                        )
                     }
-                } else {
-                    // 章节窗口模式：先把窗口撑到能覆盖目标章节字符位置，再 scroll
-                    jumpToCharInChunkWindow(
-                        scope = scope,
-                        tvProvider = { readerTextView.value },
-                        contentLen = content.length,
-                        chapterBoundaries = chapterBoundaries,
-                        windowEnd = displayWindowEndChar,
-                        charPos = charPos,
-                        setWindowEnd = { displayWindowEndChar = it },
-                        clearPendingRestore = { pendingScrollRestoreY = null },
-                        onProgress = { viewModel.updateReadingProgress(p) }
-                    )
                 }
                 showToc = false
                 if (immersiveReading) showTopBar = false
@@ -1299,6 +1650,7 @@ private fun MarkdownReaderView(
     theme: ReadingTheme,
     fontSize: Int,
     readerPaddingDp: Int,
+    readerPaddingTopDp: Int = readerPaddingDp,
     readerLineSpacingMultiplier: Float,
     highlights: List<com.example.markdownreader.data.local.entity.HighlightEntity>,
     modifier: Modifier = Modifier.fillMaxSize(),
@@ -1306,7 +1658,8 @@ private fun MarkdownReaderView(
     onScroll: (Float) -> Unit,
     onReadingVerticalScroll: (verticalScrollDeltaPx: Int) -> Unit,
     onViewReady: (TextView) -> Unit,
-    onSwipeRightBookmark: () -> Unit,
+    allowVerticalScroll: Boolean = true,
+    onSwipeRightBookmark: () -> Unit = {},
     onSwipeDownBookmark: (() -> Unit)? = null,
     onCenterTap: () -> Unit
 ) {
@@ -1318,13 +1671,15 @@ private fun MarkdownReaderView(
     AndroidView(
         factory = { ctx ->
             SafeReaderTextView(ctx).apply {
+                this.allowVerticalScroll = allowVerticalScroll
                 movementMethod = LinkMovementMethod.getInstance()
                 setTextColor(theme.textColor.toArgb())
                 setBackgroundColor(theme.backgroundColor.toArgb())
                 textSize = fontSize.toFloat()
                 val density = resources.displayMetrics.density
                 val padPx = (readerPaddingDp * density).toInt().coerceAtLeast(0)
-                setPadding(padPx, padPx, padPx, padPx)
+                val padTopPx = (readerPaddingTopDp * density).toInt().coerceAtLeast(0)
+                setPadding(padPx, padTopPx, padPx, padPx)
                 setLineSpacing(0f, readerLineSpacingMultiplier)
 
                 val hlKey0 = highlights.joinToString("|") { "${it.id}_${it.startPosition}_${it.endPosition}" }
@@ -1375,6 +1730,7 @@ private fun MarkdownReaderView(
                     textView = this,
                     touchState = touchState,
                     slop = slop,
+                    allowVerticalScroll = allowVerticalScroll,
                     onScroll = onScroll,
                     onReadingVerticalScroll = onReadingVerticalScroll,
                     onSwipeRightBookmark = onSwipeRightBookmark,
@@ -1385,13 +1741,15 @@ private fun MarkdownReaderView(
             }
         },
         update = { textView ->
+            (textView as? SafeReaderTextView)?.allowVerticalScroll = allowVerticalScroll
             textView.movementMethod = LinkMovementMethod.getInstance()
             textView.setTextColor(theme.textColor.toArgb())
             textView.setBackgroundColor(theme.backgroundColor.toArgb())
             textView.textSize = fontSize.toFloat()
             val density = textView.resources.displayMetrics.density
             val padPx = (readerPaddingDp * density).toInt().coerceAtLeast(0)
-            textView.setPadding(padPx, padPx, padPx, padPx)
+            val padTopPx = (readerPaddingTopDp * density).toInt().coerceAtLeast(0)
+            textView.setPadding(padPx, padTopPx, padPx, padPx)
             textView.setLineSpacing(0f, readerLineSpacingMultiplier)
 
             val hlKey = highlights.joinToString("|") { "${it.id}_${it.startPosition}_${it.endPosition}" }
@@ -1414,12 +1772,16 @@ private fun MarkdownReaderView(
                 textView = textView,
                 touchState = touchState,
                 slop = slop,
+                allowVerticalScroll = allowVerticalScroll,
                 onScroll = onScroll,
                 onReadingVerticalScroll = onReadingVerticalScroll,
                 onSwipeRightBookmark = onSwipeRightBookmark,
                 onSwipeDownBookmark = onSwipeDownBookmark,
                 onCenterTap = onCenterTap
             )
+            if (!allowVerticalScroll) {
+                textView.scrollTo(0, 0)
+            }
             textView.post { onViewReady(textView) }
         },
         modifier = modifier
@@ -1436,6 +1798,7 @@ private fun bindReaderGesturesAndScroll(
     textView: TextView,
     touchState: ReaderTouchState,
     slop: Int,
+    allowVerticalScroll: Boolean,
     onScroll: (Float) -> Unit,
     onReadingVerticalScroll: (verticalScrollDeltaPx: Int) -> Unit,
     onSwipeRightBookmark: () -> Unit,
@@ -1443,6 +1806,7 @@ private fun bindReaderGesturesAndScroll(
     onCenterTap: () -> Unit
 ) {
     textView.setOnScrollChangeListener { v, _, scrollY, _, oldScrollY ->
+        if (!allowVerticalScroll) return@setOnScrollChangeListener
         if (scrollY != oldScrollY) {
             onReadingVerticalScroll(kotlin.math.abs(scrollY - oldScrollY))
         }
@@ -1467,8 +1831,34 @@ private fun bindReaderGesturesAndScroll(
                 touchState.downX = e.x
                 touchState.downY = e.y
                 touchState.scrollYOnDown = tv?.scrollY ?: 0
+                if (!allowVerticalScroll) {
+                    v.parent?.requestDisallowInterceptTouchEvent(false)
+                }
             }
-            MotionEvent.ACTION_UP -> {
+            MotionEvent.ACTION_MOVE -> {
+                if (!allowVerticalScroll && tv != null) {
+                    val dx = e.x - touchState.downX
+                    val dy = e.y - touchState.downY
+                    val adx = kotlin.math.abs(dx)
+                    val ady = kotlin.math.abs(dy)
+                    when {
+                        ady > adx && ady > slop -> {
+                            // 纵向手势由 TextView 消费，避免上下滚动；横向交给 HorizontalPager 翻页
+                            v.parent?.requestDisallowInterceptTouchEvent(true)
+                            return@setOnTouchListener true
+                        }
+                        adx > ady && adx > slop -> {
+                            v.parent?.requestDisallowInterceptTouchEvent(false)
+                            return@setOnTouchListener false
+                        }
+                    }
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (!allowVerticalScroll) {
+                    v.parent?.requestDisallowInterceptTouchEvent(false)
+                }
+                if (e.actionMasked != MotionEvent.ACTION_UP) return@setOnTouchListener false
                 val dx = e.x - touchState.downX
                 val dy = e.y - touchState.downY
                 val adx = kotlin.math.abs(dx)
@@ -1482,16 +1872,16 @@ private fun bindReaderGesturesAndScroll(
                     ) {
                         onCenterTap()
                     }
-                } else if (dx > 120f && dx > ady * 2f) {
+                } else if (allowVerticalScroll && dx > 120f && dx > ady * 2f) {
                     onSwipeRightBookmark()
                 } else if (onSwipeDownBookmark != null &&
-                    tv != null &&
                     dy > 120f &&
                     dy > adx * 2f &&
-                    touchState.scrollYOnDown == 0 &&
-                    tv.scrollY == 0
+                    (!allowVerticalScroll ||
+                        (tv != null && touchState.scrollYOnDown == 0 && tv.scrollY == 0))
                 ) {
                     onSwipeDownBookmark.invoke()
+                    return@setOnTouchListener true
                 }
             }
         }
@@ -1541,6 +1931,9 @@ private fun previewPlainTextFromTextViewTop(tv: TextView): String {
  * 让长按时退化为「不进入文本选择」即可，比直接 crash 体验好得多。
  */
 private class SafeReaderTextView(context: Context) : TextView(context) {
+    /** 分页翻页模式下为 false：禁止上下滚动，仅由 HorizontalPager 横向翻页 */
+    var allowVerticalScroll: Boolean = true
+
     init {
         // 必须显式开启 textIsSelectable，否则 Editor.startSelectionActionMode() 会走
         // textCanBeSelected() 检查直接取消选择，日志表现为
@@ -1550,6 +1943,18 @@ private class SafeReaderTextView(context: Context) : TextView(context) {
         // 不受影响，长按选词仍能进入 ActionMode。
         setTextIsSelectable(true)
         movementMethod = LinkMovementMethod.getInstance()
+        isVerticalScrollBarEnabled = false
+    }
+
+    override fun canScrollVertically(direction: Int): Boolean =
+        allowVerticalScroll && super.canScrollVertically(direction)
+
+    override fun scrollTo(x: Int, y: Int) {
+        if (allowVerticalScroll) {
+            super.scrollTo(x, y)
+        } else {
+            super.scrollTo(x, 0)
+        }
     }
 
     override fun performLongClick(): Boolean = try {
@@ -1565,7 +1970,13 @@ private class SafeReaderTextView(context: Context) : TextView(context) {
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean = try {
-        super.onTouchEvent(event)
+        if (!allowVerticalScroll) {
+            // 分页模式：禁用纵向滚动，保留链接点击
+            val spannable = text as? Spannable
+            movementMethod?.onTouchEvent(this, spannable, event) == true
+        } else {
+            super.onTouchEvent(event)
+        }
     } catch (_: NullPointerException) {
         false
     } catch (_: IndexOutOfBoundsException) {
@@ -2303,5 +2714,49 @@ private fun HighlightActionSheet(
                 }
             }
         )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Preview(showBackground = true, name = "阅读器顶栏与底栏")
+@Composable
+private fun ReaderChromePreview() {
+    MarkdownReaderTheme {
+        val theme = ReadingTheme.Paper
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(theme.backgroundColor)
+        ) {
+            ReaderTopAppBar(
+                title = "示例 Markdown 阅读",
+                chapterTitle = "第一章 预览章节标题",
+                onNavigateBack = { },
+                theme = theme,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+            )
+            Text(
+                text = "（正文为 AndroidView TextView，预览中仅占位）",
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(24.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                color = theme.textColor.copy(alpha = 0.65f)
+            )
+            ReaderImmersiveBottomBar(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth(),
+                theme = theme,
+                chromeBackground = readingChromeShade(theme.backgroundColor),
+                onToc = { },
+                onBookmarks = { },
+                onThemeBackground = { },
+                onFont = { },
+                onPageTurn = { }
+            )
+        }
     }
 }

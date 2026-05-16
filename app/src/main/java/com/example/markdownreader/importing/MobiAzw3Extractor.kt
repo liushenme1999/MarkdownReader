@@ -171,7 +171,7 @@ internal object MobiAzw3Extractor {
             bytes, recordStarts, firstImgIdx, assets
         )
 
-        val toc = parseMarkdownHeadingsForToc(markdown).ifEmpty { parsePlainTextTocForMobi(markdown) }
+        val toc = AtxMarkdownTocParser.parse(markdown).ifEmpty { parsePlainTextTocForMobi(markdown) }
         val cover = extractCoverFromPart(bytes, recordStarts, record0, globalLast)
         return MobiPdbExtract(
             plainText = markdown,
@@ -286,19 +286,6 @@ internal object MobiAzw3Extractor {
         val firstImgU = readUInt32BEUnsigned(record0, 16 + 0x6c)
         val valid = firstImgU in 1L until nRecords.toLong() && firstImgU < 0xffff0000L
         return if (valid) firstImgU.toInt() else findFirstImageRecord(bytes, starts)
-    }
-
-    /** Markdown 的 ATX 标题 (`# title`) 是最稳定的目录信号，作为新主路径。 */
-    private fun parseMarkdownHeadingsForToc(markdown: String): List<ImportedTocEntry> {
-        val out = mutableListOf<ImportedTocEntry>()
-        val re = Regex("(?m)^(#{1,6})\\s+(.+?)\\s*$")
-        for (m in re.findAll(markdown)) {
-            val level = m.groupValues[1].length.coerceIn(1, 6)
-            val title = m.groupValues[2].trim().take(120)
-            if (title.isEmpty()) continue
-            out += ImportedTocEntry(level = level, title = title, sourceOffset = m.range.first)
-        }
-        return out.distinctBy { it.sourceOffset to it.title }
     }
 
     private fun isImageRecord(rec: ByteArray): Boolean =

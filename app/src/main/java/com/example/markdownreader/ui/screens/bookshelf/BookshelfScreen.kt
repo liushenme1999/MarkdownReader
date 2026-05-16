@@ -41,6 +41,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -49,14 +50,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
+import com.example.markdownreader.ui.components.AppSearchField
 import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
+import androidx.navigation.compose.rememberNavController
 import com.example.markdownreader.data.local.entity.BookEntity
 import com.example.markdownreader.ui.theme.BookCoverColors
 import com.example.markdownreader.ui.theme.BookshelfPageBackground
 import com.example.markdownreader.ui.theme.BookshelfPageBackgroundDark
 import com.example.markdownreader.ui.theme.MainNavigationBarBackground
+import com.example.markdownreader.ui.theme.MarkdownReaderTheme
 import java.text.SimpleDateFormat
 import java.io.File
 import java.util.*
@@ -170,10 +174,10 @@ fun BookshelfScreen(
         containerColor = shelfBg,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            Column(
-                modifier = Modifier.statusBarsPadding()
-            ) {
+            Column {
                 TopAppBar(
+                    // Scaffold 已对 topBar 施加状态栏区域；避免与 TopAppBar 默认 windowInsets 叠加成双倍顶距
+                    windowInsets = WindowInsets(),
                     title = {
                         Text(
                             if (selectionMode) "已选 ${selectedIds.size} 本"
@@ -200,47 +204,15 @@ fun BookshelfScreen(
                 )
                 // 搜索栏
                 if (!selectionMode) {
-                    SearchBar(
+                    AppSearchField(
                         query = searchQuery,
                         onQueryChange = { searchQuery = it },
-                        onSearch = {},
-                        active = false,
-                        onActiveChange = {},
+                        placeholder = "搜索书名或作者...",
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp)
-                            .padding(bottom = 4.dp),
-                        placeholder = {
-                            Text(
-                                "搜索书名或作者...",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        },
-                        leadingIcon = {
-                            Icon(
-                                Icons.Default.Search,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                            )
-                        },
-                        trailingIcon = {
-                            if (searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { searchQuery = "" }) {
-                                    Icon(
-                                        Icons.Default.Close,
-                                        contentDescription = "清除搜索",
-                                        modifier = Modifier.size(18.dp),
-                                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                                    )
-                                }
-                            }
-                        },
-                        colors = SearchBarDefaults.colors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            dividerColor = Color.Transparent
-                        ),
-                        shape = RoundedCornerShape(24.dp)
-                    ) {}
+                            .padding(bottom = 4.dp)
+                    )
                 }
             }
         }
@@ -919,6 +891,199 @@ private fun BookCard(
             ),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+private fun bookshelfPreviewSampleBooks(): List<BookEntity> {
+    val now = Date()
+    return listOf(
+        BookEntity(
+            id = 1L,
+            title = "示例 Markdown 书籍",
+            author = "预览作者",
+            filePath = "/preview/1.md",
+            readingProgress = 0.35f,
+            lastReadTime = now,
+            coverColor = 0,
+            isFavorite = true,
+        ),
+        BookEntity(
+            id = 2L,
+            title = "活着",
+            author = null,
+            filePath = "/preview/2.txt",
+            readingProgress = 0.02f,
+            lastReadTime = now,
+            coverColor = 3,
+        ),
+        BookEntity(
+            id = 3L,
+            title = "面试问答精选",
+            author = "刘",
+            filePath = "/preview/3.md",
+            readingProgress = 0f,
+            coverColor = 5,
+        ),
+    )
+}
+
+/**
+ * 仅用于 Android Studio @Preview：不依赖 Hilt / 数据库 / Activity 窗口。
+ * 正式界面请使用 [BookshelfScreen]。
+ */
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun BookshelfScreenPreviewImpl(
+    navController: NavController,
+    onSelectionModeChange: (Boolean) -> Unit,
+) {
+    val books = remember { bookshelfPreviewSampleBooks() }
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf(setOf<Long>()) }
+    var searchQuery by remember { mutableStateOf("") }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val coverImageCache = remember { LruCache<String, ImageBitmap>(20) }
+
+    fun exitSelection() {
+        selectionMode = false
+        selectedIds = emptySet()
+    }
+
+    val systemInDarkTheme = isSystemInDarkTheme()
+    val shelfBg =
+        if (systemInDarkTheme) BookshelfPageBackgroundDark
+        else BookshelfPageBackground
+
+    val gridBottomPadding = 16.dp + if (selectionMode && selectedIds.isNotEmpty()) 80.dp else 0.dp
+
+    val filteredBooks = remember(books, searchQuery) {
+        val query = searchQuery.trim().lowercase(Locale.getDefault())
+        if (query.isEmpty()) {
+            books
+        } else {
+            books.filter { book ->
+                book.title.lowercase(Locale.getDefault()).contains(query) ||
+                    (book.author?.lowercase(Locale.getDefault())?.contains(query) == true)
+            }
+        }
+    }
+
+    LaunchedEffect(selectionMode) {
+        onSelectionModeChange(selectionMode)
+    }
+
+    Scaffold(
+        containerColor = shelfBg,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        topBar = {
+            Column {
+                TopAppBar(
+                    // Scaffold 已对 topBar 施加状态栏区域；避免与 TopAppBar 默认 windowInsets 叠加成双倍顶距
+                    windowInsets = WindowInsets(),
+                    title = {
+                        Text(
+                            if (selectionMode) "已选 ${selectedIds.size} 本"
+                            else "书架 (${books.size})",
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontFamily = FontFamily.SansSerif,
+                                fontWeight = FontWeight.Black
+                            )
+                        )
+                    },
+                    navigationIcon = {
+                        if (selectionMode) {
+                            IconButton(onClick = { exitSelection() }) {
+                                Icon(Icons.Default.Close, contentDescription = "退出管理")
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        titleContentColor = MaterialTheme.colorScheme.onSurface,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                        actionIconContentColor = MaterialTheme.colorScheme.onSurface
+                    )
+                )
+                if (!selectionMode) {
+                    AppSearchField(
+                        query = searchQuery,
+                        onQueryChange = { searchQuery = it },
+                        placeholder = "搜索书名或作者...",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                            .padding(bottom = 4.dp)
+                    )
+                }
+            }
+        }
+    ) { paddingValues ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(shelfBg)
+                .padding(paddingValues)
+        ) {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 100.dp),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = 16.dp,
+                    bottom = gridBottomPadding
+                ),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                items(
+                    items = filteredBooks,
+                    key = { it.id }
+                ) { book ->
+                    val selected = book.id in selectedIds
+                    BookCard(
+                        book = book,
+                        selected = selected,
+                        selectionMode = selectionMode,
+                        coverImageCache = coverImageCache,
+                        onClick = {
+                            if (selectionMode) {
+                                selectedIds =
+                                    if (selected) selectedIds - book.id else selectedIds + book.id
+                            } else {
+                                navController.navigate("reader/${book.id}")
+                            }
+                        },
+                        onLongClick = {
+                            if (!selectionMode) {
+                                selectionMode = true
+                                selectedIds = setOf(book.id)
+                            } else {
+                                selectedIds =
+                                    if (book.id in selectedIds) selectedIds - book.id
+                                    else selectedIds + book.id
+                            }
+                        }
+                    )
+                }
+                if (!selectionMode && searchQuery.isEmpty()) {
+                    item(key = "import_card_preview") {
+                        ImportBookCard(onClick = {})
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Preview(showBackground = true, name = "书架")
+@Composable
+private fun BookshelfScreenPreview() {
+    MarkdownReaderTheme {
+        BookshelfScreenPreviewImpl(
+            navController = rememberNavController(),
+            onSelectionModeChange = {},
         )
     }
 }

@@ -11,45 +11,14 @@ data class MarkdownTocEntry(
     val sourceOffset: Int
 )
 
-/** ATX 标题：行首最多 3 个空格 + 1～6 个 # + 空格 + 标题，可选结尾闭合 `#`。 */
-private val ATX_HEADING = Regex(
-    "^\\s{0,3}(#{1,6})\\s+(.+?)(?:\\s+#+)?\\s*$"
-)
-
 /**
  * 从 Markdown 源码解析目录（仅 ATX 风格 `#` … `######`）。
- * 代码围栏 ``` 内的行不参与解析，避免把示例里的 `#` 当成标题。
+ * 实现与导入侧 [com.example.markdownreader.importing.AtxMarkdownTocParser] 一致。
  */
-fun parseMarkdownToc(markdown: String): List<MarkdownTocEntry> {
-    if (markdown.isEmpty()) return emptyList()
-    val lines = markdown.split('\n')
-    val out = mutableListOf<MarkdownTocEntry>()
-    var offset = 0
-    var inFence = false
-    lines.forEachIndexed { index, line ->
-        val lineStart = offset
-        val trimmedStart = line.trimStart()
-        if (trimmedStart.startsWith("```")) {
-            inFence = !inFence
-        } else if (!inFence) {
-            val m = ATX_HEADING.matchEntire(line)
-            if (m != null) {
-                val hashes = m.groupValues[1]
-                val rawTitle = m.groupValues[2].trim()
-                if (rawTitle.isNotEmpty()) {
-                    out += MarkdownTocEntry(
-                        level = hashes.length,
-                        title = rawTitle,
-                        sourceOffset = lineStart
-                    )
-                }
-            }
-        }
-        offset += line.length
-        if (index < lines.lastIndex) offset += 1
+fun parseMarkdownToc(markdown: String): List<MarkdownTocEntry> =
+    com.example.markdownreader.importing.AtxMarkdownTocParser.parse(markdown).map { e ->
+        MarkdownTocEntry(level = e.level, title = e.title, sourceOffset = e.sourceOffset)
     }
-    return out
-}
 
 /**
  * 从纯文本（如 .txt 小说）按「独占一行」的常见章节样式解析目录。

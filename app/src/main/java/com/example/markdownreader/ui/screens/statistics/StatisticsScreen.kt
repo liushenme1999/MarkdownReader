@@ -1,12 +1,10 @@
 package com.example.markdownreader.ui.screens.statistics
 
-import android.app.Activity
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,17 +22,20 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
+import androidx.navigation.compose.rememberNavController
 import com.example.markdownreader.data.local.entity.BookEntity
+import com.example.markdownreader.ui.components.ShelfStyleStatusBarEffect
+import com.example.markdownreader.ui.components.ShelfStyleTopAppBar
+import com.example.markdownreader.ui.components.shelfStylePageBackground
+import com.example.markdownreader.ui.theme.MarkdownReaderTheme
 import com.example.markdownreader.ui.theme.BookCoverColors
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -47,32 +48,15 @@ fun StatisticsScreen(
     val readingTrend by viewModel.readingTrend.collectAsState()
     val books by viewModel.books.collectAsState()
 
-    // 状态栏适配
-    val view = LocalView.current
-    val systemInDarkTheme = isSystemInDarkTheme()
-    DisposableEffect(systemInDarkTheme) {
-        val window = (view.context as Activity).window
-        val controller = WindowCompat.getInsetsController(window, view)
-        controller.isAppearanceLightStatusBars = !systemInDarkTheme
-        onDispose { }
-    }
+    val pageBg = shelfStylePageBackground()
+    ShelfStyleStatusBarEffect(pageBg)
 
     Scaffold(
+        containerColor = pageBg,
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        "阅读统计",
-                        style = MaterialTheme.typography.titleLarge.copy(
-                            fontWeight = FontWeight.Bold
-                        )
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = { navController.navigateUp() }) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
-                    }
-                }
+            ShelfStyleTopAppBar(
+                title = "阅读统计",
+                onNavigateBack = { navController.navigateUp() }
             )
         }
     ) { paddingValues ->
@@ -80,6 +64,7 @@ fun StatisticsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .background(pageBg)
                 .padding(horizontal = 16.dp),
             contentPadding = PaddingValues(bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -649,3 +634,91 @@ data class DailyReading(
     val dayOfWeek: String,
     val minutes: Int
 )
+
+private fun statisticsPreviewStats(): ReadingStatistics = ReadingStatistics(
+    totalBooks = 12,
+    finishedBooks = 4,
+    totalReadTime = 36,
+    totalReadChars = 1_250_000,
+    totalBookmarks = 28,
+    totalHighlights = 56
+)
+
+private fun statisticsPreviewTrend(): List<DailyReading> = listOf(
+    DailyReading("一", 25),
+    DailyReading("二", 10),
+    DailyReading("三", 45),
+    DailyReading("四", 0),
+    DailyReading("五", 30),
+    DailyReading("六", 60),
+    DailyReading("日", 15),
+)
+
+private fun statisticsPreviewRecentBooks(): List<BookEntity> {
+    val now = java.util.Date()
+    return listOf(
+        BookEntity(
+            id = 1L,
+            title = "活着",
+            author = "余华",
+            filePath = "/preview/1.txt",
+            lastReadTime = now,
+            readingProgress = 0.12f,
+            coverColor = 2,
+        ),
+        BookEntity(
+            id = 2L,
+            title = "Markdown 测试",
+            author = null,
+            filePath = "/preview/2.md",
+            lastReadTime = now,
+            readingProgress = 0.59f,
+            coverColor = 4,
+        ),
+    )
+}
+
+/** 仅用于 @Preview：不依赖 Hilt / Activity。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun StatisticsScreenPreviewImpl(navController: NavController) {
+    val stats = remember { statisticsPreviewStats() }
+    val trend = remember { statisticsPreviewTrend() }
+    val books = remember { statisticsPreviewRecentBooks() }
+
+    val pageBg = shelfStylePageBackground()
+
+    Scaffold(
+        containerColor = pageBg,
+        topBar = {
+            ShelfStyleTopAppBar(
+                title = "阅读统计",
+                onNavigateBack = { navController.navigateUp() }
+            )
+        }
+    ) { paddingValues ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .background(pageBg)
+                .padding(horizontal = 16.dp),
+            contentPadding = PaddingValues(bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            item { StatisticsOverview(stats) }
+            item { WeeklyReadingGoalCard() }
+            item { ReadingTrendCard(trend) }
+            item { RecentlyReadBooks(books, navController) }
+        }
+    }
+}
+
+@Preview(showBackground = true, name = "阅读统计")
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun StatisticsScreenPreview() {
+    MarkdownReaderTheme {
+        StatisticsScreenPreviewImpl(navController = rememberNavController())
+    }
+}

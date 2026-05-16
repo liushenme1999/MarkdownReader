@@ -31,10 +31,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.view.WindowCompat
 import androidx.navigation.NavController
+import androidx.navigation.compose.rememberNavController
 import com.example.markdownreader.ui.theme.BookshelfPageBackground
 import com.example.markdownreader.ui.theme.BookshelfPageBackgroundDark
+import com.example.markdownreader.ui.theme.MarkdownReaderTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -148,7 +151,8 @@ fun ProfileScreen(navController: NavController) {
         containerColor = shelfBg,
         topBar = {
             TopAppBar(
-                modifier = Modifier.statusBarsPadding(),
+                // Scaffold 已对 topBar 施加状态栏区域；避免与 TopAppBar 默认 windowInsets 叠加成双倍顶距
+                windowInsets = WindowInsets(),
                 title = {
                     Text(
                         "我的",
@@ -176,7 +180,7 @@ fun ProfileScreen(navController: NavController) {
                 .padding(horizontal = 20.dp)
         ) {
             // ========== 用户头像区域 ==========
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -534,5 +538,14 @@ private fun ProfileMenuItem(
             modifier = Modifier.size(20.dp),
             tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
         )
+    }
+}
+
+@Preview(showBackground = true, name = "我的")
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProfileScreenPreview() {
+    MarkdownReaderTheme {
+        ProfileScreen(navController = rememberNavController())
     }
 }

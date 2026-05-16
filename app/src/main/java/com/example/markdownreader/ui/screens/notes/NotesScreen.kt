@@ -1,11 +1,9 @@
 package com.example.markdownreader.ui.screens.notes
 
-import android.app.Activity
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -19,17 +17,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
+import androidx.navigation.compose.rememberNavController
+import com.example.markdownreader.data.local.entity.BookmarkEntity
 import com.example.markdownreader.data.local.entity.HighlightEntity
+import com.example.markdownreader.ui.components.AppSearchField
+import com.example.markdownreader.ui.components.ShelfStyleStatusBarEffect
+import com.example.markdownreader.ui.components.ShelfStyleTopAppBar
+import com.example.markdownreader.ui.components.shelfStylePageBackground
+import com.example.markdownreader.ui.theme.MarkdownReaderTheme
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -51,15 +54,8 @@ fun NotesScreen(
     var showExportDialog by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
 
-    // 状态栏适配
-    val view = LocalView.current
-    val systemInDarkTheme = isSystemInDarkTheme()
-    DisposableEffect(systemInDarkTheme) {
-        val window = (view.context as Activity).window
-        val controller = WindowCompat.getInsetsController(window, view)
-        controller.isAppearanceLightStatusBars = !systemInDarkTheme
-        onDispose { }
-    }
+    val pageBg = shelfStylePageBackground()
+    ShelfStyleStatusBarEffect(pageBg)
 
     // 根据搜索关键词过滤数据
     val filteredHighlights = remember(highlights, searchQuery) {
@@ -79,21 +75,11 @@ fun NotesScreen(
     }
 
     Scaffold(
+        containerColor = pageBg,
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        "笔记管理",
-                        style = MaterialTheme.typography.titleLarge.copy(
-                            fontWeight = FontWeight.Bold
-                        )
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = { navController.navigateUp() }) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
-                    }
-                },
+            ShelfStyleTopAppBar(
+                title = "笔记管理",
+                onNavigateBack = { navController.navigateUp() },
                 actions = {
                     IconButton(onClick = { showExportDialog = true }) {
                         Icon(Icons.Default.Share, contentDescription = "导出")
@@ -106,35 +92,21 @@ fun NotesScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .background(pageBg)
         ) {
-            // 搜索框
-            SearchBar(
+            AppSearchField(
                 query = searchQuery,
                 onQueryChange = { searchQuery = it },
-                onSearch = { /* 搜索已实时过滤 */ },
-                active = false,
-                onActiveChange = {},
+                placeholder = if (selectedTab == 0) {
+                    "搜索划线内容或书名..."
+                } else {
+                    "搜索书签内容或书名..."
+                },
+                clearContentDescription = "清除",
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                placeholder = {
-                    Text(
-                        if (selectedTab == 0) "搜索划线内容或书名..."
-                        else "搜索书签内容或书名..."
-                    )
-                },
-                leadingIcon = {
-                    Icon(Icons.Default.Search, contentDescription = "搜索")
-                },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { searchQuery = "" }) {
-                            Icon(Icons.Default.Clear, contentDescription = "清除")
-                        }
-                    }
-                },
-                shape = RoundedCornerShape(12.dp)
-            ) {}
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            )
 
             // 标签页切换
             TabRow(selectedTabIndex = selectedTab) {
@@ -589,3 +561,168 @@ data class BookmarkWithBook(
     val bookmark: com.example.markdownreader.data.local.entity.BookmarkEntity,
     val bookTitle: String
 )
+
+private fun notesPreviewSampleHighlights(): List<HighlightWithBook> {
+    val h = HighlightEntity(
+        id = 1L,
+        bookId = 1L,
+        startPosition = 0,
+        endPosition = 12,
+        highlightedText = "这是预览中的划线示例文本，用于查看卡片布局与多行换行效果。",
+        color = 0xFFFFFF00.toInt(),
+        note = "示例笔记一行",
+    )
+    return listOf(
+        HighlightWithBook(h, "示例书籍 A"),
+        HighlightWithBook(
+            highlight = h.copy(
+                id = 2L,
+                highlightedText = "第二条划线，颜色不同。",
+                color = 0xFF90CAF9.toInt(),
+                note = null
+            ),
+            bookTitle = "另一本书"
+        ),
+    )
+}
+
+private fun notesPreviewSampleBookmarks(): List<BookmarkWithBook> {
+    val b = BookmarkEntity(
+        id = 1L,
+        bookId = 1L,
+        position = 1200,
+        previewText = "书签位置附近的正文预览内容，用于观察书签卡片在列表中的展示。",
+        note = "书签备注（可选）",
+    )
+    return listOf(
+        BookmarkWithBook(b, "示例书籍 B"),
+        BookmarkWithBook(
+            bookmark = b.copy(
+                id = 2L,
+                position = 3400,
+                previewText = "第二条书签预览文本。",
+                note = null
+            ),
+            bookTitle = "Markdown 测试"
+        ),
+    )
+}
+
+/**
+ * 仅用于 @Preview：不依赖 Hilt / Activity 窗口。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NotesScreenPreviewImpl(navController: NavController) {
+    val highlights = remember { notesPreviewSampleHighlights() }
+    val bookmarks = remember { notesPreviewSampleBookmarks() }
+    var selectedTab by remember { mutableIntStateOf(0) }
+    var showExportDialog by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+
+    val filteredHighlights = remember(highlights, searchQuery) {
+        if (searchQuery.isBlank()) highlights
+        else highlights.filter {
+            it.highlight.highlightedText.contains(searchQuery, ignoreCase = true) ||
+                it.bookTitle.contains(searchQuery, ignoreCase = true)
+        }
+    }
+    val filteredBookmarks = remember(bookmarks, searchQuery) {
+        if (searchQuery.isBlank()) bookmarks
+        else bookmarks.filter {
+            it.bookmark.previewText.contains(searchQuery, ignoreCase = true) ||
+                it.bookTitle.contains(searchQuery, ignoreCase = true)
+        }
+    }
+
+    val pageBg = shelfStylePageBackground()
+
+    Scaffold(
+        containerColor = pageBg,
+        topBar = {
+            ShelfStyleTopAppBar(
+                title = "笔记管理",
+                onNavigateBack = { navController.navigateUp() },
+                actions = {
+                    IconButton(onClick = { showExportDialog = true }) {
+                        Icon(Icons.Default.Share, contentDescription = "导出")
+                    }
+                }
+            )
+        }
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .background(pageBg)
+        ) {
+            AppSearchField(
+                query = searchQuery,
+                onQueryChange = { searchQuery = it },
+                placeholder = if (selectedTab == 0) {
+                    "搜索划线内容或书名..."
+                } else {
+                    "搜索书签内容或书名..."
+                },
+                clearContentDescription = "清除",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+
+            TabRow(selectedTabIndex = selectedTab) {
+                Tab(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    text = { Text("划线笔记 (${filteredHighlights.size})") }
+                )
+                Tab(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    text = { Text("书签 (${filteredBookmarks.size})") }
+                )
+            }
+
+            when (selectedTab) {
+                0 -> Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                ) {
+                    HighlightsList(
+                        highlights = filteredHighlights,
+                        onDelete = { }
+                    )
+                }
+                1 -> Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                ) {
+                    BookmarksList(
+                        bookmarks = filteredBookmarks,
+                        onDelete = { }
+                    )
+                }
+            }
+        }
+    }
+
+    if (showExportDialog) {
+        ExportDialog(
+            onExportMarkdown = { showExportDialog = false },
+            onExportJson = { showExportDialog = false },
+            onDismiss = { showExportDialog = false }
+        )
+    }
+}
+
+@Preview(showBackground = true, name = "笔记管理")
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NotesScreenPreview() {
+    MarkdownReaderTheme {
+        NotesScreenPreviewImpl(navController = rememberNavController())
+    }
+}
