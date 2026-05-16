@@ -71,7 +71,7 @@ internal object MobiAzw3Extractor {
             primary == null && alt == null -> return null
             primary != null && alt != null -> mergePdbExtracts(primary, alt)
             primary != null -> primary
-            else -> alt!!
+            else -> requireNotNull(alt) { "alt record expected when primary is null" }
         }
         return packResult(merged)
     }
@@ -171,7 +171,7 @@ internal object MobiAzw3Extractor {
             bytes, recordStarts, firstImgIdx, assets
         )
 
-        val toc = AtxMarkdownTocParser.parse(markdown).ifEmpty { parsePlainTextTocForMobi(markdown) }
+        val toc = AtxMarkdownTocParser.parse(markdown).ifEmpty { PlainTextTocParser.parse(markdown) }
         val cover = extractCoverFromPart(bytes, recordStarts, record0, globalLast)
         return MobiPdbExtract(
             plainText = markdown,
@@ -308,47 +308,6 @@ internal object MobiAzw3Extractor {
     private fun isGifMagic(b: ByteArray): Boolean =
         b.size >= 6 && b[0] == 'G'.code.toByte() && b[1] == 'I'.code.toByte() &&
             b[2] == 'F'.code.toByte() && b[3] == '8'.code.toByte()
-
-    private fun parsePlainTextTocForMobi(text: String): List<ImportedTocEntry> {
-        val lines = text.split('\n')
-        val out = mutableListOf<ImportedTocEntry>()
-        var offset = 0
-        lines.forEachIndexed { index, line ->
-            val lineStart = offset
-            val trimmed = line.trim()
-            if (trimmed.isNotEmpty()) {
-                val level = plainTextTocLevelForMobi(trimmed)
-                if (level != null) {
-                    out += ImportedTocEntry(level = level, title = trimmed, sourceOffset = lineStart)
-                }
-            }
-            offset += line.length
-            if (index < lines.lastIndex) offset += 1
-        }
-        return out
-    }
-
-    private val CN_NUM = "0-9０-９〇一二三四五六七八九十百千万亿两"
-    private val RE_DI_ZHANG = Regex("^第[$CN_NUM]+章.*$")
-    private val RE_DI_JIE = Regex("^第[$CN_NUM]+节.*$")
-    private val RE_DI_HUI = Regex("^第[$CN_NUM]+回.*$")
-    private val RE_DI_JUAN = Regex("^第[$CN_NUM]+卷.*$")
-    private val RE_SPECIAL = Regex(
-        "^(楔子|序章|序言|引子|前言|后记|尾声|跋|番外篇?|[上下中]卷).*$"
-    )
-    private val RE_CH_EN = Regex("(?i)^Chapter\\s+[0-9IVXLC]+\\b.*$")
-    private val RE_PT_EN = Regex("(?i)^Part\\s+[0-9IVXLC]+\\b.*$")
-
-    private fun plainTextTocLevelForMobi(line: String): Int? {
-        if (RE_DI_JUAN.matches(line)) return 1
-        if (RE_SPECIAL.matches(line)) return 1
-        if (RE_DI_ZHANG.matches(line)) return 1
-        if (RE_DI_HUI.matches(line)) return 1
-        if (RE_DI_JIE.matches(line)) return 1
-        if (RE_CH_EN.matches(line)) return 1
-        if (RE_PT_EN.matches(line)) return 1
-        return null
-    }
 
     private fun extractCoverFromPart(
         fileBytes: ByteArray,

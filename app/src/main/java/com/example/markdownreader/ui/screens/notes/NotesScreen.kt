@@ -31,16 +31,11 @@ import com.example.markdownreader.data.local.entity.HighlightEntity
 import com.example.markdownreader.ui.components.AppSearchField
 import com.example.markdownreader.ui.components.ShelfStyleStatusBarEffect
 import com.example.markdownreader.ui.components.ShelfStyleTopAppBar
+import com.example.markdownreader.ui.components.iconTintForDeleteStrip
 import com.example.markdownreader.ui.components.shelfStylePageBackground
 import com.example.markdownreader.ui.theme.MarkdownReaderTheme
 import java.text.SimpleDateFormat
 import java.util.*
-
-/** 与阅读页书签删除条一致：避免 IconButton 的 contentColor 与 error 底混在一起导致图标不可见。 */
-private fun iconTintForDeleteStrip(error: Color): Color {
-    val l = error.red * 0.299f + error.green * 0.587f + error.blue * 0.114f
-    return if (l > 0.55f) Color(0xFF1C1B1F) else Color.White
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

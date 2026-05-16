@@ -35,6 +35,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.markdownreader.navigation.AppRoutes
 import com.example.markdownreader.ui.screens.bookshelf.BookshelfScreen
 import com.example.markdownreader.ui.screens.notes.NotesScreen
 import com.example.markdownreader.ui.screens.profile.ProfileScreen
@@ -77,7 +78,7 @@ class MainActivity : ComponentActivity() {
                     val currentRoute = navBackStackEntry?.destination?.route
                     var bookshelfHideBottomNav by remember { mutableStateOf(false) }
                     val showBottomBar =
-                        (currentRoute == "bookshelf" || currentRoute == "profile") &&
+                        (currentRoute == AppRoutes.BOOKSHELF || currentRoute == AppRoutes.PROFILE) &&
                             !bookshelfHideBottomNav
 
                     Scaffold(
@@ -87,9 +88,9 @@ class MainActivity : ComponentActivity() {
                                     containerColor = MainNavigationBarBackground
                                 ) {
                                     MainBottomNavItem(
-                                        selected = currentRoute == "bookshelf",
+                                        selected = currentRoute == AppRoutes.BOOKSHELF,
                                         onClick = {
-                                            navController.navigate("bookshelf") {
+                                            navController.navigate(AppRoutes.BOOKSHELF) {
                                                 popUpTo(navController.graph.startDestinationId) {
                                                     saveState = true
                                                 }
@@ -101,9 +102,9 @@ class MainActivity : ComponentActivity() {
                                         label = "书架"
                                     )
                                     MainBottomNavItem(
-                                        selected = currentRoute == "profile",
+                                        selected = currentRoute == AppRoutes.PROFILE,
                                         onClick = {
-                                            navController.navigate("profile") {
+                                            navController.navigate(AppRoutes.PROFILE) {
                                                 popUpTo(navController.graph.startDestinationId) {
                                                     saveState = true
                                                 }
@@ -120,26 +121,29 @@ class MainActivity : ComponentActivity() {
                     ) { paddingValues ->
                         // 阅读页全屏自管 inset；书架/我的/笔记/统计与 Tab 页共用外层 Scaffold 顶栏留白
                         val useMainScaffoldInsets = when (currentRoute) {
-                            "bookshelf", "profile", "notes", "statistics" -> true
+                            AppRoutes.BOOKSHELF,
+                            AppRoutes.PROFILE,
+                            AppRoutes.NOTES,
+                            AppRoutes.STATISTICS -> true
                             else -> false
                         }
                         NavHost(
                             navController = navController,
-                            startDestination = "bookshelf",
+                            startDestination = AppRoutes.BOOKSHELF,
                             modifier = Modifier.padding(
                                 if (useMainScaffoldInsets) paddingValues else PaddingValues()
                             )
                         ) {
-                            composable("bookshelf") {
+                            composable(AppRoutes.BOOKSHELF) {
                                 BookshelfScreen(
                                     navController = navController,
                                     onSelectionModeChange = { bookshelfHideBottomNav = it }
                                 )
                             }
-                            composable("profile") {
+                            composable(AppRoutes.PROFILE) {
                                 ProfileScreen(navController = navController)
                             }
-                            composable("reader/{bookId}") { backStackEntry ->
+                            composable(AppRoutes.READER) { backStackEntry ->
                                 val bookId =
                                     backStackEntry.arguments?.getString("bookId")?.toLongOrNull() ?: 0L
                                 ReaderScreen(
@@ -147,10 +151,10 @@ class MainActivity : ComponentActivity() {
                                     bookId = bookId
                                 )
                             }
-                            composable("notes") {
+                            composable(AppRoutes.NOTES) {
                                 NotesScreen(navController = navController)
                             }
-                            composable("statistics") {
+                            composable(AppRoutes.STATISTICS) {
                                 StatisticsScreen(navController = navController)
                             }
                         }

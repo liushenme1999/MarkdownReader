@@ -534,7 +534,7 @@ private fun RecentlyReadBooks(books: List<BookEntity>, navController: NavControl
                 val displayed = books.take(5)
                 displayed.forEachIndexed { index, book ->
                     BookProgressItem(book) {
-                        navController.navigate("reader/${book.id}")
+                        navController.navigate(com.example.markdownreader.navigation.AppRoutes.reader(book.id))
                     }
                     if (index < displayed.lastIndex) {
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))

@@ -143,8 +143,7 @@ internal object HtmlToMarkdownConverter {
                 "script", "style" -> skipDepth++
                 "br" -> {
                     if (inPre) codeBuf.append('\n')
-                    else if (tableState?.inCell == true) tableState!!.cellBuf.append("<br>")
-                    else inline.append("  \n")
+                    else appendToActiveBuffer("<br>", hardBreakInParagraph = true)
                 }
                 "hr" -> {
                     flushParagraph()
@@ -194,8 +193,9 @@ internal object HtmlToMarkdownConverter {
                 "mark" -> if (!inPre) currentBuffer().append("<mark>")
                 "a" -> {
                     val href = attrs["href"]?.trim().orEmpty()
-                    val target = if (tableState?.inCell == true) AnchorTarget.TableCell else AnchorTarget.Inline
-                    val buf = if (target == AnchorTarget.TableCell) tableState!!.cellBuf else inline
+                    val inCell = tableState?.inCell == true
+                    val target = if (inCell) AnchorTarget.TableCell else AnchorTarget.Inline
+                    val buf = activeCellBuffer() ?: inline
                     anchorStack.addLast(AnchorFrame(href, target, startPos = buf.length))
                 }
                 "img" -> {
@@ -206,8 +206,7 @@ internal object HtmlToMarkdownConverter {
                         val md = "![${escapeAlt(alt)}](${escapeUrl(src)})"
                         when {
                             inPre -> codeBuf.append(md)
-                            tableState?.inCell == true -> tableState!!.cellBuf.append(md)
-                            else -> inline.append(md)
+                            else -> (activeCellBuffer() ?: inline).append(md)
                         }
                     }
                 }
@@ -346,8 +345,22 @@ internal object HtmlToMarkdownConverter {
             }
         }
 
-        private fun currentBuffer(): StringBuilder =
-            if (tableState?.inCell == true) tableState!!.cellBuf else inline
+        private fun activeCellBuffer(): StringBuilder? =
+            tableState?.takeIf { it.inCell }?.cellBuf
+
+        private fun currentBuffer(): StringBuilder = activeCellBuffer() ?: inline
+
+        /** 表格单元格内写 `<br>`；否则段落内 hard break。 */
+        private fun appendToActiveBuffer(text: String, hardBreakInParagraph: Boolean = false) {
+            val cell = activeCellBuffer()
+            if (cell != null) {
+                cell.append(text)
+            } else if (hardBreakInParagraph) {
+                inline.append("  \n")
+            } else {
+                inline.append(text)
+            }
+        }
 
         // ----- 段落 / 块输出 -----
 

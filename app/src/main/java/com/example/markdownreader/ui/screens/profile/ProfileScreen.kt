@@ -1,13 +1,12 @@
 package com.example.markdownreader.ui.screens.profile
 
-import android.app.Activity
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -22,32 +21,28 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.core.view.WindowCompat
 import androidx.navigation.NavController
+import com.example.markdownreader.navigation.AppRoutes
+import com.example.markdownreader.ui.components.ShelfStyleStatusBarEffect
+import com.example.markdownreader.ui.components.shelfStylePageBackground
 import androidx.navigation.compose.rememberNavController
-import com.example.markdownreader.ui.theme.BookshelfPageBackground
-import com.example.markdownreader.ui.theme.BookshelfPageBackgroundDark
 import com.example.markdownreader.ui.theme.MarkdownReaderTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(navController: NavController) {
-    val view = LocalView.current
     val context = LocalContext.current
     val systemInDarkTheme = isSystemInDarkTheme()
-    val shelfBg =
-        if (systemInDarkTheme) BookshelfPageBackgroundDark
-        else BookshelfPageBackground
+    val shelfBg = shelfStylePageBackground()
+    ShelfStyleStatusBarEffect(shelfBg)
 
     // 对话框状态
     var showAboutDialog by remember { mutableStateOf(false) }
@@ -57,19 +52,6 @@ fun ProfileScreen(navController: NavController) {
     val todayReadingMinutes = 0
     val totalReadingDays = 0
     val continuousReadingDays = 0
-
-    DisposableEffect(shelfBg, systemInDarkTheme) {
-        val window = (view.context as Activity).window
-        val controller = WindowCompat.getInsetsController(window, view)
-        val prevColor = window.statusBarColor
-        val prevLightStatusBars = controller.isAppearanceLightStatusBars
-        window.statusBarColor = shelfBg.toArgb()
-        controller.isAppearanceLightStatusBars = !systemInDarkTheme
-        onDispose {
-            window.statusBarColor = prevColor
-            controller.isAppearanceLightStatusBars = prevLightStatusBars
-        }
-    }
 
     // 关于应用对话框
     if (showAboutDialog) {
@@ -314,7 +296,7 @@ fun ProfileScreen(navController: NavController) {
                         icon = Icons.Default.BarChart,
                         title = "阅读统计",
                         subtitle = "查看阅读数据与趋势",
-                        onClick = { navController.navigate("statistics") }
+                        onClick = { navController.navigate(AppRoutes.STATISTICS) }
                     )
                     HorizontalDivider(
                         modifier = Modifier.padding(start = 56.dp, end = 16.dp),
@@ -326,7 +308,7 @@ fun ProfileScreen(navController: NavController) {
                         icon = Icons.Default.EditNote,
                         title = "笔记管理",
                         subtitle = "管理阅读笔记与标注",
-                        onClick = { navController.navigate("notes") }
+                        onClick = { navController.navigate(AppRoutes.NOTES) }
                     )
                     HorizontalDivider(
                         modifier = Modifier.padding(start = 56.dp, end = 16.dp),

@@ -225,8 +225,9 @@ internal object DocxBookExtractor {
                             val rId = parser.getAttributeValue(null, "id")
                                 ?: parser.getAttributeValue("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id")
                             hyperlinkHref = rId?.let { rels[it] }
-                            hyperlinkActiveBuf = activeInline()
-                            hyperlinkAnchorStart = hyperlinkActiveBuf!!.length
+                            val linkBuf = activeInline()
+                            hyperlinkActiveBuf = linkBuf
+                            hyperlinkAnchorStart = linkBuf.length
                         }
                         "tbl" -> {
                             flushParagraph()

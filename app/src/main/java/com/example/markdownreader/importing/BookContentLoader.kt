@@ -232,6 +232,9 @@ object UrlBookDownloader {
     )
 
     fun download(urlStr: String): Result {
+        require(BookImportSupport.isAllowedDownloadUrl(urlStr)) {
+            "仅支持 http 或 https 链接"
+        }
         val conn = java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection
         conn.connectTimeout = 20_000
         conn.readTimeout = 60_000

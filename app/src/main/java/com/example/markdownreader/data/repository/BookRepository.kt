@@ -24,10 +24,7 @@ class BookRepository @Inject constructor(
     suspend fun updateBook(book: BookEntity) = bookDao.updateBook(book)
 
     suspend fun deleteBook(book: BookEntity) {
-        ParsedBookStorage.deleteBundleDir(book.parsedBundlePath)
-        book.coverImagePath?.let { path ->
-            runCatching { File(path).delete() }
-        }
+        deleteStoredAssets(book)
         bookDao.deleteBook(book)
     }
 
@@ -44,14 +41,16 @@ class BookRepository @Inject constructor(
     suspend fun deleteBooksByIds(ids: Collection<Long>) {
         if (ids.isEmpty()) return
         for (id in ids) {
-            bookDao.getBookById(id)?.let { book ->
-                ParsedBookStorage.deleteBundleDir(book.parsedBundlePath)
-                book.coverImagePath?.let { path ->
-                    runCatching { File(path).delete() }
-                }
-            }
+            bookDao.getBookById(id)?.let { deleteStoredAssets(it) }
         }
         bookDao.deleteBooksByIds(ids.toList())
+    }
+
+    private fun deleteStoredAssets(book: BookEntity) {
+        ParsedBookStorage.deleteBundleDir(book.parsedBundlePath)
+        book.coverImagePath?.let { path ->
+            runCatching { File(path).delete() }
+        }
     }
 
     suspend fun pinBooksByIds(ids: Collection<Long>, pinOrder: Long) {
