@@ -2,7 +2,7 @@ package com.example.markdownreader.importing
 
 /**
  * 从纯文本（如 .txt 小说）按常见章节标题样式解析目录。
- * 阅读页与 MOBI 导入共用，保证 [sourceOffset] 规则一致。
+ * 阅读页与导入侧共用，保证 [sourceOffset] 规则一致。
  */
 object PlainTextTocParser {
 
@@ -19,24 +19,26 @@ object PlainTextTocParser {
 
     fun parse(text: String): List<ImportedTocEntry> {
         if (text.isEmpty()) return emptyList()
-        val lines = text.split('\n')
         val out = mutableListOf<ImportedTocEntry>()
         var offset = 0
-        lines.forEachIndexed { index, line ->
+        while (offset <= text.length) {
             val lineStart = offset
+            val lineEnd = text.indexOf('\n', lineStart).let { if (it < 0) text.length else it }
+            val line = text.substring(lineStart, lineEnd)
             val trimmed = line.trim()
             if (trimmed.isNotEmpty()) {
                 val level = levelForLine(trimmed)
                 if (level != null) {
+                    val titleStart = lineStart + line.indexOf(trimmed)
                     out += ImportedTocEntry(
                         level = level,
                         title = trimmed,
-                        sourceOffset = lineStart
+                        sourceOffset = titleStart.coerceIn(lineStart, lineEnd)
                     )
                 }
             }
-            offset += line.length
-            if (index < lines.lastIndex) offset += 1
+            if (lineEnd >= text.length) break
+            offset = lineEnd + 1
         }
         return out
     }

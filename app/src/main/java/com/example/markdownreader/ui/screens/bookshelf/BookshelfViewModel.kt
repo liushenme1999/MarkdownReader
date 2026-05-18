@@ -53,6 +53,12 @@ class BookshelfViewModel @Inject constructor(
                 }
                 val fileName = BookImportSupport.displayNameFromUri(context, uri) ?: "未命名书籍"
                 val mime = context.contentResolver.getType(uri)
+                if (BookImportSupport.isRemovedFormat(fileName, mime)) {
+                    toastChannel.trySend(
+                        "不支持 EPUB、DOC、DOCX、MOBI、AZW3，请使用 Markdown、TXT 或 PDF。"
+                    )
+                    return@launch
+                }
                 val format = BookImportSupport.detectFormat(fileName, mime)
                 val extracted = withContext(Dispatchers.IO) {
                     BookContentLoader.loadExtractedFromUri(context, uri, format)
@@ -85,6 +91,12 @@ class BookshelfViewModel @Inject constructor(
             try {
                 val result = withContext(Dispatchers.IO) { UrlBookDownloader.download(url) }
                 val name = result.suggestedFileName ?: url.substringAfterLast('/').substringBefore('?')
+                if (BookImportSupport.isRemovedFormat(name, result.contentType)) {
+                    toastChannel.trySend(
+                        "不支持 EPUB、DOC、DOCX、MOBI、AZW3，请使用 Markdown、TXT 或 PDF。"
+                    )
+                    return@launch
+                }
                 val format = BookImportSupport.detectFormat(name, result.contentType)
                 val extracted = withContext(Dispatchers.IO) {
                     BookContentLoader.loadExtractedFromUrlBytes(

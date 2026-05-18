@@ -141,35 +141,19 @@ fun ReaderScreen(
 
     val structuredToc by viewModel.structuredToc.collectAsState()
 
-    val tocEntries = remember(content, renderPlainText, structuredToc, importFormat) {
+    val tocEntries = remember(content, renderPlainText, structuredToc) {
         val stored = structuredToc.orEmpty()
         when {
-            renderPlainText -> parsePlainTextToc(content)
-            importFormat == ImportedBookFormat.MOBI || importFormat == ImportedBookFormat.AZW3 -> {
-                val fromBody = parseMarkdownToc(content)
-                when {
-                    fromBody.isNotEmpty() -> fromBody
-                    stored.isNotEmpty() -> stored
-                    else -> parsePlainTextToc(content)
-                }
-            }
-            importFormat == ImportedBookFormat.EPUB && stored.isNotEmpty() -> stored
+            renderPlainText -> stored.ifEmpty { parsePlainTextToc(content) }
             stored.isNotEmpty() -> stored
             else -> parseMarkdownToc(content)
         }
     }
-    val emptyTocMessage = remember(importFormat, renderPlainText) {
-        when (importFormat) {
-            ImportedBookFormat.EPUB ->
-                "未解析到 EPUB 目录（toc.ncx 或 nav）。正文已按 spine 合并，仍可按进度阅读。"
-            ImportedBookFormat.MOBI, ImportedBookFormat.AZW3 ->
-                "未从正文识别到常见章节标题。若为 Huff/CDIC 压缩的 MOBI，当前版本可能无法解压。"
-            else ->
-                if (renderPlainText) {
-                    "未识别到章节。请将章节标题单独成行，例如：\n第一章 …、第1节 …、Chapter 1 …"
-                } else {
-                    "未识别到标题。请使用 Markdown ATX 语法，例如：\n# 一级标题\n## 二级标题"
-                }
+    val emptyTocMessage = remember(renderPlainText) {
+        if (renderPlainText) {
+            "未识别到章节。请将章节标题单独成行，例如：\n第一章 …、第1节 …、Chapter 1 …"
+        } else {
+            "未识别到标题。请使用 Markdown ATX 语法，例如：\n# 一级标题\n## 二级标题"
         }
     }
     val totalChars = book?.totalChars?.takeIf { it > 0 } ?: content.length.coerceAtLeast(1)
@@ -296,18 +280,7 @@ fun ReaderScreen(
         pendingScrollRestoreY = null
         displayWindowStartChar = start
         displayWindowEndChar = end
-        val tv = awaitReaderTextViewLayout({ readerTextView.value }, maxAttempts = 80)
-        tv?.post {
-            val offset = resolveDisplayedCharOffset(
-                sourceContent = content,
-                sourceOffset = targetChar,
-                displayedText = tv.text,
-                renderPlainText = renderPlainText,
-                windowStart = start,
-                tocEntries = tocEntries,
-            )
-            scrollTextViewToCharOffset(tv, offset)
-        }
+        pendingScrollRestoreGlobalChar = targetChar
     }
 
     // 向下扩窗：复用扩窗前的 scrollY（尾部追加，前面 layout 高度不变）。
@@ -332,37 +305,44 @@ fun ReaderScreen(
         pendingScrollRestoreY = null
     }
 
-    // 向上扩窗：按全书字符锚点滚动，避免视口卡在章节第一行。
-    LaunchedEffect(displayWindowStartChar, pendingScrollRestoreGlobalChar) {
+    // 目录/书签跳转、向上扩窗：等新窗口正文写入 TextView 后再按锚点滚动。
+    LaunchedEffect(
+        displayWindowStartChar,
+        displayWindowEndChar,
+        pendingScrollRestoreGlobalChar,
+        renderPlainText,
+    ) {
         val anchorGlobal = pendingScrollRestoreGlobalChar ?: return@LaunchedEffect
         if (content.isEmpty()) {
             pendingScrollRestoreGlobalChar = null
             return@LaunchedEffect
         }
-        val tv = awaitReaderTextViewLayout({ readerTextView.value }, maxAttempts = 120) ?: run {
+        val winStart = displayWindowStartChar
+        val expectedLen = if (renderPlainText) {
+            (displayWindowEndChar - winStart).coerceAtLeast(0)
+        } else {
+            null
+        }
+        val tv = awaitReaderTextViewLayout(
+            tvProvider = { readerTextView.value },
+            maxAttempts = 120,
+            expectedTextLength = expectedLen,
+        ) ?: run {
             pendingScrollRestoreGlobalChar = null
             return@LaunchedEffect
         }
-        val winStart = displayWindowStartChar
-        repeat(120) {
-            val layout = tv.layout
-            val tvTextLen = tv.text?.length ?: 0
-            val layoutTextLen = layout?.text?.length ?: -1
-            if (layout != null && tvTextLen > 0 && layoutTextLen == tvTextLen) {
-                val offset = resolveDisplayedCharOffset(
-                    sourceContent = content,
-                    sourceOffset = anchorGlobal.coerceIn(0, content.length - 1),
-                    displayedText = tv.text,
-                    renderPlainText = renderPlainText,
-                    windowStart = winStart,
-                    tocEntries = tocEntries,
-                )
-                tv.post { scrollTextViewToCharOffset(tv, offset) }
-                pendingScrollRestoreGlobalChar = null
-                return@LaunchedEffect
-            }
-            delay(32)
-        }
+        val safeAnchor = anchorGlobal.coerceIn(0, content.length - 1)
+        val preferredEntry = tocEntries.find { it.sourceOffset == safeAnchor }
+        val offset = resolveDisplayedCharOffset(
+            sourceContent = content,
+            sourceOffset = safeAnchor,
+            displayedText = tv.text,
+            renderPlainText = renderPlainText,
+            windowStart = winStart,
+            tocEntries = tocEntries,
+            preferredEntry = preferredEntry,
+        )
+        tv.post { scrollTextViewToCharOffset(tv, offset) }
         pendingScrollRestoreGlobalChar = null
     }
 
@@ -751,24 +731,17 @@ fun ReaderScreen(
                             onProgress = { viewModel.updateReadingProgress(p) }
                         )
                     } else {
+                        pendingScrollRestoreY = null
                         jumpToCharInChunkWindow(
-                            scope = scope,
-                            tvProvider = { readerTextView.value },
-                            sourceContent = content,
-                            renderPlainText = renderPlainText,
                             contentLen = contentLen,
                             chapterBoundaries = chapterBoundaries,
                             charPos = charPos,
-                            tocEntries = tocEntries,
                             setReadingWindow = { start, end ->
                                 displayWindowStartChar = start
                                 displayWindowEndChar = end
                             },
-                            clearPendingRestore = {
-                                pendingScrollRestoreY = null
-                                pendingScrollRestoreGlobalChar = null
-                            },
-                            onProgress = { viewModel.updateReadingProgress(p) }
+                            onAnchorGlobalChar = { pendingScrollRestoreGlobalChar = it },
+                            onProgress = { viewModel.updateReadingProgress(p) },
                         )
                     }
                 }
@@ -810,25 +783,17 @@ fun ReaderScreen(
                             onProgress = { viewModel.updateReadingProgress(p) }
                         )
                     } else {
+                        pendingScrollRestoreY = null
                         jumpToCharInChunkWindow(
-                            scope = scope,
-                            tvProvider = { readerTextView.value },
-                            sourceContent = content,
-                            renderPlainText = renderPlainText,
                             contentLen = contentLen,
                             chapterBoundaries = chapterBoundaries,
                             charPos = charPos,
-                            tocEntries = tocEntries,
-                            preferredTocEntry = entry,
                             setReadingWindow = { start, end ->
                                 displayWindowStartChar = start
                                 displayWindowEndChar = end
                             },
-                            clearPendingRestore = {
-                                pendingScrollRestoreY = null
-                                pendingScrollRestoreGlobalChar = null
-                            },
-                            onProgress = { viewModel.updateReadingProgress(p) }
+                            onAnchorGlobalChar = { pendingScrollRestoreGlobalChar = it },
+                            onProgress = { viewModel.updateReadingProgress(p) },
                         )
                     }
                 }

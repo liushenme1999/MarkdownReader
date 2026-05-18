@@ -13,7 +13,7 @@ private const val MAX_TEXT_SCAN_BYTES = 8 * 1024 * 1024
 private const val MAX_URL_BYTES = 15 * 1024 * 1024
 
 /**
- * 从 content://、file:// 或已下载字节加载正文；文本类走编码探测，EPUB/DOCX/MOBI/AZW3 做结构化提取。
+ * 从 content://、file:// 或已下载字节加载正文；支持 Markdown、TXT、PDF。
  */
 object BookContentLoader {
 
@@ -25,29 +25,6 @@ object BookContentLoader {
             ImportedBookFormat.MARKDOWN, ImportedBookFormat.TXT ->
                 ExtractedBookText.plainBody(readPlainTextFromUri(context, uri))
 
-            ImportedBookFormat.EPUB -> {
-                val file = copyUriToCacheFile(context, uri, ".epub") ?: return ExtractedBookText.plainBody("")
-                try {
-                    EpubBookExtractor.extract(file)
-                        ?: ExtractedBookText.plainBody(placeholder(format))
-                } finally {
-                    file.delete()
-                }
-            }
-
-            ImportedBookFormat.DOCX -> {
-                val file = copyUriToCacheFile(context, uri, ".docx") ?: return ExtractedBookText.plainBody("")
-                try {
-                    DocxBookExtractor.extract(file)
-                        ?: ExtractedBookText.plainBody(placeholder(format))
-                } finally {
-                    file.delete()
-                }
-            }
-
-            ImportedBookFormat.MOBI -> loadMobiExtracted(context, uri, ".mobi", format)
-            ImportedBookFormat.AZW3 -> loadMobiExtracted(context, uri, ".azw3", format)
-
             ImportedBookFormat.PDF -> {
                 val file = copyUriToCacheFile(context, uri, ".pdf") ?: return ExtractedBookText.plainBody("")
                 try {
@@ -57,9 +34,6 @@ object BookContentLoader {
                     file.delete()
                 }
             }
-
-            ImportedBookFormat.DOC ->
-                ExtractedBookText.plainBody(placeholder(format))
         }
     }
 
@@ -78,32 +52,6 @@ object BookContentLoader {
             ImportedBookFormat.MARKDOWN, ImportedBookFormat.TXT ->
                 ExtractedBookText.plainBody(decodeTextBytes(bytes, httpCharsetName))
 
-            ImportedBookFormat.EPUB -> {
-                val tmp = File.createTempFile("epub_", ".epub")
-                try {
-                    tmp.writeBytes(bytes)
-                    EpubBookExtractor.extract(tmp)
-                        ?: ExtractedBookText.plainBody(placeholder(format))
-                } finally {
-                    tmp.delete()
-                }
-            }
-
-            ImportedBookFormat.DOCX -> {
-                val tmp = File.createTempFile("docx_", ".docx")
-                try {
-                    tmp.writeBytes(bytes)
-                    DocxBookExtractor.extract(tmp)
-                        ?: ExtractedBookText.plainBody(placeholder(format))
-                } finally {
-                    tmp.delete()
-                }
-            }
-
-            ImportedBookFormat.MOBI, ImportedBookFormat.AZW3 ->
-                MobiAzw3Extractor.extractFromBytes(bytes)
-                    ?: ExtractedBookText.plainBody(placeholder(format))
-
             ImportedBookFormat.PDF -> {
                 val tmp = File.createTempFile("pdf_", ".pdf")
                 try {
@@ -114,24 +62,32 @@ object BookContentLoader {
                     tmp.delete()
                 }
             }
-
-            ImportedBookFormat.DOC ->
-                ExtractedBookText.plainBody(placeholder(format))
         }
     }
 
-    private fun loadMobiExtracted(
-        context: Context,
-        uri: Uri,
-        suffix: String,
-        format: ImportedBookFormat
-    ): ExtractedBookText {
-        val file = copyUriToCacheFile(context, uri, suffix) ?: return ExtractedBookText.plainBody("")
-        return try {
-            MobiAzw3Extractor.extractFromFile(file)
-                ?: ExtractedBookText.plainBody(placeholder(format))
-        } finally {
-            file.delete()
+    /** 书架中仍保存旧格式书籍、且本地无解析包时的提示正文。 */
+    fun removedFormatPlaceholder(storedKey: String?): String {
+        val label = storedKey?.uppercase()?.trim().orEmpty().ifBlank { "该格式" }
+        return buildString {
+            appendLine("# 已不再支持此格式")
+            appendLine()
+            appendLine("当前版本已移除对 **$label**（EPUB、DOC、DOCX、MOBI、AZW3 等）的直接导入与解析。")
+            appendLine()
+            appendLine("请将书籍转换为 **Markdown**、**TXT** 或 **PDF** 后重新导入。")
+        }
+    }
+
+    fun placeholder(format: ImportedBookFormat): String {
+        val label = when (format) {
+            ImportedBookFormat.PDF -> "PDF"
+            else -> format.name
+        }
+        return buildString {
+            appendLine("# 暂不支持直接阅读此格式")
+            appendLine()
+            appendLine("当前版本未能解析 **$label** 正文，书架已保存该书以便后续处理。")
+            appendLine()
+            appendLine("建议：将内容另存为 **Markdown** 或 **TXT** 后再导入。")
         }
     }
 
@@ -201,23 +157,6 @@ object BookContentLoader {
             String(bytes, cs)
         } catch (_: Exception) {
             TextEncodingDetector.decode(bytes)
-        }
-    }
-
-    fun placeholder(format: ImportedBookFormat): String {
-        val label = when (format) {
-            ImportedBookFormat.PDF -> "PDF"
-            ImportedBookFormat.DOC -> "DOC（旧版 Word）"
-            ImportedBookFormat.MOBI -> "MOBI"
-            ImportedBookFormat.AZW3 -> "AZW3 / Kindle"
-            else -> format.name
-        }
-        return buildString {
-            appendLine("# 暂不支持直接阅读此格式")
-            appendLine()
-            appendLine("当前版本尚未为 **$label** 内置正文提取，书架已保存该书以便后续升级。")
-            appendLine()
-            appendLine("建议：将内容另存为 **Markdown**、**TXT** 或 **DOCX** 后再导入。")
         }
     }
 }

@@ -135,7 +135,7 @@ internal fun EmptyBookshelf(
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "支持 Markdown、TXT、EPUB 等多种格式，点击下方导入",
+            text = "支持 Markdown、TXT、PDF，点击下方导入",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
             textAlign = TextAlign.Center

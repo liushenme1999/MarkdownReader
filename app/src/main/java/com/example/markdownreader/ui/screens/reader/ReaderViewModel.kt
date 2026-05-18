@@ -48,7 +48,7 @@ class ReaderViewModel @Inject constructor(
     private val _content = MutableStateFlow("")
     val content: StateFlow<String> = _content.asStateFlow()
 
-    /** EPUB/MOBI 等由导入器提供的目录；非空时阅读页优先使用，不再从正文猜标题。 */
+    /** 导入时写入的目录；非空时阅读页优先使用，不再从正文猜标题。 */
     private val _structuredToc = MutableStateFlow<List<MarkdownTocEntry>?>(null)
     val structuredToc: StateFlow<List<MarkdownTocEntry>?> = _structuredToc.asStateFlow()
 
@@ -297,6 +297,11 @@ class ReaderViewModel @Inject constructor(
             ParsedBookStorage.readBundle(dir)
                 ?.takeIf { it.body.isNotEmpty() }
                 ?.let { return it }
+        }
+        if (ImportedBookFormat.isRemovedStoredKey(book.importFormat)) {
+            return ExtractedBookText.plainBody(
+                BookContentLoader.removedFormatPlaceholder(book.importFormat)
+            )
         }
         val path = book.filePath
         val format = ImportedBookFormat.fromStored(book.importFormat)

@@ -83,7 +83,7 @@ internal fun BookshelfImportMethodDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    "支持 Markdown、TXT、EPUB、PDF、DOC、DOCX、MOBI、AZW3",
+                    "支持 Markdown、TXT、PDF",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(modifier = Modifier.height(8.dp))

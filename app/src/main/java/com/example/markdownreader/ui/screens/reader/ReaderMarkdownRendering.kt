@@ -609,7 +609,7 @@ internal fun createMarkwon(context: Context): Markwon {
         .usePlugin(LinkifyPlugin.create())
         .usePlugin(
             ImagesPlugin.create { plugin ->
-                // 仅启用 file:// 本地图片：EPUB/MOBI 内嵌图已落盘到 parsed_books/<id>/assets/，
+                // 仅启用 file:// 本地图片：内嵌图已落盘到 parsed_books/<id>/assets/，
                 // ParsedBookStorage.readBundle 读取时把 book-asset:// 占位换成了 file://。
                 // 出于隐私 / 流量考虑暂不启用 HTTP 远程图片加载。
                 plugin.addSchemeHandler(FileSchemeHandler.create())
@@ -617,7 +617,6 @@ internal fun createMarkwon(context: Context): Markwon {
         )
         .usePlugin(
             // `$$...$$` 块、`$...$` 内联 LaTeX 公式渲染（基于 jlatexmath）。
-            // EPUB/MOBI 中如有 MathML，HtmlToMarkdownConverter 会先把它转换为 $...$ / $$...$$。
             JLatexMathPlugin.create(context.resources.getDimension(android.R.dimen.app_icon_size) / 2f) { builder ->
                 builder.inlinesEnabled(true)
             }

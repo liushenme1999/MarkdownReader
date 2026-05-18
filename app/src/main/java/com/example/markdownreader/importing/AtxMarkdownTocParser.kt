@@ -3,7 +3,7 @@ package com.example.markdownreader.importing
 /**
  * 从 Markdown 源码解析 ATX 标题目录（`#` … `######`）。
  * 与阅读页 [com.example.markdownreader.ui.screens.reader.parseMarkdownToc] 共用，
- * 保证 EPUB/MOBI 导入与阅读跳转使用同一套 [sourceOffset] 规则。
+ * 保证导入与阅读跳转使用同一套 [sourceOffset] 规则。
  */
 object AtxMarkdownTocParser {
 

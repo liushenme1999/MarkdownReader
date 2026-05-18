@@ -32,6 +32,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
@@ -427,8 +429,12 @@ internal fun TocSheet(
     onEntryClick: (MarkdownTocEntry) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val tocScrollState = rememberScrollState()
+
     ModalBottomSheet(
-        onDismissRequest = onDismiss
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
     ) {
         Column(
             modifier = Modifier
@@ -449,34 +455,32 @@ internal fun TocSheet(
                 )
                 Spacer(modifier = Modifier.height(24.dp))
             } else {
-                LazyColumn(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 520.dp)
+                        .verticalScroll(tocScrollState)
                 ) {
-                    itemsIndexed(
-                        entries,
-                        key = { _, e -> e.sourceOffset }
-                    ) { _, entry ->
-                        Column {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onEntryClick(entry) }
-                                    .padding(vertical = 10.dp, horizontal = 4.dp)
-                                    .padding(
-                                        start = ((entry.level - 1).coerceAtLeast(0) * 14).dp
-                                    ),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = entry.title,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
+                    entries.forEachIndexed { index, entry ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onEntryClick(entry) }
+                                .padding(vertical = 10.dp, horizontal = 4.dp)
+                                .padding(
+                                    start = ((entry.level - 1).coerceAtLeast(0) * 14).dp
+                                ),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = entry.title,
+                                style = MaterialTheme.typography.bodyLarge,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        if (index < entries.lastIndex) {
                             HorizontalDivider(
                                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
                             )
@@ -485,6 +489,7 @@ internal fun TocSheet(
                 }
                 Spacer(modifier = Modifier.height(16.dp))
             }
+            Spacer(modifier = Modifier.navigationBarsPadding())
         }
     }
 }

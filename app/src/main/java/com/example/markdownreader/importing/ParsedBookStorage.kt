@@ -9,7 +9,7 @@ import java.nio.charset.StandardCharsets
 /**
  * 导入后统一落盘：每本书一个目录 `filesDir/parsed_books/{id}/`，内含
  * [BODY_FILE] UTF-8 正文、[TOC_FILE] 目录 JSON、可选 [COVER_JPG]/[COVER_PNG]，
- * 以及 EPUB/MOBI 中抽出的内嵌图片 `assets/<id>.<ext>`。
+ * 以及 PDF 等格式抽出的内嵌图片 `assets/<id>.<ext>`。
  *
  * 正文写盘时仍保留 `book-asset://<id>` 占位（解析时填入的相对引用），读盘时再把占位
  * 实化为 `file://<dir>/assets/<id>` 绝对路径——这样万一 bundle 目录搬迁，body 仍可重建链接。

@@ -349,6 +349,40 @@ internal fun findOccurrenceIndex(haystack: String, needle: String, occurrence: I
  * 将「源码字符下标」映射到当前 TextView 已渲染文本中的下标。
  * Markwon 渲染后长度与 Markdown 源码不一致：优先用 HeadingSpan 序号，其次按窗口内第 N 次标题文本匹配。
  */
+/** 在窗口片段中定位章节标题行（相对 [displayed] 的下标）；优先在 [hintOffset] 附近匹配。 */
+internal fun findPlainTextChapterOffsetInDisplayed(
+    displayed: String,
+    title: String,
+    hintOffset: Int,
+): Int? {
+    val needle = title.trim()
+    if (needle.length < 2) return null
+    val searchFrom = (hintOffset - 2048).coerceAtLeast(0)
+    val searchTo = (hintOffset + 2048).coerceAtMost(displayed.length)
+    var idx = displayed.indexOf(needle, searchFrom)
+    while (idx >= 0 && idx < searchTo) {
+        if (isPlainTextLineTitleAt(displayed, idx, needle)) return idx
+        idx = displayed.indexOf(needle, idx + 1)
+    }
+    idx = displayed.indexOf(needle)
+    while (idx >= 0) {
+        if (isPlainTextLineTitleAt(displayed, idx, needle)) return idx
+        idx = displayed.indexOf(needle, idx + 1)
+    }
+    return null
+}
+
+internal fun isPlainTextLineTitleAt(displayed: String, index: Int, title: String): Boolean {
+    if (index < 0 || index >= displayed.length) return false
+    if (!displayed.regionMatches(index, title, 0, title.length, ignoreCase = false)) return false
+    val lineStart = displayed.lastIndexOf('\n', index - 1).let { if (it < 0) 0 else it + 1 }
+    val between = displayed.substring(lineStart, index)
+    if (between.isNotEmpty() && !between.all { it.isWhitespace() }) return false
+    val after = index + title.length
+    if (after >= displayed.length) return true
+    return displayed[after] == '\n' || displayed[after].isWhitespace()
+}
+
 internal fun resolveDisplayedCharOffset(
     sourceContent: String,
     sourceOffset: Int,
@@ -362,7 +396,13 @@ internal fun resolveDisplayedCharOffset(
     val len = displayed.length
     if (len == 0) return 0
     if (renderPlainText) {
-        return (sourceOffset - windowStart).coerceIn(0, (len - 1).coerceAtLeast(0))
+        val hint = (sourceOffset - windowStart).coerceIn(0, len)
+        val entry = preferredEntry
+            ?: tocEntries.getOrNull(tocIndexForSourceOffset(tocEntries, sourceOffset))
+        if (entry != null) {
+            findPlainTextChapterOffsetInDisplayed(displayed, entry.title, hint)?.let { return it }
+        }
+        return hint.coerceIn(0, (len - 1).coerceAtLeast(0))
     }
 
     val entry = preferredEntry
@@ -425,24 +465,30 @@ internal fun readingProgressForCharPos(charPos: Int, contentLength: Int): Float 
     (charPos.toFloat() / contentLength.coerceAtLeast(1)).coerceIn(0f, 1f)
 
 /** layout 已基于当前文本测量完成。 */
-internal fun isReaderTextViewLayoutReady(tv: TextView): Boolean {
+internal fun isReaderTextViewLayoutReady(
+    tv: TextView,
+    expectedTextLength: Int? = null,
+): Boolean {
     val layout = tv.layout ?: return false
     val len = tv.text?.length ?: 0
-    return len > 0 && layout.text?.length == len
+    if (len <= 0 || layout.text?.length != len) return false
+    if (expectedTextLength != null && len != expectedTextLength) return false
+    return true
 }
 
 internal suspend fun awaitReaderTextViewLayout(
     tvProvider: () -> TextView?,
     maxAttempts: Int = 100,
+    expectedTextLength: Int? = null,
 ): TextView? {
     repeat(maxAttempts) {
         val tv = tvProvider()
-        if (tv != null && isReaderTextViewLayoutReady(tv)) {
+        if (tv != null && isReaderTextViewLayoutReady(tv, expectedTextLength)) {
             return tv
         }
         kotlinx.coroutines.delay(32)
     }
-    return tvProvider()
+    return tvProvider()?.takeIf { isReaderTextViewLayoutReady(it, expectedTextLength) }
 }
 
 /** 当前视口顶部对应的正文字符下标（相对 TextView 内文本）。 */
@@ -470,47 +516,22 @@ internal fun scrollTextViewToCharOffset(tv: TextView, charOffsetInText: Int) {
 }
 
 /**
- * 章节窗口模式的目录/书签跳转：切换窗口片段 → 等待渲染 → 锚点定位滚动。
+ * 章节窗口模式的目录/书签跳转：切换窗口片段后由 [onAnchorGlobalChar] 触发锚点恢复滚动
+ *（避免大 TXT 异步 PrecomputedText 尚未写入时提前 scroll 到错误位置）。
  */
 internal fun jumpToCharInChunkWindow(
-    scope: kotlinx.coroutines.CoroutineScope,
-    tvProvider: () -> TextView?,
-    sourceContent: String,
-    renderPlainText: Boolean,
     contentLen: Int,
     chapterBoundaries: IntArray,
     charPos: Int,
-    tocEntries: List<MarkdownTocEntry>,
-    preferredTocEntry: MarkdownTocEntry? = null,
     setReadingWindow: (start: Int, end: Int) -> Unit,
-    clearPendingRestore: () -> Unit,
+    onAnchorGlobalChar: (Int) -> Unit,
     onProgress: () -> Unit,
 ) {
     val safeCharPos = charPos.coerceIn(0, (contentLen - 1).coerceAtLeast(0))
     val (winStart, winEnd) = computeReadingWindow(chapterBoundaries, safeCharPos, contentLen)
-    clearPendingRestore()
     setReadingWindow(winStart, winEnd)
-
-    scope.launch {
-        val tv = awaitReaderTextViewLayout(tvProvider)
-        if (tv != null) {
-            tv.post {
-                val displayedOffset = resolveDisplayedCharOffset(
-                    sourceContent = sourceContent,
-                    sourceOffset = safeCharPos,
-                    displayedText = tv.text,
-                    renderPlainText = renderPlainText,
-                    windowStart = winStart,
-                    tocEntries = tocEntries,
-                    preferredEntry = preferredTocEntry,
-                )
-                scrollTextViewToCharOffset(tv, displayedOffset)
-                onProgress()
-            }
-        } else {
-            onProgress()
-        }
-    }
+    onAnchorGlobalChar(safeCharPos)
+    onProgress()
 }
 
 /** 横向分页模式：切页后按锚点/页内偏移滚动。 */
@@ -536,9 +557,13 @@ internal fun jumpToGlobalCharInPager(
     val page = pageIndexForGlobalChar(pageSpecs, safeCharPos).coerceIn(0, pageSpecs.lastIndex)
     val globalStart = pageSpecs[page].second
 
+    val expectedLen = pageSpecs[page].first.length
     scope.launch {
         pagerState.scrollToPage(page)
-        val tv = awaitReaderTextViewLayout({ pageTextViews[page] })
+        val tv = awaitReaderTextViewLayout(
+            tvProvider = { pageTextViews[page] },
+            expectedTextLength = expectedLen,
+        )
         if (tv != null) {
             assignActiveTextView(tv)
             tv.post {

@@ -36,4 +36,27 @@ class ReaderPagingEngineTest {
     fun readingProgressForCharPos_mapsLinearly() {
         assertEquals(0.5f, readingProgressForCharPos(500, 1000), 0.001f)
     }
+
+    @Test
+    fun resolveDisplayedCharOffset_plainText_prefersTitleLineInWindow() {
+        val prefix = "intro\n\n"
+        val chapter = "第三章 风暴"
+        val body = "y".repeat(200)
+        val full = prefix + chapter + "\n" + body
+        val winStart = 0
+        val displayed = full.substring(winStart)
+        val sourceOffset = full.indexOf(chapter)
+        val offset = resolveDisplayedCharOffset(
+            sourceContent = full,
+            sourceOffset = sourceOffset,
+            displayedText = displayed,
+            renderPlainText = true,
+            windowStart = winStart,
+            tocEntries = listOf(
+                MarkdownTocEntry(1, chapter, sourceOffset)
+            ),
+            preferredEntry = MarkdownTocEntry(1, chapter, sourceOffset),
+        )
+        assertEquals(sourceOffset, offset)
+    }
 }

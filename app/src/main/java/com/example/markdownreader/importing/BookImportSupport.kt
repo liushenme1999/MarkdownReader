@@ -11,32 +11,45 @@ object BookImportSupport {
         "text/markdown",
         "text/x-markdown",
         "text/plain",
-        "application/epub+zip",
         "application/pdf",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "application/msword",
-        "application/x-mobipocket-ebook",
-        "application/vnd.amazon.mobi8-ebook",
-        "application/vnd.amazon.ebook",
         "application/octet-stream"
     )
 
-    private val KNOWN_EXTENSIONS = setOf(
+    private val SUPPORTED_EXTENSIONS = setOf(
         "md", "markdown", "mdown", "mkd",
         "txt", "text", "log",
-        "epub", "docx", "pdf", "doc", "mobi", "prc", "azw3", "azw"
+        "pdf"
+    )
+
+    private val REMOVED_EXTENSIONS = setOf(
+        "epub", "docx", "doc", "mobi", "prc", "azw3", "azw"
     )
 
     private val STRIP_SUFFIXES = listOf(
         ".markdown", ".mdown", ".mkd", ".md",
         ".txt", ".text", ".log",
-        ".epub", ".docx", ".pdf", ".doc", ".mobi", ".prc", ".azw3", ".azw"
+        ".pdf"
     )
+
+    /** 已移除的格式（EPUB / Word / Kindle），用于导入前拦截。 */
+    fun isRemovedFormat(fileName: String?, mime: String? = null): Boolean {
+        val ext = fileName?.substringAfterLast('.', "")?.trim()?.lowercase().orEmpty()
+        if (ext in REMOVED_EXTENSIONS) return true
+        val m = mime?.lowercase().orEmpty()
+        return m.contains("epub") ||
+            m.contains("mobi") ||
+            m.contains("azw") ||
+            m.contains("wordprocessingml") ||
+            (m.contains("msword") && !m.contains("openxml"))
+    }
 
     fun detectFormat(fileName: String?, mime: String?): ImportedBookFormat {
         val ext = fileName?.substringAfterLast('.', "")?.trim()?.lowercase().orEmpty()
-        return if (ext in KNOWN_EXTENSIONS) ImportedBookFormat.fromFileName(fileName)
-        else ImportedBookFormat.fromMimeType(mime)
+        return if (ext in SUPPORTED_EXTENSIONS) {
+            ImportedBookFormat.fromFileName(fileName)
+        } else {
+            ImportedBookFormat.fromMimeType(mime)
+        }
     }
 
     fun stripKnownExtension(fileName: String): String {

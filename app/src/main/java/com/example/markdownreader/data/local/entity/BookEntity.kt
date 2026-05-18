@@ -11,7 +11,7 @@ data class BookEntity(
     val title: String,
     val author: String? = null,
     val filePath: String,
-    /** 导入格式，与 ImportedBookFormat.storedKey 一致，如 markdown、txt、epub */
+    /** 导入格式，与 ImportedBookFormat.storedKey 一致，如 markdown、txt、pdf */
     val importFormat: String = "markdown",
     /** 本地封面文件绝对路径（可为解析包内 cover.jpg / 旧版 book_covers 路径） */
     val coverImagePath: String? = null,

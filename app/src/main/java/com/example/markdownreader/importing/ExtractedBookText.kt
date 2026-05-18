@@ -1,7 +1,7 @@
 package com.example.markdownreader.importing
 
 /**
- * 从 EPUB / MOBI 等格式解析出的正文与目录（字符下标与合并后的 [body] 一致）。
+ * 解析出的正文与目录（字符下标与合并后的 [body] 一致）。
  */
 data class ImportedTocEntry(
     val level: Int,
