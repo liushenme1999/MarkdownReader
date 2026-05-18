@@ -32,7 +32,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import androidx.navigation.compose.rememberNavController
 import com.example.markdownreader.data.local.entity.BookEntity
-import com.example.markdownreader.ui.components.ShelfStyleStatusBarEffect
+import com.example.markdownreader.data.repository.ReadingTrendAggregator
+import com.example.markdownreader.ui.components.ShelfStyleTopBarBackground
 import com.example.markdownreader.ui.components.ShelfStyleTopAppBar
 import com.example.markdownreader.ui.components.shelfStylePageBackground
 import com.example.markdownreader.ui.theme.MarkdownReaderTheme
@@ -49,15 +50,16 @@ fun StatisticsScreen(
     val books by viewModel.books.collectAsState()
 
     val pageBg = shelfStylePageBackground()
-    ShelfStyleStatusBarEffect(pageBg)
 
     Scaffold(
         containerColor = pageBg,
         topBar = {
-            ShelfStyleTopAppBar(
-                title = "阅读统计",
-                onNavigateBack = { navController.navigateUp() }
-            )
+            ShelfStyleTopBarBackground(pageBg) {
+                ShelfStyleTopAppBar(
+                    title = "阅读统计",
+                    onNavigateBack = { navController.navigateUp() }
+                )
+            }
         }
     ) { paddingValues ->
         LazyColumn(
@@ -70,7 +72,7 @@ fun StatisticsScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item { StatisticsOverview(stats) }
-            item { WeeklyReadingGoalCard() }
+            item { WeeklyReadingGoalCard(readingTrend) }
             item { ReadingTrendCard(readingTrend) }
             item { RecentlyReadBooks(books, navController) }
         }
@@ -188,9 +190,11 @@ private fun StatItem(
 }
 
 @Composable
-private fun WeeklyReadingGoalCard() {
-    val goalDays = 7
-    val completedDays = 3
+private fun WeeklyReadingGoalCard(trend: List<DailyReading>) {
+    val goalMinutesPerDay = ReadingTrendAggregator.WEEKLY_GOAL_MINUTES
+    val goalDays = trend.size.coerceAtLeast(1)
+    val dayCompletions = trend.map { it.minutes >= goalMinutesPerDay }
+    val completedDays = dayCompletions.count { it }
     val progress = completedDays.toFloat() / goalDays
 
     // 进度条动画
@@ -253,16 +257,16 @@ private fun WeeklyReadingGoalCard() {
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // 本周每天的完成状态
+            // 本周每天的完成状态（周一至周日，与趋势图列顺序一致）
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                val dayLabels = listOf("一", "二", "三", "四", "五", "六", "日")
-                dayLabels.forEachIndexed { index, label ->
-                    val isCompleted = index < completedDays
+                trend.forEachIndexed { index, day ->
+                    val isCompleted = dayCompletions.getOrElse(index) { false }
                     Column(
-                        horizontalAlignment = Alignment.CenterHorizontally
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.weight(1f),
                     ) {
                         Box(
                             modifier = Modifier
@@ -287,8 +291,10 @@ private fun WeeklyReadingGoalCard() {
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = label,
+                            text = day.dayOfWeek,
                             style = MaterialTheme.typography.labelSmall,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
                             color = if (isCompleted)
                                 MaterialTheme.colorScheme.primary
                             else
@@ -315,13 +321,15 @@ private fun ReadingTrendCard(trend: List<DailyReading>) {
             modifier = Modifier.padding(24.dp)
         ) {
             Text(
-                "近7天阅读趋势",
+                "本周阅读趋势",
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontWeight = FontWeight.Bold
                 )
             )
 
             Spacer(modifier = Modifier.height(16.dp))
+
+            val hasReadingData = trend.any { it.minutes > 0 }
 
             if (trend.isEmpty()) {
                 // 优化后的空状态插图
@@ -380,115 +388,140 @@ private fun ReadingTrendCard(trend: List<DailyReading>) {
                     }
                 }
             } else {
-                // 优化的柱状图
                 val maxMinutes = trend.maxOfOrNull { it.minutes }?.coerceAtLeast(1) ?: 1
                 val avgMinutes = trend.map { it.minutes }.average().toFloat()
+                val chartHeight = 132.dp
+                val minuteLabelHeight = 14.dp
+                val barAreaHeight = chartHeight - minuteLabelHeight
 
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(180.dp)
-                ) {
-                    // 柱状图
-                    Row(
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 20.dp) // 为上方数字留空间
-                            .fillMaxHeight(),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.Bottom
+                            .height(chartHeight),
                     ) {
-                        trend.forEach { day ->
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                // 柱子上方显示分钟数
-                                Text(
-                                    text = "${day.minutes}",
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Medium
-                                    ),
-                                    color = if (day.minutes > 0)
-                                        MaterialTheme.colorScheme.primary
-                                    else
-                                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-
-                                val heightFraction = (day.minutes.toFloat() / maxMinutes).coerceIn(0.08f, 1f)
-                                Box(
-                                    modifier = Modifier
-                                        .width(20.dp)
-                                        .fillMaxHeight(heightFraction)
-                                        .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
-                                        .background(
-                                            if (day.minutes > 0) {
-                                                Brush.verticalGradient(
-                                                    colors = listOf(
-                                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
-                                                        MaterialTheme.colorScheme.primary
-                                                    )
-                                                )
-                                            } else {
-                                                Brush.verticalGradient(
-                                                    colors = listOf(
-                                                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                                        MaterialTheme.colorScheme.surfaceVariant
-                                                    )
-                                                )
-                                            }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 2.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.Bottom,
+                        ) {
+                            trend.forEach { day ->
+                                val heightFraction = if (day.minutes <= 0) {
+                                    0.06f
+                                } else {
+                                    (day.minutes.toFloat() / maxMinutes).coerceIn(0.12f, 1f)
+                                }
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    if (day.minutes > 0) {
+                                        Text(
+                                            text = "${day.minutes}",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Medium,
+                                            ),
+                                            color = MaterialTheme.colorScheme.primary,
+                                            textAlign = TextAlign.Center,
+                                            maxLines = 1,
+                                            modifier = Modifier.height(minuteLabelHeight),
                                         )
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = day.dayOfWeek,
-                                    style = MaterialTheme.typography.labelSmall
-                                )
+                                    } else {
+                                        Spacer(modifier = Modifier.height(minuteLabelHeight))
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .width(14.dp)
+                                            .height(barAreaHeight * heightFraction)
+                                            .clip(RoundedCornerShape(topStart = 5.dp, topEnd = 5.dp))
+                                            .background(
+                                                if (day.minutes > 0) {
+                                                    Brush.verticalGradient(
+                                                        colors = listOf(
+                                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+                                                            MaterialTheme.colorScheme.primary,
+                                                        ),
+                                                    )
+                                                } else {
+                                                    Brush.verticalGradient(
+                                                        colors = listOf(
+                                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                                            MaterialTheme.colorScheme.surfaceVariant,
+                                                        ),
+                                                    )
+                                                },
+                                            ),
+                                    )
+                                }
                             }
                         }
-                    }
 
-                    // 平均线（虚线效果）
-                    if (avgMinutes > 0) {
-                        val avgFraction = (avgMinutes / maxMinutes).coerceIn(0f, 1f)
-                        val chartHeight = 180.dp - 20.dp // 减去顶部数字空间
-                        val lineHeightPx = with(androidx.compose.ui.platform.LocalDensity.current) {
-                            (chartHeight * (1f - avgFraction)).toPx()
-                        }
-                        val refLineColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.55f)
+                        if (hasReadingData && avgMinutes > 0) {
+                            val avgFraction = (avgMinutes / maxMinutes).coerceIn(0f, 1f)
+                            val density = androidx.compose.ui.platform.LocalDensity.current
+                            val lineHeightPx = with(density) {
+                                chartHeight.toPx() - minuteLabelHeight.toPx() -
+                                    barAreaHeight.toPx() * avgFraction
+                            }
+                            val refLineColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.55f)
 
-                        Canvas(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(180.dp)
-                        ) {
-                            drawLine(
-                                color = refLineColor,
-                                start = Offset(0f, lineHeightPx),
-                                end = Offset(size.width, lineHeightPx),
-                                strokeWidth = 1.5.dp.toPx(),
-                                pathEffect = PathEffect.dashPathEffect(
-                                    intervals = floatArrayOf(8.dp.toPx(), 6.dp.toPx())
+                            Canvas(modifier = Modifier.fillMaxSize()) {
+                                drawLine(
+                                    color = refLineColor,
+                                    start = Offset(0f, lineHeightPx),
+                                    end = Offset(size.width, lineHeightPx),
+                                    strokeWidth = 1.5.dp.toPx(),
+                                    pathEffect = PathEffect.dashPathEffect(
+                                        intervals = floatArrayOf(8.dp.toPx(), 6.dp.toPx()),
+                                    ),
                                 )
-                            )
-                        }
+                            }
 
-                        // 平均值标签
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(top = 4.dp, end = 4.dp)
-                        ) {
                             Text(
                                 text = "平均 ${avgMinutes.toInt()}分",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontSize = 10.sp,
-                                    color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.75f)
-                                )
+                                    color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.75f),
+                                ),
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(top = 2.dp, end = 2.dp),
                             )
                         }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        trend.forEach { day ->
+                            Text(
+                                text = day.dayOfWeek,
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                color = MaterialTheme.colorScheme.onSurface.copy(
+                                    alpha = if (day.minutes > 0) 0.85f else 0.45f,
+                                ),
+                            )
+                        }
+                    }
+
+                    if (!hasReadingData) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "开始阅读后，将按每日阅读时长显示趋势",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Center,
+                        )
                     }
                 }
             }
@@ -691,10 +724,12 @@ private fun StatisticsScreenPreviewImpl(navController: NavController) {
     Scaffold(
         containerColor = pageBg,
         topBar = {
-            ShelfStyleTopAppBar(
-                title = "阅读统计",
-                onNavigateBack = { navController.navigateUp() }
-            )
+            ShelfStyleTopBarBackground(pageBg) {
+                ShelfStyleTopAppBar(
+                    title = "阅读统计",
+                    onNavigateBack = { navController.navigateUp() }
+                )
+            }
         }
     ) { paddingValues ->
         LazyColumn(
@@ -707,7 +742,7 @@ private fun StatisticsScreenPreviewImpl(navController: NavController) {
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item { StatisticsOverview(stats) }
-            item { WeeklyReadingGoalCard() }
+            item { WeeklyReadingGoalCard(trend) }
             item { ReadingTrendCard(trend) }
             item { RecentlyReadBooks(books, navController) }
         }

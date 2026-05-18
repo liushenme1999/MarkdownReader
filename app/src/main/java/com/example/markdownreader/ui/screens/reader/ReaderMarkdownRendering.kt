@@ -125,11 +125,20 @@ internal fun applyReaderTextContent(
     renderSig: String,
     markwon: Markwon,
     highlights: List<HighlightEntity>,
-    highlightColorArgb: Int
+    highlightColorArgb: Int,
+    pdfFullWidthImages: Boolean = false,
 ) {
     textView.setTag(TAG_READER_RENDER_SIG, renderSig)
     if (!renderPlainText) {
-        applyMarkdownContent(textView, content, renderSig, markwon, highlights, highlightColorArgb)
+        applyMarkdownContent(
+            textView = textView,
+            content = content,
+            renderSig = renderSig,
+            markwon = markwon,
+            highlights = highlights,
+            highlightColorArgb = highlightColorArgb,
+            pdfFullWidthImages = pdfFullWidthImages,
+        )
         return
     }
     if (content.length <= PLAIN_TEXT_PRECOMPUTE_THRESHOLD) {
@@ -155,12 +164,20 @@ internal fun applyMarkdownContent(
     renderSig: String,
     markwon: Markwon,
     highlights: List<HighlightEntity>,
-    highlightColorArgb: Int
+    highlightColorArgb: Int,
+    pdfFullWidthImages: Boolean = false,
 ) {
+    fun finishMarkdownRender() {
+        applyHighlightsToRenderedText(textView, highlights, highlightColorArgb)
+        if (pdfFullWidthImages) {
+            PdfImageLayoutHelper.scheduleApplyFullWidth(textView)
+        }
+    }
+
     if (content.length <= MARKWON_BACKGROUND_RENDER_THRESHOLD) {
         // 短文本同步走完，UI 首帧响应更直接
         markwon.setMarkdown(textView, content)
-        applyHighlightsToRenderedText(textView, highlights, highlightColorArgb)
+        finishMarkdownRender()
         return
     }
     // 长 Markdown：在后台线程做 CommonMark parse + Markwon render（产 Spanned），
@@ -173,7 +190,7 @@ internal fun applyMarkdownContent(
             // setParsedMarkdown 会在主线程上把 Spanned 应用到 TextView，并执行
             // Markwon 各插件的 `afterSetText`（如启动 AsyncDrawable 图片加载）。
             markwon.setParsedMarkdown(textView, rendered as? android.text.Spanned ?: android.text.SpannableString(rendered))
-            applyHighlightsToRenderedText(textView, highlights, highlightColorArgb)
+            finishMarkdownRender()
         }
     }
 }
@@ -185,6 +202,7 @@ internal fun MarkdownReaderView(
     theme: ReadingTheme,
     fontSize: Int,
     readerPaddingDp: Int,
+    readerPaddingHorizontalDp: Int = readerPaddingDp,
     readerPaddingTopDp: Int = readerPaddingDp,
     readerLineSpacingMultiplier: Float,
     highlights: List<com.example.markdownreader.data.local.entity.HighlightEntity>,
@@ -196,10 +214,13 @@ internal fun MarkdownReaderView(
     allowVerticalScroll: Boolean = true,
     onSwipeRightBookmark: () -> Unit = {},
     onSwipeDownBookmark: (() -> Unit)? = null,
-    onCenterTap: () -> Unit
+    onCenterTap: () -> Unit,
+    pdfFullWidthImages: Boolean = false,
 ) {
     val context = LocalContext.current
-    val markwon = remember { createMarkwon(context) }
+    val markwon = remember(pdfFullWidthImages) {
+        if (pdfFullWidthImages) createPdfMarkwon(context) else createMarkwon(context)
+    }
     val touchState = remember { ReaderTouchState() }
     val slop = ViewConfiguration.get(context).scaledTouchSlop
 
@@ -212,9 +233,10 @@ internal fun MarkdownReaderView(
                 setBackgroundColor(theme.backgroundColor.toArgb())
                 textSize = fontSize.toFloat()
                 val density = resources.displayMetrics.density
-                val padPx = (readerPaddingDp * density).toInt().coerceAtLeast(0)
+                val padHPx = (readerPaddingHorizontalDp * density).toInt().coerceAtLeast(0)
+                val padBottomPx = (readerPaddingDp * density).toInt().coerceAtLeast(0)
                 val padTopPx = (readerPaddingTopDp * density).toInt().coerceAtLeast(0)
-                setPadding(padPx, padTopPx, padPx, padPx)
+                setPadding(padHPx, padTopPx, padHPx, padBottomPx)
                 setLineSpacing(0f, readerLineSpacingMultiplier)
 
                 val hlKey0 = highlights.joinToString("|") { "${it.id}_${it.startPosition}_${it.endPosition}" }
@@ -227,7 +249,8 @@ internal fun MarkdownReaderView(
                     renderSig = sig0,
                     markwon = markwon,
                     highlights = highlights,
-                    highlightColorArgb = theme.highlightColor.toArgb()
+                    highlightColorArgb = theme.highlightColor.toArgb(),
+                    pdfFullWidthImages = pdfFullWidthImages,
                 )
 
                 customSelectionActionModeCallback = object : ActionMode.Callback {
@@ -279,9 +302,10 @@ internal fun MarkdownReaderView(
             textView.setBackgroundColor(theme.backgroundColor.toArgb())
             textView.textSize = fontSize.toFloat()
             val density = textView.resources.displayMetrics.density
-            val padPx = (readerPaddingDp * density).toInt().coerceAtLeast(0)
+            val padHPx = (readerPaddingHorizontalDp * density).toInt().coerceAtLeast(0)
+            val padBottomPx = (readerPaddingDp * density).toInt().coerceAtLeast(0)
             val padTopPx = (readerPaddingTopDp * density).toInt().coerceAtLeast(0)
-            textView.setPadding(padPx, padTopPx, padPx, padPx)
+            textView.setPadding(padHPx, padTopPx, padHPx, padBottomPx)
             textView.setLineSpacing(0f, readerLineSpacingMultiplier)
 
             val hlKey = highlights.joinToString("|") { "${it.id}_${it.startPosition}_${it.endPosition}" }
@@ -296,7 +320,8 @@ internal fun MarkdownReaderView(
                     renderSig = renderSig,
                     markwon = markwon,
                     highlights = highlights,
-                    highlightColorArgb = theme.highlightColor.toArgb()
+                    highlightColorArgb = theme.highlightColor.toArgb(),
+                    pdfFullWidthImages = pdfFullWidthImages,
                 )
             }
 
@@ -595,6 +620,9 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         false
     }
 }
+
+/** PDF 阅读：与默认配置相同，渲染后由 [PdfImageLayoutHelper] 将页图拉满内容区宽度。 */
+internal fun createPdfMarkwon(context: Context): Markwon = createMarkwon(context)
 
 internal fun createMarkwon(context: Context): Markwon {
     return Markwon.builder(context)

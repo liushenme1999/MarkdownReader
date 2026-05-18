@@ -47,7 +47,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.markdownreader.ui.components.AppSearchField
 import com.example.markdownreader.importing.BookImportSupport
-import com.example.markdownreader.ui.components.ShelfStyleStatusBarEffect
 import com.example.markdownreader.ui.components.shelfStylePageBackground
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController

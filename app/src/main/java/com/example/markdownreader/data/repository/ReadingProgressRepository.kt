@@ -3,6 +3,7 @@ package com.example.markdownreader.data.repository
 import com.example.markdownreader.data.local.dao.ReadingProgressDao
 import com.example.markdownreader.data.local.entity.ReadingProgressEntity
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import java.util.Calendar
 import java.util.Date
 import javax.inject.Inject
@@ -28,6 +29,17 @@ class ReadingProgressRepository @Inject constructor(
         val calendar = Calendar.getInstance()
         calendar.add(Calendar.DAY_OF_YEAR, -7)
         return progressDao.getTotalReadTimeSince(calendar.time) ?: 0
+    }
+
+    fun observeTotalReadTimeMinutes(): Flow<Int> = progressDao.observeTotalReadTimeMinutes()
+
+    fun observeTotalReadChars(): Flow<Int> = progressDao.observeTotalReadChars()
+
+    fun observeLast7DaysTrend(): Flow<List<DailyReadingTrendDay>> {
+        val (startDate, endDate) = ReadingTrendAggregator.last7DaysRange()
+        return progressDao.getProgressByDateRange(startDate, endDate).map { records ->
+            ReadingTrendAggregator.buildLast7DaysTrend(records)
+        }
     }
 
     suspend fun recordReading(bookId: Long, charsRead: Int, minutesRead: Int) {

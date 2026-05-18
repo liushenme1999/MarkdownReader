@@ -12,7 +12,7 @@ import java.io.File
 
 /**
  * 用 Android 自带 [PdfRenderer] 把 PDF 每一页栅格化成 PNG，并把生成的资源 id 串成
- * 一份 Markdown（每页一个 `![](book-asset://pdf_page_NNN.png)`，页与页之间空行分隔）。
+ * 一份 HTML 正文（每页一个带尺寸的 `<img>`，页与页之间仅换行、无标题与空段）。
  *
  * 设计取舍：
  * - 不做文本层提取（移动端做精确文本提取需要 MinerU / Marker 这种模型驱动方案，
@@ -61,19 +61,14 @@ internal object PdfBookExtractor {
 
             val title = "第 ${i + 1} 页"
             val sourceOffset = body.length
-            // 每页前插一个 H2 当作 TOC 锚点，让目录跳转能定位到每一页
-            body.append("## ").append(title).append("\n\n")
-            // 用 HTML <img width=".." height=".."> 预声明尺寸：PDF 页是预渲染好的位图，宽高已知，
-            // 给 Markwon 喂上后首次 measure 就能给每页占位预留正确高度，翻页/滚动不再被
-            // 图片异步加载触发整段 relayout（用户感知是「滑动一下就卡 600ms」）。
+            if (i > 0) body.append('\n')
             body.append(
-                ImageAssetUtils.buildImgTag(
-                    "book-asset://${pageId}",
-                    alt = title,
+                PdfReaderContent.buildPageImgTag(
+                    src = "book-asset://${pageId}",
                     width = rendered.width,
-                    height = rendered.height
-                )
-            ).append("\n\n")
+                    height = rendered.height,
+                ),
+            )
             toc += ImportedTocEntry(level = 2, title = title, sourceOffset = sourceOffset)
         }
         return ExtractedBookText(

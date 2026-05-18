@@ -1,0 +1,44 @@
+package com.example.markdownreader.ui.system
+
+import android.app.Activity
+import android.os.Build
+import android.view.View
+import android.view.WindowManager
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsControllerCompat
+
+/**
+ * 统一设置系统栏外观。HyperOS / MIUI 在 edge-to-edge 下常忽略半透明 [statusBarColor]，
+ * 需配合 [androidx.activity.SystemBarStyle] 与 Compose 顶栏色块（见 [ShelfStyleStatusBarBackdrop]）。
+ */
+object SystemBarAppearance {
+
+    fun applyStatusBar(activity: Activity, view: View, colorArgb: Int, lightStatusBarIcons: Boolean) {
+        val window = activity.window
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        @Suppress("DEPRECATION")
+        window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+        @Suppress("DEPRECATION")
+        window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS)
+        window.statusBarColor = colorArgb
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isStatusBarContrastEnforced = false
+        }
+        WindowInsetsControllerCompat(window, view).apply {
+            isAppearanceLightStatusBars = lightStatusBarIcons
+        }
+    }
+
+    fun applyNavigationBar(activity: Activity, view: View, colorArgb: Int, lightNavigationBarIcons: Boolean) {
+        val window = activity.window
+        @Suppress("DEPRECATION")
+        window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+        window.navigationBarColor = colorArgb
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
+        WindowInsetsControllerCompat(window, view).apply {
+            isAppearanceLightNavigationBars = lightNavigationBarIcons
+        }
+    }
+}

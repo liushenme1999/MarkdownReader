@@ -75,8 +75,12 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.example.markdownreader.data.local.entity.HighlightEntity
 import com.example.markdownreader.importing.ImportedBookFormat
+import com.example.markdownreader.importing.PdfReaderContent
 import com.example.markdownreader.model.ReaderPageTurnMode
+import com.example.markdownreader.ui.components.ShelfStyleStatusBarBackdrop
+import com.example.markdownreader.ui.components.ShelfStyleSystemBarsEffect
 import com.example.markdownreader.ui.components.iconTintForDeleteStrip
+import com.example.markdownreader.ui.components.shelfStylePageBackground
 import com.example.markdownreader.ui.theme.MarkdownReaderTheme
 import com.example.markdownreader.ui.theme.ReadingTheme
 import io.noties.markwon.Markwon
@@ -123,7 +127,13 @@ fun ReaderScreen(
     val configuration = LocalConfiguration.current
 
     val importFormat = book?.let { ImportedBookFormat.fromStored(it.importFormat) }
+    val isPdfBook = importFormat?.isPdf == true
     val renderPlainText = importFormat?.usesReaderPlainBody == true
+    val readerContent = remember(content, isPdfBook) {
+        if (isPdfBook) PdfReaderContent.sanitizeStoredBody(content) else content
+    }
+    val readerHorizontalPaddingDp = if (isPdfBook) 0 else readerPaddingDp
+    val readerBodyLineSpacing = if (isPdfBook) 1f else readerLineSpacingMultiplier
 
     var showReaderThemeSheet by remember { mutableStateOf(false) }
     var showReaderFontSheet by remember { mutableStateOf(false) }
@@ -141,12 +151,17 @@ fun ReaderScreen(
 
     val structuredToc by viewModel.structuredToc.collectAsState()
 
-    val tocEntries = remember(content, renderPlainText, structuredToc) {
+    val tocEntries = remember(readerContent, renderPlainText, structuredToc, isPdfBook) {
+        if (isPdfBook) {
+            return@remember PdfReaderContent.tocEntriesFromBody(readerContent).map {
+                MarkdownTocEntry(level = it.level, title = it.title, sourceOffset = it.sourceOffset)
+            }
+        }
         val stored = structuredToc.orEmpty()
         when {
-            renderPlainText -> stored.ifEmpty { parsePlainTextToc(content) }
+            renderPlainText -> stored.ifEmpty { parsePlainTextToc(readerContent) }
             stored.isNotEmpty() -> stored
-            else -> parseMarkdownToc(content)
+            else -> parseMarkdownToc(readerContent)
         }
     }
     val emptyTocMessage = remember(renderPlainText) {
@@ -161,12 +176,20 @@ fun ReaderScreen(
         currentChapterTitleForProgress(tocEntries, readingProgress, totalChars)
     }
 
-    val pageSpecs = remember(content, pageTurnMode, fontSize, configuration.screenHeightDp, configuration.screenWidthDp) {
-        when (pageTurnMode) {
-            ReaderPageTurnMode.VerticalScroll -> emptyList()
+    val pageSpecs = remember(
+        readerContent,
+        isPdfBook,
+        pageTurnMode,
+        fontSize,
+        configuration.screenHeightDp,
+        configuration.screenWidthDp,
+    ) {
+        when {
+            pageTurnMode == ReaderPageTurnMode.VerticalScroll -> emptyList()
+            isPdfBook -> PdfReaderContent.splitToPages(readerContent)
             else -> splitMarkdownToPages(
-                content,
-                estimateTargetCharsPerPage(fontSize, configuration.screenHeightDp, configuration.screenWidthDp)
+                readerContent,
+                estimateTargetCharsPerPage(fontSize, configuration.screenHeightDp, configuration.screenWidthDp),
             )
         }
     }
@@ -174,21 +197,21 @@ fun ReaderScreen(
     val pagerState = rememberPagerState(pageCount = { pageSpecs.size.coerceAtLeast(1) })
 
     // ===== 章节惰性渲染窗口（仅 VerticalScroll 模式生效）=====
-    val chapterBoundaries = remember(content, tocEntries) {
-        computeChapterBoundaries(content, tocEntries)
+    val chapterBoundaries = remember(readerContent, tocEntries) {
+        computeChapterBoundaries(readerContent, tocEntries)
     }
-    var displayWindowStartChar by remember(content, readerLoadEpoch) { mutableIntStateOf(0) }
-    var displayWindowEndChar by remember(content, readerLoadEpoch) { mutableIntStateOf(0) }
-    var pendingScrollRestoreY by remember(content) { mutableStateOf<Int?>(null) }
+    var displayWindowStartChar by remember(readerContent, readerLoadEpoch) { mutableIntStateOf(0) }
+    var displayWindowEndChar by remember(readerContent, readerLoadEpoch) { mutableIntStateOf(0) }
+    var pendingScrollRestoreY by remember(readerContent) { mutableStateOf<Int?>(null) }
     /** 向上扩窗后，按全书字符锚点恢复视口，避免跳到章节顶部。 */
-    var pendingScrollRestoreGlobalChar by remember(content) { mutableStateOf<Int?>(null) }
-    val displayedContent = remember(content, displayWindowStartChar, displayWindowEndChar) {
+    var pendingScrollRestoreGlobalChar by remember(readerContent) { mutableStateOf<Int?>(null) }
+    val displayedContent = remember(readerContent, displayWindowStartChar, displayWindowEndChar) {
         when {
-            content.isEmpty() -> ""
-            displayWindowStartChar >= content.length -> ""
+            readerContent.isEmpty() -> ""
+            displayWindowStartChar >= readerContent.length -> ""
             displayWindowEndChar <= displayWindowStartChar -> ""
-            displayWindowEndChar >= content.length -> content.substring(displayWindowStartChar)
-            else -> content.substring(displayWindowStartChar, displayWindowEndChar)
+            displayWindowEndChar >= readerContent.length -> readerContent.substring(displayWindowStartChar)
+            else -> readerContent.substring(displayWindowStartChar, displayWindowEndChar)
         }
     }
     val displayedHighlights = remember(highlights, displayWindowStartChar, displayWindowEndChar, displayedContent) {
@@ -200,20 +223,20 @@ fun ReaderScreen(
         )
     }
 
-    LaunchedEffect(bookId, content, pageSpecs, readerLoadEpoch, pageTurnMode, readingProgress) {
-        if (content.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(bookId, readerContent, pageSpecs, readerLoadEpoch, pageTurnMode, readingProgress) {
+        if (readerContent.isEmpty()) return@LaunchedEffect
         if (pageTurnMode == ReaderPageTurnMode.VerticalScroll || pageSpecs.isEmpty()) return@LaunchedEffect
-        val totalC = book?.totalChars?.takeIf { it > 0 } ?: content.length
+        val totalC = book?.totalChars?.takeIf { it > 0 } ?: readerContent.length
         val charPos = resolveGlobalCharPos(
             (readingProgress * totalC).toInt(),
-            content.length,
-            totalC
+            readerContent.length,
+            totalC,
         )
         jumpToGlobalCharInPager(
             scope = this,
             charPos = charPos,
-            contentLen = content.length,
-            sourceContent = content,
+            contentLen = readerContent.length,
+            sourceContent = readerContent,
             renderPlainText = renderPlainText,
             tocEntries = tocEntries,
             pageSpecs = pageSpecs,
@@ -221,8 +244,10 @@ fun ReaderScreen(
             pageTextViews = pageTextViews,
             assignActiveTextView = { readerTextView.value = it },
             onProgress = {
-                viewModel.updateReadingProgress(readingProgressForCharPos(charPos, content.length))
-            }
+                viewModel.updateReadingProgress(
+                    readingProgressForCharPos(charPos, readerContent.length),
+                )
+            },
         )
     }
 
@@ -258,8 +283,8 @@ fun ReaderScreen(
         showTopBar = false
     }
 
-    LaunchedEffect(bookId, content, pageTurnMode, readerLoadEpoch) {
-        if (content.isEmpty()) {
+    LaunchedEffect(bookId, readerContent, pageTurnMode, readerLoadEpoch) {
+        if (readerContent.isEmpty()) {
             displayWindowStartChar = 0
             displayWindowEndChar = 0
             return@LaunchedEffect
@@ -267,16 +292,16 @@ fun ReaderScreen(
         if (pageTurnMode != ReaderPageTurnMode.VerticalScroll) {
             pendingScrollRestoreY = null
             displayWindowStartChar = 0
-            displayWindowEndChar = content.length
+            displayWindowEndChar = readerContent.length
             return@LaunchedEffect
         }
-        val totalC = book?.totalChars?.takeIf { it > 0 } ?: content.length
+        val totalC = book?.totalChars?.takeIf { it > 0 } ?: readerContent.length
         val targetChar = resolveGlobalCharPos(
             (readingProgress * totalC).toInt(),
-            content.length,
-            totalC
+            readerContent.length,
+            totalC,
         )
-        val (start, end) = computeReadingWindow(chapterBoundaries, targetChar, content.length)
+        val (start, end) = computeReadingWindow(chapterBoundaries, targetChar, readerContent.length)
         pendingScrollRestoreY = null
         displayWindowStartChar = start
         displayWindowEndChar = end
@@ -313,7 +338,7 @@ fun ReaderScreen(
         renderPlainText,
     ) {
         val anchorGlobal = pendingScrollRestoreGlobalChar ?: return@LaunchedEffect
-        if (content.isEmpty()) {
+        if (readerContent.isEmpty()) {
             pendingScrollRestoreGlobalChar = null
             return@LaunchedEffect
         }
@@ -331,10 +356,10 @@ fun ReaderScreen(
             pendingScrollRestoreGlobalChar = null
             return@LaunchedEffect
         }
-        val safeAnchor = anchorGlobal.coerceIn(0, content.length - 1)
+        val safeAnchor = anchorGlobal.coerceIn(0, readerContent.length - 1)
         val preferredEntry = tocEntries.find { it.sourceOffset == safeAnchor }
         val offset = resolveDisplayedCharOffset(
-            sourceContent = content,
+            sourceContent = readerContent,
             sourceOffset = safeAnchor,
             displayedText = tv.text,
             renderPlainText = renderPlainText,
@@ -346,7 +371,15 @@ fun ReaderScreen(
         pendingScrollRestoreGlobalChar = null
     }
 
+    val systemBarChromeColor = if (isPdfBook) {
+        shelfStylePageBackground()
+    } else {
+        readingChromeShade(currentTheme.backgroundColor)
+    }
+
     val view = LocalView.current
+    ShelfStyleSystemBarsEffect(systemBarChromeColor)
+
     DisposableEffect(Unit) {
         val activity = view.context as? Activity
         if (activity == null) {
@@ -364,18 +397,6 @@ fun ReaderScreen(
             window.navigationBarColor = prevNavColor
             controller.isAppearanceLightNavigationBars = prevLightNavBars
         }
-    }
-
-    SideEffect {
-        val activity = view.context as? Activity ?: return@SideEffect
-        val window = activity.window
-        val controller = WindowCompat.getInsetsController(window, view)
-        val chromeArgb = readingChromeShade(currentTheme.backgroundColor).toArgb()
-        val lightSystemBars = ColorUtils.calculateLuminance(chromeArgb) < 0.5
-        window.statusBarColor = chromeArgb
-        controller.isAppearanceLightStatusBars = lightSystemBars
-        window.navigationBarColor = chromeArgb
-        controller.isAppearanceLightNavigationBars = lightSystemBars
     }
 
     Scaffold(
@@ -405,8 +426,18 @@ fun ReaderScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(currentTheme.backgroundColor)
+                .background(
+                    if (isPdfBook) shelfStylePageBackground() else currentTheme.backgroundColor,
+                ),
         ) {
+            if (immersiveReading && isPdfBook) {
+                ShelfStyleStatusBarBackdrop(
+                    backgroundColor = systemBarChromeColor,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .zIndex(100f),
+                )
+            }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -439,7 +470,7 @@ fun ReaderScreen(
                             }
                         }
                         // 沉浸模式章节小标题常驻，不随大顶栏/底栏显隐改变布局（避免点击唤出工具栏时正文跳动）
-                        val immersiveChapterTitle = chapterTitle.takeIf { immersiveReading }
+                        val immersiveChapterTitle = chapterTitle.takeIf { immersiveReading && !isPdfBook }
                         val readerPaddingTopDp = if (immersiveChapterTitle != null) {
                             minOf(ReaderChapterStripBodyTopPaddingDp, readerPaddingDp)
                         } else {
@@ -455,8 +486,9 @@ fun ReaderScreen(
                                     theme = currentTheme,
                                     fontSize = fontSize,
                                     readerPaddingDp = readerPaddingDp,
+                                    readerPaddingHorizontalDp = readerHorizontalPaddingDp,
                                     readerPaddingTopDp = readerPaddingTopDp,
-                                    readerLineSpacingMultiplier = readerLineSpacingMultiplier,
+                                    readerLineSpacingMultiplier = readerBodyLineSpacing,
                                     highlights = displayedHighlights,
                                     modifier = modifier,
                                     onTextSelected = onReaderTextSelected,
@@ -464,10 +496,10 @@ fun ReaderScreen(
                                         val winStart = displayWindowStartChar
                                         val winEnd = displayWindowEndChar
                                         val winSpan = (winEnd - winStart).coerceAtLeast(1)
-                                        val total = content.length.coerceAtLeast(1)
+                                        val total = readerContent.length.coerceAtLeast(1)
                                         val globalChar = (winStart + localProgress * winSpan)
                                             .toInt()
-                                            .coerceIn(0, content.length)
+                                            .coerceIn(0, readerContent.length)
                                         viewModel.updateReadingProgress(
                                             globalChar.toFloat() / total
                                         )
@@ -478,18 +510,18 @@ fun ReaderScreen(
                                             localProgress <= READER_EXPAND_TRIGGER_NEAR_START_PROGRESS
                                         ) {
                                             val topGlobal = winStart + (tv?.let { charOffsetAtScrollTop(it) } ?: 0)
-                                            pendingScrollRestoreGlobalChar = topGlobal.coerceIn(0, content.length)
+                                            pendingScrollRestoreGlobalChar = topGlobal.coerceIn(0, readerContent.length)
                                             displayWindowStartChar = previousWindowStart(
                                                 chapterBoundaries, winStart, 0
                                             )
-                                        } else if (winEnd < content.length &&
+                                        } else if (winEnd < readerContent.length &&
                                             pendingScrollRestoreY == null &&
                                             pendingScrollRestoreGlobalChar == null &&
                                             localProgress >= READER_EXPAND_TRIGGER_LOCAL_PROGRESS
                                         ) {
                                             pendingScrollRestoreY = tv?.scrollY ?: 0
                                             displayWindowEndChar = nextWindowEnd(
-                                                chapterBoundaries, winEnd, content.length
+                                                chapterBoundaries, winEnd, readerContent.length
                                             )
                                         }
                                     },
@@ -497,7 +529,8 @@ fun ReaderScreen(
                                     onViewReady = { tv -> readerTextView.value = tv },
                                     allowVerticalScroll = true,
                                     onSwipeRightBookmark = onReaderSwipeBookmark,
-                                    onCenterTap = { showTopBar = !showTopBar }
+                                    onCenterTap = { showTopBar = !showTopBar },
+                                    pdfFullWidthImages = isPdfBook,
                                 )
                             } else {
                                 ReaderPagedMarkdownHost(
@@ -507,8 +540,9 @@ fun ReaderScreen(
                                     theme = currentTheme,
                                     fontSize = fontSize,
                                     readerPaddingDp = readerPaddingDp,
+                                    readerPaddingHorizontalDp = readerHorizontalPaddingDp,
                                     readerPaddingTopDp = readerPaddingTopDp,
-                                    readerLineSpacingMultiplier = readerLineSpacingMultiplier,
+                                    readerLineSpacingMultiplier = readerBodyLineSpacing,
                                     highlights = highlights,
                                     pageTextViews = pageTextViews,
                                     renderPlainText = renderPlainText,
@@ -521,7 +555,8 @@ fun ReaderScreen(
                                         if (pageIdx == pagerState.currentPage) {
                                             readerTextView.value = tv
                                         }
-                                    }
+                                    },
+                                    pdfFullWidthImages = isPdfBook,
                                 )
                             }
                         }
@@ -620,7 +655,7 @@ fun ReaderScreen(
                     shape = RectangleShape,
                     tonalElevation = 3.dp,
                     shadowElevation = 8.dp,
-                    color = readingChromeShade(currentTheme.backgroundColor)
+                    color = systemBarChromeColor
                 ) {
                     Column(Modifier.fillMaxWidth()) {
                         Spacer(
@@ -657,7 +692,7 @@ fun ReaderScreen(
                 ReaderImmersiveBottomBar(
                     modifier = Modifier.fillMaxWidth(),
                     theme = currentTheme,
-                    chromeBackground = readingChromeShade(currentTheme.backgroundColor),
+                    chromeBackground = systemBarChromeColor,
                     onToc = { showToc = true },
                     onBookmarks = { showBookmarks = true },
                     onThemeBackground = { showReaderThemeSheet = true },
@@ -709,10 +744,10 @@ fun ReaderScreen(
     if (showBookmarks) {
         BookmarksSheet(
             bookmarks = bookmarks,
-            totalChars = book?.totalChars?.takeIf { it > 0 } ?: content.length.coerceAtLeast(1),
+            totalChars = book?.totalChars?.takeIf { it > 0 } ?: readerContent.length.coerceAtLeast(1),
             onBookmarkClick = { position ->
-                if (content.isNotEmpty()) {
-                    val contentLen = content.length
+                if (readerContent.isNotEmpty()) {
+                    val contentLen = readerContent.length
                     val totalC = book?.totalChars?.takeIf { it > 0 } ?: contentLen
                     val charPos = resolveGlobalCharPos(position, contentLen, totalC)
                     val p = readingProgressForCharPos(charPos, contentLen)
@@ -721,7 +756,7 @@ fun ReaderScreen(
                             scope = scope,
                             charPos = charPos,
                             contentLen = contentLen,
-                            sourceContent = content,
+                            sourceContent = readerContent,
                             renderPlainText = renderPlainText,
                             tocEntries = tocEntries,
                             pageSpecs = pageSpecs,
@@ -763,8 +798,8 @@ fun ReaderScreen(
             entries = tocEntries,
             emptyTocMessage = emptyTocMessage,
             onEntryClick = { entry ->
-                if (content.isNotEmpty()) {
-                    val contentLen = content.length
+                if (readerContent.isNotEmpty()) {
+                    val contentLen = readerContent.length
                     val charPos = entry.sourceOffset.coerceIn(0, (contentLen - 1).coerceAtLeast(0))
                     val p = readingProgressForCharPos(charPos, contentLen)
                     if (pageTurnMode != ReaderPageTurnMode.VerticalScroll && pageSpecs.isNotEmpty()) {
@@ -772,7 +807,7 @@ fun ReaderScreen(
                             scope = scope,
                             charPos = charPos,
                             contentLen = contentLen,
-                            sourceContent = content,
+                            sourceContent = readerContent,
                             renderPlainText = renderPlainText,
                             tocEntries = tocEntries,
                             preferredTocEntry = entry,

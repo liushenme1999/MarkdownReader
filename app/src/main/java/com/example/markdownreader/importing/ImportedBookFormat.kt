@@ -18,6 +18,9 @@ enum class ImportedBookFormat(val storedKey: String) {
     val usesReaderPlainBody: Boolean
         get() = this == TXT
 
+    val isPdf: Boolean
+        get() = this == PDF
+
     companion object {
         /** 已移除支持的旧格式（数据库中可能仍存在）。 */
         private val REMOVED_STORED_KEYS = setOf(

@@ -50,7 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.markdownreader.ui.components.AppSearchField
 import com.example.markdownreader.importing.BookImportSupport
-import com.example.markdownreader.ui.components.ShelfStyleStatusBarEffect
+import com.example.markdownreader.ui.components.ShelfStyleTopBarBackground
 import com.example.markdownreader.ui.components.shelfStylePageBackground
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
@@ -58,7 +58,6 @@ import androidx.navigation.compose.rememberNavController
 import com.example.markdownreader.data.local.entity.BookEntity
 import com.example.markdownreader.ui.theme.BookCoverColors
 import com.example.markdownreader.navigation.AppRoutes
-import com.example.markdownreader.ui.theme.MainNavigationBarBackground
 import com.example.markdownreader.ui.theme.MarkdownReaderTheme
 import java.text.SimpleDateFormat
 import java.io.File
@@ -112,13 +111,12 @@ fun BookshelfScreen(
     BackHandler(enabled = selectionMode) { exitSelection() }
 
     val shelfBg = shelfStylePageBackground()
-    ShelfStyleStatusBarEffect(shelfBg)
 
     DisposableEffect(Unit) {
         onDispose { onSelectionModeChange(false) }
     }
 
-    val barBg = MainNavigationBarBackground
+    val barBg = MaterialTheme.colorScheme.surface
     val managementVisible = selectionMode && selectedIds.isNotEmpty()
     val gridBottomPadding = 16.dp + if (managementVisible) 80.dp else 0.dp
 
@@ -143,7 +141,7 @@ fun BookshelfScreen(
         containerColor = shelfBg,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            Column {
+            ShelfStyleTopBarBackground(shelfBg) {
                 TopAppBar(
                     // Scaffold 已对 topBar 施加状态栏区域；避免与 TopAppBar 默认 windowInsets 叠加成双倍顶距
                     windowInsets = WindowInsets(),

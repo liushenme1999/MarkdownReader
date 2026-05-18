@@ -78,6 +78,8 @@ import androidx.navigation.NavController
 import com.example.markdownreader.data.local.entity.HighlightEntity
 import com.example.markdownreader.importing.ImportedBookFormat
 import com.example.markdownreader.model.ReaderPageTurnMode
+import com.example.markdownreader.ui.components.ReadingThemeCardOption
+import com.example.markdownreader.ui.components.ReaderWideSliderRow
 import com.example.markdownreader.ui.components.iconTintForDeleteStrip
 import com.example.markdownreader.ui.theme.MarkdownReaderTheme
 import com.example.markdownreader.ui.theme.ReadingTheme
@@ -98,44 +100,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-internal fun ReaderWideSliderRow(
-    label: String,
-    valueText: String,
-    value: Float,
-    onValueChange: (Float) -> Unit,
-    valueRange: ClosedFloatingPointRange<Float>,
-    steps: Int
-) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                text = valueText,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        Spacer(modifier = Modifier.height(10.dp))
-        Slider(
-            value = value,
-            onValueChange = onValueChange,
-            valueRange = valueRange,
-            steps = steps,
-            modifier = Modifier.fillMaxWidth()
-        )
-    }
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -169,7 +133,7 @@ internal fun ReaderThemeSheet(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 firstRow.forEach { theme ->
-                    ThemeCardOption(
+                    ReadingThemeCardOption(
                         theme = theme,
                         isSelected = theme == currentTheme,
                         onClick = { onThemeChange(theme) },
@@ -188,7 +152,7 @@ internal fun ReaderThemeSheet(
             ) {
                 Spacer(modifier = Modifier.weight(1f))
                 secondRow.forEach { theme ->
-                    ThemeCardOption(
+                    ReadingThemeCardOption(
                         theme = theme,
                         isSelected = theme == currentTheme,
                         onClick = { onThemeChange(theme) },
@@ -261,92 +225,6 @@ internal fun ReaderFontSheet(
             )
             Spacer(modifier = Modifier.height(32.dp))
         }
-    }
-}
-
-@Composable
-internal fun ThemeCardOption(
-    theme: ReadingTheme,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val accentColor = MaterialTheme.colorScheme.primary
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = modifier.clickable(onClick = onClick)
-    ) {
-        Card(
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = theme.backgroundColor
-            ),
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(1f)
-                .then(
-                    if (isSelected) {
-                        Modifier.border(
-                            width = 2.5.dp,
-                            color = accentColor,
-                            shape = RoundedCornerShape(12.dp)
-                        )
-                    } else {
-                        Modifier.border(
-                            width = 1.dp,
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                            shape = RoundedCornerShape(12.dp)
-                        )
-                    }
-                ),
-            elevation = CardDefaults.cardElevation(
-                defaultElevation = if (isSelected) 4.dp else 1.dp
-            )
-        ) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(6.dp)
-                ) {
-                    // 文字颜色预览行
-                    Text(
-                        text = "Aa",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = theme.textColor,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "文字",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = theme.secondaryTextColor
-                    )
-                }
-
-                // 选中勾选标记
-                if (isSelected) {
-                    Icon(
-                        imageVector = Icons.Default.CheckCircle,
-                        contentDescription = null,
-                        tint = accentColor,
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(4.dp)
-                            .size(18.dp)
-                    )
-                }
-            }
-        }
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            theme.name,
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-            color = if (isSelected) accentColor else MaterialTheme.colorScheme.onSurfaceVariant
-        )
     }
 }
 

@@ -106,6 +106,7 @@ internal fun ReaderPagedMarkdownHost(
     theme: ReadingTheme,
     fontSize: Int,
     readerPaddingDp: Int,
+    readerPaddingHorizontalDp: Int = readerPaddingDp,
     readerPaddingTopDp: Int = readerPaddingDp,
     readerLineSpacingMultiplier: Float,
     highlights: List<HighlightEntity>,
@@ -116,7 +117,8 @@ internal fun ReaderPagedMarkdownHost(
     onReadingVerticalScroll: (Int) -> Unit,
     onSwipeDownBookmark: () -> Unit,
     onCenterTap: () -> Unit,
-    onPageTextViewReady: (Int, TextView) -> Unit
+    onPageTextViewReady: (Int, TextView) -> Unit,
+    pdfFullWidthImages: Boolean = false,
 ) {
     val layoutDirection = LocalLayoutDirection.current
     val cameraDistancePx = with(LocalDensity.current) { 12f * density * 80f }
@@ -167,6 +169,7 @@ internal fun ReaderPagedMarkdownHost(
                 theme = theme,
                 fontSize = fontSize,
                 readerPaddingDp = readerPaddingDp,
+                readerPaddingHorizontalDp = readerPaddingHorizontalDp,
                 readerPaddingTopDp = readerPaddingTopDp,
                 readerLineSpacingMultiplier = readerLineSpacingMultiplier,
                 highlights = pageHighlights,
@@ -181,7 +184,8 @@ internal fun ReaderPagedMarkdownHost(
                 allowVerticalScroll = false,
                 onSwipeDownBookmark = onSwipeDownBookmark,
                 onSwipeRightBookmark = {},
-                onCenterTap = onCenterTap
+                onCenterTap = onCenterTap,
+                pdfFullWidthImages = pdfFullWidthImages,
             )
         }
     }

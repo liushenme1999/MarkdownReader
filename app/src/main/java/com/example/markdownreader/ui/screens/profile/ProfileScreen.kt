@@ -2,7 +2,6 @@ package com.example.markdownreader.ui.screens.profile
 
 import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -29,20 +28,23 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.example.markdownreader.navigation.AppRoutes
-import com.example.markdownreader.ui.components.ShelfStyleStatusBarEffect
+import com.example.markdownreader.ui.components.ShelfStyleTopBarBackground
 import com.example.markdownreader.ui.components.shelfStylePageBackground
 import androidx.navigation.compose.rememberNavController
 import com.example.markdownreader.ui.theme.MarkdownReaderTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProfileScreen(navController: NavController) {
+fun ProfileScreen(
+    navController: NavController,
+    viewModel: ProfileViewModel = hiltViewModel(),
+) {
     val context = LocalContext.current
-    val systemInDarkTheme = isSystemInDarkTheme()
     val shelfBg = shelfStylePageBackground()
-    ShelfStyleStatusBarEffect(shelfBg)
+    val profile by viewModel.profile.collectAsState()
 
     // 对话框状态
     var showAboutDialog by remember { mutableStateOf(false) }
@@ -132,6 +134,7 @@ fun ProfileScreen(navController: NavController) {
     Scaffold(
         containerColor = shelfBg,
         topBar = {
+            ShelfStyleTopBarBackground(shelfBg) {
             TopAppBar(
                 // Scaffold 已对 topBar 施加状态栏区域；避免与 TopAppBar 默认 windowInsets 叠加成双倍顶距
                 windowInsets = WindowInsets(),
@@ -151,6 +154,7 @@ fun ProfileScreen(navController: NavController) {
                     actionIconContentColor = MaterialTheme.colorScheme.onSurface
                 )
             )
+            }
         }
     ) { paddingValues ->
         Column(
@@ -164,43 +168,12 @@ fun ProfileScreen(navController: NavController) {
             // ========== 用户头像区域 ==========
             Spacer(modifier = Modifier.height(12.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Surface(
-                    modifier = Modifier.size(68.dp),
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    shadowElevation = 6.dp
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            Icons.Default.Person,
-                            contentDescription = "用户头像",
-                            modifier = Modifier.size(38.dp),
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(20.dp))
-
-                Column {
-                    Text(
-                        "我的阅读",
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Bold
-                        )
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        "记录每一次阅读的足迹",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                    )
-                }
-            }
+            ProfileHeaderSection(
+                profile = profile,
+                onAvatarPicked = viewModel::updateAvatar,
+                onNicknameChange = viewModel::setNickname,
+                onSignatureChange = viewModel::setSignature,
+            )
 
             Spacer(modifier = Modifier.height(24.dp))
 
@@ -319,12 +292,8 @@ fun ProfileScreen(navController: NavController) {
                     ProfileMenuItem(
                         icon = Icons.Default.Settings,
                         title = "阅读设置",
-                        subtitle = "字体、主题、翻页方式",
-                        onClick = {
-                            Toast
-                                .makeText(context, "设置功能开发中", Toast.LENGTH_SHORT)
-                                .show()
-                        }
+                        subtitle = "外观、主题、字体、行距、翻页",
+                        onClick = { navController.navigate(AppRoutes.READING_SETTINGS) }
                     )
                 }
             }
@@ -346,42 +315,6 @@ fun ProfileScreen(navController: NavController) {
                 tonalElevation = 1.dp
             ) {
                 Column {
-                    // 深色模式（只读：跟随系统，应用内切换尚未实现）
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Default.DarkMode,
-                            contentDescription = null,
-                            modifier = Modifier.size(24.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "深色模式",
-                                style = MaterialTheme.typography.bodyLarge
-                            )
-                            Text(
-                                "当前跟随系统；应用内切换开发中",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                            )
-                        }
-                        Switch(
-                            checked = systemInDarkTheme,
-                            onCheckedChange = {},
-                            enabled = false
-                        )
-                    }
-                    HorizontalDivider(
-                        modifier = Modifier.padding(start = 56.dp, end = 16.dp),
-                        thickness = 0.5.dp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
-                    )
                     // 关于应用
                     ProfileMenuItem(
                         icon = Icons.Default.Info,

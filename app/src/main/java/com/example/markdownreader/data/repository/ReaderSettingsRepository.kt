@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.example.markdownreader.data.preferences.readerPreferencesDataStore
+import com.example.markdownreader.model.AppThemeMode
 import com.example.markdownreader.model.ReaderPageTurnMode
 import com.example.markdownreader.ui.theme.ReadingTheme
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -22,7 +23,11 @@ class ReaderSettingsRepository @Inject constructor(
 
     val pageTurnMode: Flow<ReaderPageTurnMode> = dataStore.data.map { prefs ->
         val raw = prefs[KEY_PAGE_TURN_MODE]
-        ReaderPageTurnMode.values().find { it.name == raw } ?: ReaderPageTurnMode.VerticalScroll
+        ReaderPageTurnMode.entries.find { it.name == raw } ?: ReaderPageTurnMode.VerticalScroll
+    }
+
+    val appThemeMode: Flow<AppThemeMode> = dataStore.data.map { prefs ->
+        appThemeFromStored(prefs[KEY_APP_THEME_MODE])
     }
 
     val readingTheme: Flow<ReadingTheme> = dataStore.data.map { prefs ->
@@ -44,6 +49,12 @@ class ReaderSettingsRepository @Inject constructor(
     suspend fun setPageTurnMode(mode: ReaderPageTurnMode) {
         dataStore.edit { prefs ->
             prefs[KEY_PAGE_TURN_MODE] = mode.name
+        }
+    }
+
+    suspend fun setAppThemeMode(mode: AppThemeMode) {
+        dataStore.edit { prefs ->
+            prefs[KEY_APP_THEME_MODE] = mode.name
         }
     }
 
@@ -71,18 +82,22 @@ class ReaderSettingsRepository @Inject constructor(
         }
     }
 
-    private companion object {
-        val KEY_PAGE_TURN_MODE = stringPreferencesKey("reader_page_turn_mode")
-        val KEY_READING_THEME = stringPreferencesKey("reader_reading_theme")
-        val KEY_FONT_SIZE = intPreferencesKey("reader_font_size")
-        val KEY_READER_PADDING_DP = intPreferencesKey("reader_reader_padding_dp")
-        val KEY_LINE_SPACING_MULT = floatPreferencesKey("reader_line_spacing_multiplier")
-
+    companion object {
         const val DEFAULT_FONT_SIZE = 16
         const val DEFAULT_PADDING_DP = 32
         const val DEFAULT_LINE_SPACING_MULT = 1.5f
 
-        fun themeToStoredName(theme: ReadingTheme): String = when (theme) {
+        private val KEY_PAGE_TURN_MODE = stringPreferencesKey("reader_page_turn_mode")
+        private val KEY_APP_THEME_MODE = stringPreferencesKey("app_theme_mode")
+        private val KEY_READING_THEME = stringPreferencesKey("reader_reading_theme")
+
+        private fun appThemeFromStored(raw: String?): AppThemeMode =
+            AppThemeMode.entries.find { it.name == raw } ?: AppThemeMode.SYSTEM
+        private val KEY_FONT_SIZE = intPreferencesKey("reader_font_size")
+        private val KEY_READER_PADDING_DP = intPreferencesKey("reader_reader_padding_dp")
+        private val KEY_LINE_SPACING_MULT = floatPreferencesKey("reader_line_spacing_multiplier")
+
+        private fun themeToStoredName(theme: ReadingTheme): String = when (theme) {
             ReadingTheme.Paper -> "Paper"
             ReadingTheme.Dark -> "Dark"
             ReadingTheme.White -> "White"
@@ -90,7 +105,7 @@ class ReaderSettingsRepository @Inject constructor(
             ReadingTheme.Sepia -> "Sepia"
         }
 
-        fun themeFromStoredName(raw: String?): ReadingTheme = when (raw) {
+        private fun themeFromStoredName(raw: String?): ReadingTheme = when (raw) {
             "Paper" -> ReadingTheme.Paper
             "Dark" -> ReadingTheme.Dark
             "White" -> ReadingTheme.White

@@ -19,6 +19,12 @@ interface ReadingProgressDao {
     @Query("SELECT SUM(readTimeMinutes) FROM reading_progress WHERE date >= :startDate")
     suspend fun getTotalReadTimeSince(startDate: Date): Int?
 
+    @Query("SELECT COALESCE(SUM(readTimeMinutes), 0) FROM reading_progress")
+    fun observeTotalReadTimeMinutes(): Flow<Int>
+
+    @Query("SELECT COALESCE(SUM(readChars), 0) FROM reading_progress")
+    fun observeTotalReadChars(): Flow<Int>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertProgress(progress: ReadingProgressEntity)
 

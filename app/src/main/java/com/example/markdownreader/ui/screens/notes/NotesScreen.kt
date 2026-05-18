@@ -29,7 +29,7 @@ import androidx.navigation.compose.rememberNavController
 import com.example.markdownreader.data.local.entity.BookmarkEntity
 import com.example.markdownreader.data.local.entity.HighlightEntity
 import com.example.markdownreader.ui.components.AppSearchField
-import com.example.markdownreader.ui.components.ShelfStyleStatusBarEffect
+import com.example.markdownreader.ui.components.ShelfStyleTopBarBackground
 import com.example.markdownreader.ui.components.ShelfStyleTopAppBar
 import com.example.markdownreader.ui.components.iconTintForDeleteStrip
 import com.example.markdownreader.ui.components.shelfStylePageBackground
@@ -50,7 +50,6 @@ fun NotesScreen(
     var searchQuery by remember { mutableStateOf("") }
 
     val pageBg = shelfStylePageBackground()
-    ShelfStyleStatusBarEffect(pageBg)
 
     // 根据搜索关键词过滤数据
     val filteredHighlights = remember(highlights, searchQuery) {
@@ -72,15 +71,17 @@ fun NotesScreen(
     Scaffold(
         containerColor = pageBg,
         topBar = {
-            ShelfStyleTopAppBar(
-                title = "笔记管理",
-                onNavigateBack = { navController.navigateUp() },
-                actions = {
-                    IconButton(onClick = { showExportDialog = true }) {
-                        Icon(Icons.Default.Share, contentDescription = "导出")
+            ShelfStyleTopBarBackground(pageBg) {
+                ShelfStyleTopAppBar(
+                    title = "笔记管理",
+                    onNavigateBack = { navController.navigateUp() },
+                    actions = {
+                        IconButton(onClick = { showExportDialog = true }) {
+                            Icon(Icons.Default.Share, contentDescription = "导出")
+                        }
                     }
-                }
-            )
+                )
+            }
         }
     ) { paddingValues ->
         Column(
@@ -635,15 +636,17 @@ private fun NotesScreenPreviewImpl(navController: NavController) {
     Scaffold(
         containerColor = pageBg,
         topBar = {
-            ShelfStyleTopAppBar(
-                title = "笔记管理",
-                onNavigateBack = { navController.navigateUp() },
-                actions = {
-                    IconButton(onClick = { showExportDialog = true }) {
-                        Icon(Icons.Default.Share, contentDescription = "导出")
+            ShelfStyleTopBarBackground(pageBg) {
+                ShelfStyleTopAppBar(
+                    title = "笔记管理",
+                    onNavigateBack = { navController.navigateUp() },
+                    actions = {
+                        IconButton(onClick = { showExportDialog = true }) {
+                            Icon(Icons.Default.Share, contentDescription = "导出")
+                        }
                     }
-                }
-            )
+                )
+            }
         }
     ) { paddingValues ->
         Column(

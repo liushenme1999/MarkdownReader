@@ -35,7 +35,13 @@ internal object ImageAssetUtils {
      * - [width]/[height] 为 null 时退化为不带尺寸的 `<img>`；Markwon 仍能渲染，只是回到
      *   「加载完再调整 layout」的旧行为。
      */
-    fun buildImgTag(src: String, alt: String? = null, width: Int? = null, height: Int? = null): String {
+    fun buildImgTag(
+        src: String,
+        alt: String? = null,
+        width: Int? = null,
+        height: Int? = null,
+        style: String? = null,
+    ): String {
         val sb = StringBuilder(96)
         sb.append("<img src=\"").append(escapeAttr(src)).append("\"")
         if (!alt.isNullOrBlank()) {
@@ -43,6 +49,9 @@ internal object ImageAssetUtils {
         }
         if (width != null && width > 0) sb.append(" width=\"").append(width).append("\"")
         if (height != null && height > 0) sb.append(" height=\"").append(height).append("\"")
+        if (!style.isNullOrBlank()) {
+            sb.append(" style=\"").append(escapeAttr(style)).append("\"")
+        }
         sb.append("/>")
         return sb.toString()
     }
