@@ -73,8 +73,12 @@ import androidx.core.view.WindowCompat
 import androidx.core.widget.TextViewCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
+import com.example.markdownreader.R
 import com.example.markdownreader.data.local.entity.HighlightEntity
-import com.example.markdownreader.importing.ImportedBookFormat
+import com.example.markdownreader.importing.PdfReaderContent
+import com.example.markdownreader.markdown.DiagramSchemeHandler
+import io.noties.markwon.image.AsyncDrawable
+import io.noties.markwon.image.AsyncDrawableSpan
 import com.example.markdownreader.model.ReaderPageTurnMode
 import com.example.markdownreader.ui.components.iconTintForDeleteStrip
 import com.example.markdownreader.ui.theme.MarkdownReaderTheme
@@ -383,6 +387,109 @@ internal fun isPlainTextLineTitleAt(displayed: String, index: Int, title: String
     return displayed[after] == '\n' || displayed[after].isWhitespace()
 }
 
+/**
+ * PDF 正文为 HTML `<img>`，渲染后每页对应一个 [AsyncDrawableSpan] 占位符；
+ * 源码字符下标与 TextView 内下标不一致，需按页码定位图片 span。
+ */
+internal fun resolvePdfDisplayedCharOffset(
+    displayedText: CharSequence?,
+    tocEntries: List<MarkdownTocEntry>,
+    targetPageIndex: Int,
+    windowStart: Int,
+): Int {
+    val spanned = displayedText as? Spanned ?: return 0
+    val imageStarts = spanned.getSpans(0, spanned.length, AsyncDrawableSpan::class.java)
+        .map { spanned.getSpanStart(it) }
+        .sorted()
+    if (imageStarts.isEmpty()) return 0
+
+    val targetSourceOffset = tocEntries.getOrNull(targetPageIndex)?.sourceOffset
+        ?: return imageStarts.first()
+    val rankInWindow = tocEntries.count {
+        it.sourceOffset >= windowStart && it.sourceOffset < targetSourceOffset
+    }
+    return imageStarts.getOrNull(rankInWindow.coerceIn(0, imageStarts.lastIndex))
+        ?: imageStarts.last()
+}
+
+internal fun resolvePdfSourceOffsetAtTextViewTop(
+    textView: TextView?,
+    tocEntries: List<MarkdownTocEntry>,
+    windowStart: Int,
+): Int? {
+    val spanned = textView?.text as? Spanned ?: return null
+    val imageStarts = spanned.getSpans(0, spanned.length, AsyncDrawableSpan::class.java)
+        .map { spanned.getSpanStart(it) }
+        .sorted()
+    if (imageStarts.isEmpty()) return null
+    val renderedTop = charOffsetAtScrollTop(textView)
+    val rankInWindow = imageStarts.indexOfLast { it <= renderedTop }.coerceAtLeast(0)
+    val entriesInWindow = tocEntries.filter { it.sourceOffset >= windowStart }
+    return entriesInWindow.getOrNull(rankInWindow)?.sourceOffset
+        ?: entriesInWindow.lastOrNull()?.sourceOffset
+}
+
+internal fun findBookmarkPreviewOffset(
+    displayedText: CharSequence?,
+    previewText: String?,
+): Int? {
+    val displayed = displayedText?.toString().orEmpty()
+    val preview = previewText
+        ?.replace(Regex("""\s+"""), " ")
+        ?.trim()
+        .orEmpty()
+    if (displayed.isEmpty() || preview.length < 2) return null
+
+    displayed.indexOf(preview).takeIf { it >= 0 }?.let { return lineStartForOffset(displayed, it) }
+
+    val (normalizedDisplayed, indexMap) = normalizeForBookmarkSearch(displayed)
+    val candidates = buildList {
+        add(preview)
+        if (preview.length > 80) add(preview.take(80))
+        if (preview.length > 48) add(preview.take(48))
+        if (preview.length > 28) add(preview.take(28))
+    }.distinct()
+    for (candidate in candidates) {
+        val normalizedCandidate = candidate.replace(Regex("""\s+"""), " ").trim()
+        val idx = normalizedDisplayed.indexOf(normalizedCandidate)
+        if (idx >= 0) {
+            val original = indexMap.getOrNull(idx) ?: return null
+            return lineStartForOffset(displayed, original)
+        }
+    }
+    return null
+}
+
+private fun normalizeForBookmarkSearch(text: String): Pair<String, List<Int>> {
+    val out = StringBuilder(text.length)
+    val indexMap = ArrayList<Int>(text.length)
+    var previousWhitespace = true
+    text.forEachIndexed { index, ch ->
+        if (ch.isWhitespace()) {
+            if (!previousWhitespace) {
+                out.append(' ')
+                indexMap.add(index)
+                previousWhitespace = true
+            }
+        } else {
+            out.append(ch)
+            indexMap.add(index)
+            previousWhitespace = false
+        }
+    }
+    if (out.isNotEmpty() && out.last() == ' ') {
+        out.deleteAt(out.lastIndex)
+        indexMap.removeAt(indexMap.lastIndex)
+    }
+    return out.toString() to indexMap
+}
+
+private fun lineStartForOffset(text: String, offset: Int): Int {
+    if (text.isEmpty()) return 0
+    val safe = offset.coerceIn(0, text.lastIndex)
+    return text.lastIndexOf('\n', safe - 1).let { if (it < 0) 0 else it + 1 }
+}
+
 internal fun resolveDisplayedCharOffset(
     sourceContent: String,
     sourceOffset: Int,
@@ -391,10 +498,15 @@ internal fun resolveDisplayedCharOffset(
     windowStart: Int,
     tocEntries: List<MarkdownTocEntry>,
     preferredEntry: MarkdownTocEntry? = null,
+    preferredText: String? = null,
+    windowEnd: Int? = null,
 ): Int {
     val displayed = displayedText?.toString().orEmpty()
     val len = displayed.length
     if (len == 0) return 0
+    findBookmarkPreviewOffset(displayedText, preferredText)?.let {
+        return it.coerceIn(0, (len - 1).coerceAtLeast(0))
+    }
     if (renderPlainText) {
         val hint = (sourceOffset - windowStart).coerceIn(0, len)
         val entry = preferredEntry
@@ -444,7 +556,158 @@ internal fun resolveDisplayedCharOffset(
         if (idx >= 0) return idx.coerceIn(0, (len - 1).coerceAtLeast(0))
     }
 
-    return (sourceOffset - windowStart).coerceIn(0, (len - 1).coerceAtLeast(0))
+    return proportionalDisplayedOffset(
+        sourceOffset = sourceOffset,
+        windowStart = windowStart,
+        windowEnd = windowEnd ?: sourceContent.length,
+        displayedLen = len,
+    )
+}
+
+/** Markdown 渲染后长度远小于源码窗口，线性比例比 `(sourceOffset - windowStart)` 更单调。 */
+internal fun proportionalDisplayedOffset(
+    sourceOffset: Int,
+    windowStart: Int,
+    windowEnd: Int,
+    displayedLen: Int,
+): Int {
+    if (displayedLen <= 1) return 0
+    val sourceSpan = (windowEnd - windowStart).coerceAtLeast(1)
+    val ratio = ((sourceOffset - windowStart).toFloat() / sourceSpan).coerceIn(0f, 1f)
+    return (ratio * (displayedLen - 1)).toInt().coerceIn(0, displayedLen - 1)
+}
+
+internal fun proportionalSourceOffset(
+    windowStart: Int,
+    windowEnd: Int,
+    displayedLen: Int,
+    renderedOffset: Int,
+): Int {
+    if (displayedLen <= 1) return windowStart.coerceAtLeast(0)
+    val sourceSpan = (windowEnd - windowStart).coerceAtLeast(1)
+    val ratio = (renderedOffset.toFloat() / (displayedLen - 1).coerceAtLeast(1)).coerceIn(0f, 1f)
+    return (windowStart + ratio * sourceSpan).toInt()
+        .coerceIn(windowStart, (windowEnd - 1).coerceAtLeast(windowStart))
+}
+
+/** 视口顶部字符是否落在 diagram:// 占位 span 上。 */
+internal fun isDiagramSpanAtOffset(text: CharSequence?, offset: Int): Boolean {
+    if (text !is Spanned) return false
+    val len = text.length
+    if (len == 0) return false
+    val check = offset.coerceIn(0, len - 1)
+    val spans = text.getSpans(check, check + 1, AsyncDrawableSpan::class.java) ?: return false
+    return spans.any { span ->
+        span.drawable.destination.startsWith("${DiagramSchemeHandler.SCHEME}://")
+    }
+}
+
+internal fun isViewportTopOnDiagramSpan(tv: TextView): Boolean =
+    isDiagramSpanAtOffset(tv.text, charOffsetAtScrollTop(tv))
+
+/**
+ * 将 TextView 内已渲染文本的字符下标反查为全书 Markdown 源码下标（与 [resolveDisplayedCharOffset] 互逆）。
+ */
+internal fun resolveSourceCharOffset(
+    sourceContent: String,
+    windowStart: Int,
+    windowEnd: Int,
+    displayedText: CharSequence?,
+    renderedOffset: Int,
+    renderPlainText: Boolean,
+    tocEntries: List<MarkdownTocEntry>,
+): Int {
+    val displayed = displayedText?.toString().orEmpty()
+    if (displayed.isEmpty()) return windowStart.coerceIn(0, sourceContent.length)
+    val rend = renderedOffset.coerceIn(0, (displayed.length - 1).coerceAtLeast(0))
+    if (renderPlainText) {
+        return (windowStart + rend).coerceIn(windowStart, (windowEnd - 1).coerceAtLeast(windowStart))
+    }
+    if (displayedText is Spanned && isDiagramSpanAtOffset(displayedText, rend)) {
+        return proportionalSourceOffset(windowStart, windowEnd, displayed.length, rend)
+    }
+    var lo = windowStart
+    var hi = (windowEnd - 1).coerceAtLeast(windowStart)
+    var best = lo
+    while (lo <= hi) {
+        val mid = lo + (hi - lo) / 2
+        val disp = resolveDisplayedCharOffset(
+            sourceContent = sourceContent,
+            sourceOffset = mid,
+            displayedText = displayedText,
+            renderPlainText = false,
+            windowStart = windowStart,
+            tocEntries = tocEntries,
+            preferredEntry = null,
+            windowEnd = windowEnd,
+        )
+        if (disp <= rend) {
+            best = mid
+            lo = mid + 1
+        } else {
+            hi = mid - 1
+        }
+    }
+    val proportional = proportionalSourceOffset(windowStart, windowEnd, displayed.length, rend)
+    if (kotlin.math.abs(best - proportional) > (windowEnd - windowStart) / 3) {
+        return proportional
+    }
+    return best
+}
+
+/** 按窗口内滚动比例快速估算源码坐标（用于滚动时保存进度，避免每帧二分查找卡顿）。 */
+internal fun globalCharEstimateFromScrollFraction(
+    windowStart: Int,
+    windowEnd: Int,
+    localProgress: Float,
+    contentLength: Int,
+): Int {
+    val span = (windowEnd - windowStart).coerceAtLeast(1)
+    return (windowStart + localProgress * span)
+        .toInt()
+        .coerceIn(0, contentLength.coerceAtLeast(0))
+}
+
+/** 视口顶部在全书源码中的字符下标（用于保存进度 / 向上扩窗锚点）。 */
+internal fun globalSourceCharAtTextViewTop(
+    sourceContent: String,
+    windowStart: Int,
+    windowEnd: Int,
+    textView: TextView?,
+    renderPlainText: Boolean,
+    tocEntries: List<MarkdownTocEntry>,
+): Int {
+    if (textView == null || sourceContent.isEmpty()) {
+        return windowStart.coerceIn(0, sourceContent.length)
+    }
+    val renderedTop = charOffsetAtScrollTop(textView)
+    return resolveSourceCharOffset(
+        sourceContent = sourceContent,
+        windowStart = windowStart,
+        windowEnd = windowEnd,
+        displayedText = textView.text,
+        renderedOffset = renderedTop,
+        renderPlainText = renderPlainText,
+        tocEntries = tocEntries,
+    ).coerceIn(0, sourceContent.length)
+}
+
+/** 打开书籍时优先用 [currentPosition]（源码坐标），否则由 [readingProgress] 推算。 */
+internal fun resolveStoredCharPos(
+    currentPosition: Int,
+    readingProgress: Float,
+    contentLength: Int,
+    totalChars: Int,
+): Int {
+    if (contentLength <= 0) return 0
+    val total = totalChars.coerceAtLeast(1)
+    return when {
+        currentPosition > 0 ->
+            resolveGlobalCharPos(currentPosition, contentLength, total)
+        readingProgress > 0f ->
+            resolveGlobalCharPos((readingProgress * total).toInt(), contentLength, total)
+        else -> 0
+    }
 }
 
 /** 将存储坐标（书签 position / totalChars）映射到当前正文字符下标。 */
@@ -471,9 +734,36 @@ internal fun isReaderTextViewLayoutReady(
 ): Boolean {
     val layout = tv.layout ?: return false
     val len = tv.text?.length ?: 0
-    if (len <= 0 || layout.text?.length != len) return false
+    if (len <= 0 || layout.text.length != len) return false
     if (expectedTextLength != null && len != expectedTextLength) return false
     return true
+}
+
+/** 等待 Markwon 异步渲染完成且 layout 就绪（避免在空白/旧文本上恢复滚动）。 */
+internal suspend fun awaitReaderMarkdownRenderReady(
+    tvProvider: () -> TextView?,
+    expectedRenderSig: String,
+    maxAttempts: Int = 200,
+): TextView? {
+    repeat(maxAttempts) {
+        val tv = tvProvider()
+        if (tv != null &&
+            tv.getTag(R.id.reader_markdown_render_complete) == expectedRenderSig &&
+            isReaderTextViewLayoutReady(tv)
+        ) {
+            kotlinx.coroutines.delay(48)
+            if (tv.getTag(R.id.reader_markdown_render_complete) == expectedRenderSig &&
+                isReaderTextViewLayoutReady(tv)
+            ) {
+                return tv
+            }
+        }
+        kotlinx.coroutines.delay(32)
+    }
+    return tvProvider()?.takeIf {
+        it.getTag(R.id.reader_markdown_render_complete) == expectedRenderSig &&
+            isReaderTextViewLayoutReady(it)
+    }
 }
 
 internal suspend fun awaitReaderTextViewLayout(
@@ -491,6 +781,23 @@ internal suspend fun awaitReaderTextViewLayout(
     return tvProvider()?.takeIf { isReaderTextViewLayoutReady(it, expectedTextLength) }
 }
 
+/** 横向分页：等待指定页 [TextView] 完成 layout（PDF 勿传源码长度，渲染后长度与 HTML 不一致）。 */
+internal suspend fun awaitPagerPageTextView(
+    pageTextViews: Map<Int, TextView>,
+    page: Int,
+    maxAttempts: Int = 150,
+    expectedTextLength: Int? = null,
+): TextView? {
+    repeat(maxAttempts) {
+        val tv = pageTextViews[page]
+        if (tv != null && isReaderTextViewLayoutReady(tv, expectedTextLength)) {
+            return tv
+        }
+        kotlinx.coroutines.delay(32)
+    }
+    return pageTextViews[page]?.takeIf { isReaderTextViewLayoutReady(it, expectedTextLength) }
+}
+
 /** 当前视口顶部对应的正文字符下标（相对 TextView 内文本）。 */
 internal fun charOffsetAtScrollTop(tv: TextView): Int {
     val layout = tv.layout ?: return 0
@@ -499,6 +806,61 @@ internal fun charOffsetAtScrollTop(tv: TextView): Int {
     val y = (tv.scrollY + tv.paddingTop).coerceAtLeast(0)
     val line = layout.getLineForVertical(y).coerceIn(0, (layout.lineCount - 1).coerceAtLeast(0))
     return layout.getLineStart(line).coerceIn(0, (len - 1).coerceAtLeast(0))
+}
+
+/** 按视口顶部的字符下标估算窗口内阅读进度（0..1），不受 Mermaid/大图行高影响。 */
+internal fun localCharProgressAtScrollTop(tv: TextView): Float {
+    val len = tv.text?.length ?: 0
+    if (len <= 1) return 0f
+    return charOffsetAtScrollTop(tv).toFloat() / (len - 1).toFloat()
+}
+
+/** 单行高度超过视口，常见于 diagram / 大图 AsyncDrawableSpan。 */
+internal fun isTallLineAtOffset(tv: TextView, charOffset: Int): Boolean {
+    val layout = tv.layout ?: return false
+    val innerH = tv.height - tv.paddingTop - tv.paddingBottom
+    if (innerH <= 0) return false
+    val len = tv.text?.length ?: 0
+    if (len == 0) return false
+    val line = layout.getLineForOffset(charOffset.coerceIn(0, len - 1))
+    return layout.getLineBottom(line) - layout.getLineTop(line) > innerH
+}
+
+/**
+ * 是否应向下扩窗：以字符进度为主；若视口落在大图行内，还需滚到该行底部，
+ * 避免在 Mermaid 上滑动时因 scrollY 虚高而连续扩窗到全书末尾。
+ */
+internal fun shouldTriggerReaderExpandDown(
+    tv: TextView,
+    threshold: Float = READER_EXPAND_TRIGGER_LOCAL_PROGRESS,
+): Boolean {
+    if (isViewportTopOnDiagramSpan(tv)) return false
+    val charProgress = localCharProgressAtScrollTop(tv)
+    if (charProgress < threshold) return false
+    val charAtTop = charOffsetAtScrollTop(tv)
+    if (!isTallLineAtOffset(tv, charAtTop)) return true
+    val layout = tv.layout ?: return false
+    val innerH = tv.height - tv.paddingTop - tv.paddingBottom
+    if (innerH <= 0) return false
+    val line = layout.getLineForOffset(charAtTop)
+    val viewportBottom = tv.scrollY + tv.paddingTop + innerH
+    return viewportBottom >= layout.getLineBottom(line) - 8
+}
+
+/** 是否应向上扩窗：字符进度接近顶部；大图行内需滚到该行顶部。 */
+internal fun shouldTriggerReaderExpandUp(
+    tv: TextView,
+    threshold: Float = READER_EXPAND_TRIGGER_NEAR_START_PROGRESS,
+): Boolean {
+    if (isViewportTopOnDiagramSpan(tv)) return false
+    val charProgress = localCharProgressAtScrollTop(tv)
+    if (charProgress > threshold) return false
+    val charAtTop = charOffsetAtScrollTop(tv)
+    if (!isTallLineAtOffset(tv, charAtTop)) return true
+    val layout = tv.layout ?: return false
+    val line = layout.getLineForOffset(charAtTop)
+    val viewportTop = tv.scrollY + tv.paddingTop
+    return viewportTop <= layout.getLineTop(line) + 8
 }
 
 /** 按 layout 行顶滚动到字符偏移，比「字符比例 ≈ scrollY」更贴近目录/书签目标。 */
@@ -543,46 +905,80 @@ internal fun jumpToGlobalCharInPager(
     renderPlainText: Boolean,
     tocEntries: List<MarkdownTocEntry>,
     preferredTocEntry: MarkdownTocEntry? = null,
+    bookmarkPreviewText: String? = null,
     pageSpecs: List<Pair<String, Int>>,
     pagerState: PagerState,
     pageTextViews: MutableMap<Int, TextView>,
     assignActiveTextView: (TextView) -> Unit,
     onProgress: () -> Unit,
+    pdfJumpByPageIndex: Boolean = false,
+    pdfPageIndex: Int? = null,
 ) {
     if (pageSpecs.isEmpty()) {
         onProgress()
         return
     }
-    val safeCharPos = charPos.coerceIn(0, (contentLen - 1).coerceAtLeast(0))
-    val page = pageIndexForGlobalChar(pageSpecs, safeCharPos).coerceIn(0, pageSpecs.lastIndex)
+    val page = if (pdfJumpByPageIndex && pdfPageIndex != null) {
+        pdfPageIndex.coerceIn(0, pageSpecs.lastIndex)
+    } else {
+        pageIndexForGlobalChar(pageSpecs, charPos.coerceIn(0, (contentLen - 1).coerceAtLeast(0)))
+            .coerceIn(0, pageSpecs.lastIndex)
+    }
     val globalStart = pageSpecs[page].second
+    val safeCharPos = charPos.coerceIn(0, (contentLen - 1).coerceAtLeast(0))
 
-    val expectedLen = pageSpecs[page].first.length
+    // PDF 经 Markwon 渲染后 TextView 长度与 HTML 片段长度无关，不能按源码长度校验。
+    val expectedLen = if (pdfJumpByPageIndex) null else pageSpecs[page].first.length
     scope.launch {
         pagerState.scrollToPage(page)
-        val tv = awaitReaderTextViewLayout(
-            tvProvider = { pageTextViews[page] },
+        val tv = awaitPagerPageTextView(
+            pageTextViews = pageTextViews,
+            page = page,
             expectedTextLength = expectedLen,
         )
         if (tv != null) {
             assignActiveTextView(tv)
             tv.post {
-                val displayedOffset = resolveDisplayedCharOffset(
-                    sourceContent = sourceContent,
-                    sourceOffset = safeCharPos,
-                    displayedText = tv.text,
-                    renderPlainText = renderPlainText,
-                    windowStart = globalStart,
-                    tocEntries = tocEntries,
-                    preferredEntry = preferredTocEntry,
-                )
-                scrollTextViewToCharOffset(tv, displayedOffset)
+                if (pdfJumpByPageIndex) {
+                    tv.scrollTo(0, 0)
+                } else {
+                    val displayedOffset = resolveDisplayedCharOffset(
+                        sourceContent = sourceContent,
+                        sourceOffset = safeCharPos,
+                        displayedText = tv.text,
+                        renderPlainText = renderPlainText,
+                        windowStart = globalStart,
+                        tocEntries = tocEntries,
+                        preferredEntry = preferredTocEntry,
+                        preferredText = bookmarkPreviewText,
+                    )
+                    scrollTextViewToCharOffset(tv, displayedOffset)
+                }
                 onProgress()
             }
         } else {
             onProgress()
         }
     }
+}
+
+/** PDF 目录/书签：垂直滚动模式下按页码滚到对应图片 span。 */
+internal fun jumpToPdfPageVertically(
+    contentLen: Int,
+    chapterBoundaries: IntArray,
+    pageIndex: Int,
+    tocEntries: List<MarkdownTocEntry>,
+    setReadingWindow: (start: Int, end: Int) -> Unit,
+    onPendingPdfPageIndex: (Int) -> Unit,
+    onProgress: () -> Unit,
+) {
+    val charPos = tocEntries.getOrNull(pageIndex)?.sourceOffset
+        ?: 0
+    val safeCharPos = charPos.coerceIn(0, (contentLen - 1).coerceAtLeast(0))
+    val (winStart, winEnd) = computeReadingWindow(chapterBoundaries, safeCharPos, contentLen)
+    setReadingWindow(winStart, winEnd)
+    onPendingPdfPageIndex(pageIndex)
+    onProgress()
 }
 
 internal fun highlightsForPageSlice(
@@ -605,3 +1001,19 @@ internal fun highlightsForPageSlice(
 
 internal fun pageIndexForGlobalChar(pages: List<Pair<String, Int>>, charPos: Int): Int =
     pages.indexOfLast { it.second <= charPos }.coerceAtLeast(0)
+
+/** 横向 PDF：目录项下标与 [PdfReaderContent.splitToPages] 页序一致；书签等回退按源码偏移推算。 */
+internal fun pdfPageIndexForTocOrBookmark(
+    isPdfBook: Boolean,
+    tocEntries: List<MarkdownTocEntry>,
+    readerContent: String,
+    charPos: Int,
+    tocEntry: MarkdownTocEntry?,
+): Int? {
+    if (!isPdfBook) return null
+    if (tocEntry != null) {
+        val idx = tocEntries.indexOfFirst { it.sourceOffset == tocEntry.sourceOffset }
+        if (idx >= 0) return idx
+    }
+    return PdfReaderContent.pageIndexForSourceOffset(readerContent, charPos)
+}

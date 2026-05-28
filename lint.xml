@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- 严格模式 -->
+    <issue id="Enabled" severity="enabled" />
+    <issue id="ExplicitThis" severity="enabled" />
+
+    <!-- 安全隐患 -->
+    <issue id="HardcodedDebugMode" severity="warning" />
+    <issue id="AllowBackup" severity="warning" />
+    <issue id="AllowBackupInnerClasses" severity="warning" />
+    <issue id="SetJavaScriptEnabled" severity="warning" />
+    <issue id="UnsafeNativeCodeLocation" severity="warning" />
+    <issue id="ExportedContentProvider" severity="warning" />
+    <issue id="ExportedReceiver" severity="warning" />
+    <issue id="ExportedService" severity="warning" />
+    <issue id="WorldReadableFiles" severity="warning" />
+    <issue id="WorldWriteableFiles" severity="warning" />
+    <issue id="SetWorldReadable" severity="warning" />
+    <issue id="SetWorldWritable" severity="warning" />
+
+    <!-- 性能问题 -->
+    <issue id="UseCompoundDrawables" severity="warning" />
+    <issue id="UseSparseArrays" severity="warning" />
+    <issue id="UseValueOf" severity="warning" />
+    <issue id="WearableBindListener" severity="warning" />
+    <issue id="Autoboxing" severity="warning" />
+    <issue id="Instantiatable" severity="warning" />
+
+    <!-- UI 问题 -->
+    <issue id="ClickableViewAccessibility" severity="warning" />
+    <issue id="Focusable" severity="warning" />
+    <issue id="KeyboardInaccessibleWidget" severity="warning" />
+    <issue id="LabelFor" severity="warning" />
+    <issue id="ContentDescription" severity="warning" />
+    <issue id="MissingPermission" severity="warning" />
+    <issue id="SwitchIntDef" severity="warning" />
+    <issue id="Recycle" severity="warning" />
+    <issue id="ObsoleteSdkInt" severity="warning" />
+
+    <!-- 代码正确性问题 -->
+    <issue id="DefaultLocale" severity="warning" />
+    <issue id="FieldGetter" severity="warning" />
+    <issue id="ParcelCreator" severity="warning" />
+    <issue id="ApplySharedPref" severity="warning" />
+    <issue id="UseCheckPermission" severity="warning" />
+
+    <!-- Kotlin 相关 -->
+    <issue id="KotlinPropertyAccess" severity="warning" />
+    <issue id="KotlinNullSafe" severity="enabled" />
+
+    <!-- Compose 相关 -->
+    <issue id="ComposeModifierDefault" severity="enabled" />
+    <issue id="ComposeModifierMissing" severity="enabled" />
+    <issue id="ComposeStableCount" severity="enabled" />
+
+    <!-- 忽略的检查 -->
+    <issue id="UnusedResources" severity="ignore" />
+    <issue id="UnusedIds" severity="ignore" />
+    <issue id="IconDuplicates" severity="ignore" />
+    <issue id="IconLocation" severity="ignore" />
+    <issue id="IconExpectedSizes" severity="ignore" />
+    <issue id="AppCompatCustomView" severity="ignore" />
+    <issue id="AppCompatResource" severity="ignore" />
+    <issue id="TextFields" severity="ignore" />
+    <issue id=" SpannableString" severity="ignore" />
+    <issue id="UnsafeNativeCodeLocation" severity="ignore" />
+</lint>

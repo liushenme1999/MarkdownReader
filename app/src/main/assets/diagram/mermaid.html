@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <script>
+    (function () {
+      if (typeof structuredClone !== 'function') {
+        window.structuredClone = function (v) {
+          try { return JSON.parse(JSON.stringify(v)); } catch (e) { return v; }
+        };
+      }
+      if (!Array.prototype.at) {
+        Array.prototype.at = function (n) {
+          n = Number(n) || 0;
+          if (n < 0) n += this.length;
+          return this[n];
+        };
+      }
+      if (!Object.hasOwn) {
+        Object.hasOwn = function (o, p) {
+          return Object.prototype.hasOwnProperty.call(o, p);
+        };
+      }
+      if (typeof globalThis === 'undefined') window.globalThis = window;
+    })();
+  </script>
+  <script src="file:///android_asset/diagram/mermaid.min.js"></script>
+  <style>
+    html, body { margin: 0; padding: 0; background: #fff; overflow: hidden; }
+    #host { display: block; margin: 0; padding: 0; line-height: 0; box-sizing: border-box; }
+    #host svg { display: block; height: auto !important; margin: 0; overflow: visible; }
+  </style>
+</head>
+<body>
+  <div id="host"></div>
+  <script>
+    function decodeSourceB64(b64) {
+      try {
+        var binary = window.atob(b64);
+        if (typeof TextDecoder !== 'undefined') {
+          var bytes = new Uint8Array(binary.length);
+          for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          return new TextDecoder('utf-8').decode(bytes);
+        }
+        return decodeURIComponent(escape(binary));
+      } catch (e) {
+        return decodeURIComponent(escape(window.atob(b64)));
+      }
+    }
+
+    function contentWidthPx() {
+      var w = AndroidDiagram.getContentWidth();
+      return Math.max(w || 320, 320);
+    }
+
+    function detectDiagramKind(code) {
+      var first = (code || '').trim().split(/\n/)[0].trim().toLowerCase();
+      if (first.indexOf('mindmap') === 0) return 'mindmap';
+      if (first.indexOf('gantt') === 0) return 'gantt';
+      return 'other';
+    }
+
+    function diagramRenderWidth(code, kind, baseWidth) {
+      if (kind !== 'gantt') return baseWidth;
+      var taskNames = [];
+      var taskLines = (code || '').split(/\n/).filter(function (line) {
+        var t = line.trim();
+        var isTask = t.indexOf(':') > 0 &&
+          t.indexOf('title ') !== 0 &&
+          t.indexOf('dateFormat') !== 0 &&
+          t.indexOf('excludes') !== 0 &&
+          t.indexOf('section ') !== 0;
+        if (isTask) taskNames.push(t.substring(0, t.indexOf(':')).trim());
+        return isTask;
+      }).length;
+      var maxNameUnits = taskNames.reduce(function (max, name) {
+        return Math.max(max, textUnits(name));
+      }, 0);
+      var durations = (code || '').match(/(?:^|[,\s])(\d+)\s*d\b/g) || [];
+      var durationDays = durations.reduce(function (sum, value) {
+        var n = parseInt(value.replace(/[^\d]/g, ''), 10);
+        return sum + (isFinite(n) ? n : 0);
+      }, 0);
+      var dates = (code || '').match(/\d{4}-\d{2}-\d{2}/g) || [];
+      var labelBudget = maxNameUnits * 7;
+      var taskBudget = taskLines * 18;
+      if (dates.length >= 2) {
+        var times = dates.map(function (value) { return new Date(value + 'T00:00:00').getTime(); });
+        var min = Math.min.apply(Math, times);
+        var max = Math.max.apply(Math, times);
+        var days = Math.max(1, Math.ceil((max - min) / 86400000) + 1);
+        return Math.max(baseWidth, 820, Math.min(3000, 220 + days * 30 + labelBudget + taskBudget));
+      }
+      var inferredDays = Math.max(durationDays, taskLines * 4, 14);
+      return Math.max(baseWidth, 900, Math.min(3000, 260 + inferredDays * 30 + labelBudget + taskBudget));
+    }
+
+    function currentRenderWidthPx() {
+      return Math.max(window.__diagramRenderWidth || contentWidthPx(), 320);
+    }
+
+    function textUnits(value) {
+      return Array.prototype.slice.call(value || '').reduce(function (sum, ch) {
+        return sum + (/[A-Za-z0-9]/.test(ch) ? 0.58 : 1);
+      }, 0);
+    }
+
+    function setSvgStyle(el, values) {
+      if (!el) return;
+      Object.keys(values).forEach(function (key) {
+        el.style[key] = values[key];
+      });
+    }
+
+    function centerSvgText(text) {
+      if (!text) return;
+      text.setAttribute('text-anchor', 'middle');
+      text.setAttribute('dominant-baseline', 'central');
+      text.setAttribute('alignment-baseline', 'central');
+      var tspans = text.querySelectorAll('tspan');
+      if (!tspans.length) return;
+      var x = text.getAttribute('x') || (tspans[0] && tspans[0].getAttribute('x')) || '0';
+      tspans.forEach(function (span) {
+        span.setAttribute('x', x);
+      });
+    }
+
+    function safeBBox(el) {
+      try {
+        var box = el && el.getBBox && el.getBBox();
+        if (box && isFinite(box.x) && isFinite(box.y) && box.width >= 0 && box.height >= 0) return box;
+      } catch (e) {}
+      return null;
+    }
+
+    function closestNodeShape(text) {
+      var group = text.parentNode;
+      while (group && group.tagName && group.tagName.toLowerCase() !== 'svg') {
+        var shape = group.querySelector && group.querySelector('rect, circle, ellipse, polygon');
+        if (shape) return shape;
+        group = group.parentNode;
+      }
+      return null;
+    }
+
+    function centerTextInShape(text) {
+      var shape = closestNodeShape(text);
+      if (!shape) return;
+      var shapeBox = safeBBox(shape);
+      var textBox = safeBBox(text);
+      if (!shapeBox || !textBox || textBox.height <= 0) return;
+      var dx = shapeBox.x + shapeBox.width / 2 - (textBox.x + textBox.width / 2);
+      var dy = shapeBox.y + shapeBox.height / 2 - (textBox.y + textBox.height / 2);
+      text.setAttribute('transform', 'translate(' + dx.toFixed(2) + ' ' + dy.toFixed(2) + ')');
+    }
+
+    function enhanceMindmap(svg) {
+      if (!svg) return;
+      svg.querySelectorAll('g[class*="mindmap"] text, g.mindmap-node text, text[class*="mindmap"]').forEach(function (text) {
+        centerSvgText(text);
+        centerTextInShape(text);
+        setSvgStyle(text, {
+          fontWeight: '500',
+          letterSpacing: '0.01em'
+        });
+      });
+      svg.querySelectorAll('g[class*="mindmap"] rect, g.mindmap-node rect').forEach(function (rect) {
+        rect.setAttribute('rx', rect.getAttribute('rx') || '10');
+        rect.setAttribute('ry', rect.getAttribute('ry') || '10');
+      });
+    }
+
+    function enhanceGantt(svg) {
+      if (!svg) return;
+      var taskRects = ganttTaskRects(svg);
+      svg.querySelectorAll('.taskText, .taskTextOutsideRight').forEach(function (text, index) {
+        var rect = nearestGanttTaskRect(text, taskRects, index);
+        var box = rect ? rect.box : null;
+        var x = box ? box.x + box.width / 2 : numberAttr(text, 'x', 0);
+        var y = box ? box.y + box.height / 2 : numberAttr(text, 'y', 0);
+        var maxWidth = box ? Math.max(36, box.width - 10) : 120;
+        text.setAttribute('x', x.toFixed(2));
+        text.setAttribute('y', y.toFixed(2));
+        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('dominant-baseline', 'central');
+        text.setAttribute('alignment-baseline', 'central');
+        text.setAttribute('fill', '#2e3440');
+        text.setAttribute('stroke', 'none');
+        setSvgStyle(text, {
+          fontSize: maxWidth < 72 ? '10px' : '11px',
+          fill: '#2e3440',
+          stroke: 'none',
+          strokeWidth: '0',
+          fontWeight: '600'
+        });
+        wrapSvgText(text, maxWidth, x, y, maxWidth < 72 ? 10 : 11);
+      });
+      svg.querySelectorAll('.sectionTitle').forEach(function (text) {
+        text.setAttribute('x', '12');
+        text.setAttribute('text-anchor', 'start');
+        text.setAttribute('dominant-baseline', 'central');
+        text.setAttribute('alignment-baseline', 'central');
+        text.setAttribute('fill', '#3b4252');
+        text.setAttribute('stroke', 'none');
+        setSvgStyle(text, {
+          fontSize: '13px',
+          fill: '#3b4252',
+          stroke: 'none',
+          strokeWidth: '0',
+          fontWeight: '700'
+        });
+      });
+      svg.querySelectorAll('.titleText').forEach(function (text) {
+        text.setAttribute('dominant-baseline', 'central');
+        text.setAttribute('alignment-baseline', 'central');
+        text.setAttribute('fill', '#2e3440');
+        text.setAttribute('stroke', 'none');
+        setSvgStyle(text, {
+          fontSize: '16px',
+          fill: '#2e3440',
+          stroke: 'none',
+          strokeWidth: '0',
+          fontWeight: '700'
+        });
+      });
+      svg.querySelectorAll('.tick text, .axis text').forEach(function (text) {
+        text.setAttribute('fill', '#4c566a');
+        text.setAttribute('stroke', 'none');
+        setSvgStyle(text, {
+          fontSize: '10px',
+          fill: '#4c566a',
+          stroke: 'none',
+          strokeWidth: '0'
+        });
+      });
+      svg.querySelectorAll('.grid .tick line, .grid path, .axis path, .axis line').forEach(function (line) {
+        setSvgStyle(line, {
+          stroke: '#d8dee9',
+          strokeWidth: '0.8px',
+          opacity: '0.55'
+        });
+      });
+      svg.querySelectorAll('.task, .done, .active, .crit, .task0, .task1, .task2, .task3').forEach(function (task) {
+        task.setAttribute('rx', task.getAttribute('rx') || '5');
+        task.setAttribute('ry', task.getAttribute('ry') || '5');
+      });
+    }
+
+    function numberAttr(el, name, fallback) {
+      var value = parseFloat(el && el.getAttribute(name));
+      return isFinite(value) ? value : fallback;
+    }
+
+    function ganttTaskRects(svg) {
+      return Array.prototype.slice.call(svg.querySelectorAll('rect.task, rect.done, rect.active, rect.crit, rect[class*="task"]'))
+        .map(function (rect, index) {
+          var box = safeBBox(rect);
+          if (!box || box.width <= 0 || box.height <= 0) return null;
+          return { rect: rect, box: box, index: index };
+        })
+        .filter(Boolean)
+        .filter(function (item) {
+          var cls = item.rect.getAttribute('class') || '';
+          return cls.indexOf('section') < 0 && item.box.width > 8 && item.box.height > 8;
+        });
+    }
+
+    function nearestGanttTaskRect(text, rects, fallbackIndex) {
+      var textBox = safeBBox(text);
+      var ty = textBox ? textBox.y + textBox.height / 2 : numberAttr(text, 'y', 0);
+      var best = null;
+      var bestScore = Infinity;
+      rects.forEach(function (rect) {
+        var ry = rect.box.y + rect.box.height / 2;
+        var score = Math.abs(ry - ty);
+        if (score < bestScore) {
+          best = rect;
+          bestScore = score;
+        }
+      });
+      return best || rects[fallbackIndex] || null;
+    }
+
+    function wrapSvgText(text, maxWidth, x, centerY, fontSize) {
+      var raw = (text.textContent || '').trim();
+      if (!raw) return;
+      while (text.firstChild) text.removeChild(text.firstChild);
+      var lines = splitSmartLines(raw, maxWidth, fontSize).slice(0, 3);
+      var lineHeight = Math.ceil(fontSize * 1.18);
+      var firstY = centerY - ((lines.length - 1) * lineHeight) / 2;
+      lines.forEach(function (line, index) {
+        var tspan = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+        tspan.setAttribute('x', x.toFixed(2));
+        tspan.setAttribute('y', (firstY + index * lineHeight).toFixed(2));
+        tspan.textContent = line;
+        text.appendChild(tspan);
+      });
+    }
+
+    function splitSmartLines(value, maxWidth, fontSize) {
+      var maxUnits = Math.max(2, Math.floor(maxWidth / Math.max(6, fontSize * 0.85)));
+      var chars = Array.prototype.slice.call(value);
+      var lines = [];
+      var line = '';
+      var units = 0;
+      chars.forEach(function (ch) {
+        var unit = /[A-Za-z0-9]/.test(ch) ? 0.58 : 1;
+        if (line && units + unit > maxUnits) {
+          lines.push(line);
+          line = ch;
+          units = unit;
+        } else {
+          line += ch;
+          units += unit;
+        }
+      });
+      if (line) lines.push(line);
+      if (lines.length > 4) {
+        lines = lines.slice(0, 4);
+        var last = lines[3];
+        if (last.length > 1) lines[3] = last.substring(0, last.length - 1) + '…';
+      }
+      return lines;
+    }
+
+    function preventOverlappingAxisLabels(svg) {
+      var labels = Array.prototype.slice.call(svg.querySelectorAll('.tick text, .axis text'))
+        .map(function (text) {
+          var box = safeBBox(text);
+          return box ? { text: text, box: box } : null;
+        })
+        .filter(Boolean)
+        .sort(function (a, b) { return a.box.x - b.box.x; });
+      var right = -Infinity;
+      labels.forEach(function (item) {
+        if (item.box.x < right + 6) {
+          item.text.setAttribute('visibility', 'hidden');
+        } else {
+          right = item.box.x + item.box.width;
+        }
+      });
+    }
+
+    function enhanceDiagramSvg(svg, kind) {
+      if (!svg) return;
+      if (kind === 'mindmap') enhanceMindmap(svg);
+      if (kind === 'gantt') enhanceGantt(svg);
+    }
+
+    function normalizeSvgViewport(svg) {
+      if (!svg) return;
+      try {
+        var box = svg.getBBox();
+        if (box && box.width > 0 && box.height > 0) {
+          var pad = 8;
+          svg.setAttribute(
+            'viewBox',
+            [
+              Math.floor(box.x - pad),
+              Math.floor(box.y - pad),
+              Math.ceil(box.width + pad * 2),
+              Math.ceil(box.height + pad * 2)
+            ].join(' ')
+          );
+        }
+      } catch (e) {
+        // Some SVG nodes can briefly report an empty bbox before fonts/layout settle.
+      }
+    }
+
+    function applyFullWidth(svg, widthPx) {
+      if (!svg) return;
+      normalizeSvgViewport(svg);
+      svg.setAttribute('preserveAspectRatio', 'xMidYMin meet');
+      svg.setAttribute('width', String(widthPx));
+      svg.removeAttribute('height');
+      svg.style.width = widthPx + 'px';
+      svg.style.height = 'auto';
+      svg.style.maxWidth = 'none';
+    }
+
+    function measureSvgHeight() {
+      var host = document.getElementById('host');
+      var svg = host.querySelector('svg');
+      if (!svg) return 200;
+      normalizeSvgViewport(svg);
+      var viewBox = svg.viewBox && svg.viewBox.baseVal;
+      if (viewBox && viewBox.width > 0 && viewBox.height > 0) {
+        return Math.max(Math.ceil(currentRenderWidthPx() * viewBox.height / viewBox.width), 80);
+      }
+      var rect = svg.getBoundingClientRect();
+      return Math.max(Math.ceil(rect.height || svg.scrollHeight || 200), 80);
+    }
+
+    function encodeUtf8B64(value) {
+      var utf8 = unescape(encodeURIComponent(value));
+      return window.btoa(utf8);
+    }
+
+    function escapeXml(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function parseDateValue(value) {
+      var m = String(value || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!m) return null;
+      return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    }
+
+    function dateKey(date) {
+      var y = date.getFullYear();
+      var m = String(date.getMonth() + 1).padStart(2, '0');
+      var d = String(date.getDate()).padStart(2, '0');
+      return y + '-' + m + '-' + d;
+    }
+
+    function addDays(date, days) {
+      var out = new Date(date.getTime());
+      out.setDate(out.getDate() + days);
+      return out;
+    }
+
+    function daysBetween(a, b) {
+      return Math.round((b.getTime() - a.getTime()) / 86400000);
+    }
+
+    function parseGantt(code) {
+      var lines = String(code || '').split(/\n/);
+      var title = '甘特图';
+      var sections = [];
+      var current = null;
+      var byId = {};
+      var fallbackStart = null;
+      lines.forEach(function (line) {
+        var t = line.trim();
+        if (!t) return;
+        if (t.indexOf('title ') === 0) {
+          title = t.substring(6).trim() || title;
+          return;
+        }
+        if (t.indexOf('section ') === 0) {
+          current = { title: t.substring(8).trim(), tasks: [] };
+          sections.push(current);
+          return;
+        }
+        if (t.indexOf(':') <= 0 || t.indexOf('dateFormat') === 0 || t.indexOf('excludes') === 0) return;
+        if (!current) {
+          current = { title: '', tasks: [] };
+          sections.push(current);
+        }
+        var name = t.substring(0, t.indexOf(':')).trim();
+        var parts = t.substring(t.indexOf(':') + 1).split(',').map(function (p) { return p.trim(); }).filter(Boolean);
+        var status = '';
+        if (parts[0] && /^(done|active|crit|milestone)$/i.test(parts[0])) status = parts.shift().toLowerCase();
+        var id = parts.shift() || ('task' + Object.keys(byId).length);
+        var startToken = parts.shift() || '';
+        var durationToken = parts.shift() || '1d';
+        var start = parseDateValue(startToken);
+        if (!start && /^after\s+/i.test(startToken)) {
+          var ref = startToken.replace(/^after\s+/i, '').trim();
+          start = byId[ref] ? new Date(byId[ref].end.getTime()) : null;
+        }
+        if (!start) start = fallbackStart ? new Date(fallbackStart.getTime()) : new Date();
+        var durationMatch = String(durationToken).match(/(\d+)\s*d/i);
+        var duration = Math.max(1, durationMatch ? Number(durationMatch[1]) : 1);
+        var end = addDays(start, duration);
+        var task = { name: name, id: id, status: status, start: start, end: end, duration: duration };
+        current.tasks.push(task);
+        byId[id] = task;
+        fallbackStart = end;
+      });
+      return { title: title, sections: sections };
+    }
+
+    function taskColor(task) {
+      if (task.status === 'done') return '#67b279';
+      if (task.status === 'active') return '#5b8def';
+      if (task.status === 'crit') return '#d96c75';
+      return '#8aa0b8';
+    }
+
+    function splitLabel(value, maxWidth, fontSize) {
+      var maxUnits = Math.max(2, Math.floor(maxWidth / Math.max(7, fontSize * 0.9)));
+      var chars = Array.prototype.slice.call(value || '');
+      var lines = [];
+      var line = '';
+      var units = 0;
+      chars.forEach(function (ch) {
+        var unit = /[A-Za-z0-9]/.test(ch) ? 0.58 : 1;
+        if (line && units + unit > maxUnits) {
+          lines.push(line);
+          line = ch;
+          units = unit;
+        } else {
+          line += ch;
+          units += unit;
+        }
+      });
+      if (line) lines.push(line);
+      if (lines.length > 3) lines = [lines[0], lines[1], lines.slice(2).join('')];
+      return lines;
+    }
+
+    function renderCustomGanttSvg(code, widthPx) {
+      var gantt = parseGantt(code);
+      var tasks = [];
+      gantt.sections.forEach(function (section) {
+        section.tasks.forEach(function (task) { tasks.push(task); });
+      });
+      if (!tasks.length) throw new Error('empty-gantt');
+      var minStart = tasks.reduce(function (min, task) { return task.start < min ? task.start : min; }, tasks[0].start);
+      var maxEnd = tasks.reduce(function (max, task) { return task.end > max ? task.end : max; }, tasks[0].end);
+      var totalDays = Math.max(1, daysBetween(minStart, maxEnd));
+      var left = 140;
+      var right = 80;
+      var minDayWidth = 28;
+      var chartWidth = Math.max(widthPx, left + right + totalDays * minDayWidth);
+      var dayWidth = (chartWidth - left - right) / totalDays;
+      var top = 76;
+      var rowH = 60;
+      var sectionH = 34;
+      var axisH = 58;
+      var height = top + axisH + gantt.sections.reduce(function (sum, section) {
+        return sum + (section.title ? sectionH : 0) + section.tasks.length * rowH;
+      }, 0) + 48;
+      var axisY = top;
+      var plotTop = top + axisH;
+      var plotBottom = height - 44;
+      var labelStep = Math.max(1, Math.ceil(54 / dayWidth));
+      var out = [];
+      out.push('<svg xmlns="http://www.w3.org/2000/svg" width="' + chartWidth + '" height="' + height + '" viewBox="0 0 ' + chartWidth + ' ' + height + '">');
+      out.push('<rect width="100%" height="100%" fill="#ffffff"/>');
+      out.push('<text x="' + (chartWidth / 2) + '" y="28" text-anchor="middle" font-size="18" font-weight="700" fill="#2e3440">' + escapeXml(gantt.title) + '</text>');
+      out.push('<line x1="' + left + '" y1="' + axisY + '" x2="' + (chartWidth - right) + '" y2="' + axisY + '" stroke="#4c566a" stroke-width="1.2"/>');
+      for (var d = 0; d <= totalDays; d++) {
+        var x = left + d * dayWidth;
+        var date = addDays(minStart, d);
+        out.push('<line x1="' + x.toFixed(1) + '" y1="' + axisY + '" x2="' + x.toFixed(1) + '" y2="' + plotBottom + '" stroke="#e5e9f0" stroke-width="0.8"/>');
+        if (d % labelStep === 0 || d === totalDays) {
+          out.push('<text x="' + x.toFixed(1) + '" y="' + (axisY + 22) + '" text-anchor="middle" font-size="11" fill="#4c566a">' + dateKey(date).substring(5) + '</text>');
+        }
+      }
+      var y = plotTop;
+      gantt.sections.forEach(function (section) {
+        if (section.title) {
+          out.push('<rect x="0" y="' + y + '" width="' + chartWidth + '" height="' + sectionH + '" fill="#f5f7fb"/>');
+          out.push('<text x="18" y="' + (y + sectionH / 2 + 1) + '" dominant-baseline="middle" font-size="13" font-weight="700" fill="#3b4252">' + escapeXml(section.title) + '</text>');
+          y += sectionH;
+        }
+        section.tasks.forEach(function (task) {
+          var startDay = daysBetween(minStart, task.start);
+          var endDay = Math.max(startDay + 1, daysBetween(minStart, task.end));
+          var x1 = left + startDay * dayWidth;
+          var x2 = left + endDay * dayWidth;
+          var barY = y + 6;
+          var barH = rowH - 12;
+          out.push('<line x1="' + left + '" y1="' + (y + rowH) + '" x2="' + (chartWidth - right) + '" y2="' + (y + rowH) + '" stroke="#edf1f7" stroke-width="1"/>');
+          out.push('<rect x="' + x1.toFixed(1) + '" y="' + barY + '" width="' + Math.max(8, x2 - x1).toFixed(1) + '" height="' + barH + '" rx="7" ry="7" fill="' + taskColor(task) + '"/>');
+          var lines = splitLabel(task.name, Math.max(20, x2 - x1 - 14), 12);
+          var lineH = 14;
+          var textY = barY + barH / 2 - ((lines.length - 1) * lineH) / 2 + 4;
+          lines.forEach(function (line, idx) {
+            out.push('<text x="' + ((x1 + x2) / 2).toFixed(1) + '" y="' + (textY + idx * lineH).toFixed(1) + '" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff">' + escapeXml(line) + '</text>');
+          });
+          y += rowH;
+        });
+      });
+      out.push('</svg>');
+      return { svg: out.join(''), width: chartWidth, height: height };
+    }
+
+    function notifyRendered() {
+      var host = document.getElementById('host');
+      var svg = host.querySelector('svg');
+      var h = measureSvgHeight();
+      if (svg && typeof AndroidDiagram.onRenderedSvg === 'function') {
+        AndroidDiagram.onRenderedSvg(currentRenderWidthPx(), h, encodeUtf8B64(svg.outerHTML));
+      } else {
+        AndroidDiagram.onRendered(currentRenderWidthPx(), h);
+      }
+    }
+
+    function renderDiagram() {
+      try {
+        if (typeof mermaid === 'undefined') {
+          AndroidDiagram.onError('mermaid-not-loaded');
+          return;
+        }
+        var b64 = AndroidDiagram.getSourceB64();
+        if (!b64) { AndroidDiagram.onError('empty'); return; }
+        var code = decodeSourceB64(b64);
+        var diagramKind = detectDiagramKind(code);
+        var widthPx = diagramRenderWidth(code, diagramKind, contentWidthPx());
+        window.__diagramRenderWidth = widthPx;
+        var host = document.getElementById('host');
+        host.innerHTML = '';
+        host.style.width = widthPx + 'px';
+        if (diagramKind === 'gantt') {
+          var custom = renderCustomGanttSvg(code, widthPx);
+          host.innerHTML = custom.svg;
+          window.__diagramRenderWidth = custom.width;
+          applyFullWidth(host.querySelector('svg'), custom.width);
+          setTimeout(notifyRendered, 40);
+          return;
+        }
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'loose',
+          theme: 'default',
+          themeVariables: {
+            fontSize: '16px',
+            fontFamily: 'sans-serif'
+          },
+          // WebView.draw(Canvas) 对 foreignObject/HTML label 的离屏截图容易错位；
+          // 使用纯 SVG 文本让 Mermaid 图在阅读器里更稳定。
+          flowchart: { htmlLabels: false, useMaxWidth: false },
+          sequence: { useMaxWidth: false, wrap: true },
+          gantt: {
+            useMaxWidth: false,
+            titleTopMargin: 18,
+            topPadding: 58,
+            leftPadding: 72,
+            gridLineStartPadding: 32,
+            barHeight: 26,
+            barGap: 12,
+            fontSize: 12,
+            sectionFontSize: 13
+          },
+          mindmap: { padding: 18, useMaxWidth: false }
+        });
+        var renderId = 'diagram-' + Date.now();
+        var onFail = function (e) {
+          AndroidDiagram.onError(String(e && e.message ? e.message : e));
+        };
+
+        function mountSvg(result) {
+          var svgMarkup = result && result.svg ? result.svg : result;
+          if (!svgMarkup) throw new Error('empty-svg');
+          host.innerHTML = svgMarkup;
+          if (result && typeof result.bindFunctions === 'function') {
+            result.bindFunctions(host);
+          }
+          var svg = host.querySelector('svg');
+          enhanceDiagramSvg(svg, diagramKind);
+          applyFullWidth(svg, widthPx);
+          requestAnimationFrame(function () {
+            requestAnimationFrame(function () {
+              setTimeout(notifyRendered, 120);
+            });
+          });
+        }
+
+        if (typeof mermaid.renderAsync === 'function') {
+          mermaid.renderAsync(renderId, code).then(mountSvg).catch(onFail);
+          return;
+        }
+        if (typeof mermaid.run === 'function') {
+          var pre = document.createElement('pre');
+          pre.className = 'mermaid';
+          pre.textContent = code;
+          host.appendChild(pre);
+          mermaid.run({ nodes: [pre], suppressErrors: false }).then(function () {
+            var svg = host.querySelector('svg');
+            enhanceDiagramSvg(svg, diagramKind);
+            applyFullWidth(svg, widthPx);
+            setTimeout(notifyRendered, 120);
+          }).catch(onFail);
+          return;
+        }
+        if (mermaid.mermaidAPI && typeof mermaid.mermaidAPI.render === 'function') {
+          mermaid.mermaidAPI.render(renderId, code, function (svgCode, bindFunctions) {
+            try {
+              host.innerHTML = svgCode;
+              if (typeof bindFunctions === 'function') bindFunctions(host);
+              var svg = host.querySelector('svg');
+              enhanceDiagramSvg(svg, diagramKind);
+              applyFullWidth(svg, widthPx);
+              setTimeout(notifyRendered, 120);
+            } catch (e) { onFail(e); }
+          });
+          return;
+        }
+        AndroidDiagram.onError('mermaid-api-missing');
+      } catch (e) {
+        AndroidDiagram.onError(String(e));
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="markdown_anchor_index" type="id" />
+    <item name="markdown_anchor_rendered" type="id" />
+    <item name="reader_markdown_render_complete" type="id" />
+</resources>

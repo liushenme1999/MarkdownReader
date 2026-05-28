@@ -40,9 +40,8 @@ object PdfReaderContent {
      * 返回 (片段, 在全文中的起始下标)。
      */
     fun splitToPages(body: String): List<Pair<String, Int>> {
-        val sanitized = sanitizeStoredBody(body)
-        val matches = PAGE_IMG_TAG.findAll(sanitized).toList()
-        if (matches.isEmpty()) return listOf(sanitized.trim() to 0)
+        val matches = pageImageMatches(sanitizeStoredBody(body))
+        if (matches.isEmpty()) return listOf(sanitizeStoredBody(body).trim() to 0)
         return matches.map { match ->
             match.value.trim() to match.range.first
         }
@@ -50,14 +49,26 @@ object PdfReaderContent {
 
     fun tocEntriesFromBody(body: String): List<ImportedTocEntry> {
         val sanitized = sanitizeStoredBody(body)
-        return PAGE_IMG_TAG.findAll(sanitized).mapIndexed { index, match ->
+        return pageImageMatches(sanitized).mapIndexed { index, match ->
             ImportedTocEntry(
                 level = 2,
                 title = "第 ${index + 1} 页",
                 sourceOffset = match.range.first,
             )
-        }.toList()
+        }
     }
+
+    /** 根据正文中的源码下标定位 PDF 页码（0-based），与 [tocEntriesFromBody] 顺序一致。 */
+    fun pageIndexForSourceOffset(body: String, sourceOffset: Int): Int {
+        val matches = pageImageMatches(sanitizeStoredBody(body))
+        if (matches.isEmpty()) return 0
+        return matches.indexOfLast { it.range.first <= sourceOffset }.coerceAtLeast(0)
+    }
+
+    fun pageCount(body: String): Int = pageImageMatches(sanitizeStoredBody(body)).count()
+
+    private fun pageImageMatches(sanitized: String) =
+        PAGE_IMG_TAG.findAll(sanitized).toList()
 
     private fun escapeAttr(s: String): String =
         s.replace("&", "&amp;")

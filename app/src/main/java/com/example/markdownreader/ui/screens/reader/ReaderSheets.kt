@@ -233,7 +233,7 @@ internal fun ReaderFontSheet(
 internal fun BookmarksSheet(
     bookmarks: List<com.example.markdownreader.data.local.entity.BookmarkEntity>,
     totalChars: Int,
-    onBookmarkClick: (Int) -> Unit,
+    onBookmarkClick: (com.example.markdownreader.data.local.entity.BookmarkEntity) -> Unit,
     onDeleteBookmark: (com.example.markdownreader.data.local.entity.BookmarkEntity) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -283,7 +283,7 @@ internal fun BookmarksSheet(
                         totalChars = totalChars,
                         revealedBookmarkId = revealedBookmarkId,
                         onRevealChange = { id -> revealedBookmarkId = id },
-                        onClick = { onBookmarkClick(bookmark.position) },
+                        onClick = { onBookmarkClick(bookmark) },
                         onDelete = {
                             onDeleteBookmark(bookmark)
                             if (revealedBookmarkId == bookmark.id) {

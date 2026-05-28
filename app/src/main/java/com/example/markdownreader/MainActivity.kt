@@ -1,5 +1,7 @@
 package com.example.markdownreader
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.MotionEvent
 import androidx.activity.ComponentActivity
@@ -20,8 +22,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,30 +31,25 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.markdownreader.intent.IncomingFileIntent
+import com.example.markdownreader.navigation.AppNavHost
 import com.example.markdownreader.navigation.AppRoutes
-import com.example.markdownreader.ui.screens.bookshelf.BookshelfScreen
-import com.example.markdownreader.ui.screens.notes.NotesScreen
-import com.example.markdownreader.ui.screens.profile.AppSettingsViewModel
-import com.example.markdownreader.ui.screens.profile.ProfileScreen
-import com.example.markdownreader.ui.screens.profile.ReadingSettingsScreen
-import com.example.markdownreader.ui.screens.reader.ReaderScreen
-import com.example.markdownreader.ui.screens.statistics.StatisticsScreen
+import com.example.markdownreader.navigation.MarkdownLinkNavigation
 import com.example.markdownreader.ui.components.CompactMainBottomBar
 import com.example.markdownreader.ui.components.CompactMainBottomNavItem
 import com.example.markdownreader.ui.components.ShelfStyleStatusBarBackdrop
 import com.example.markdownreader.ui.components.ShelfStyleStatusBarEffect
 import com.example.markdownreader.ui.components.shelfStylePageBackground
+import com.example.markdownreader.ui.screens.profile.AppSettingsViewModel
 import com.example.markdownreader.ui.theme.BookshelfPageBackground
 import com.example.markdownreader.ui.theme.BookshelfPageBackgroundDark
 import com.example.markdownreader.ui.theme.MarkdownReaderTheme
@@ -64,12 +61,6 @@ class MainActivity : ComponentActivity() {
 
     private val appSettingsViewModel: AppSettingsViewModel by viewModels()
 
-    /**
-     * MIUI 等机型在 Compose + AndroidView（阅读器 TextView）场景下会派发 HOVER 事件；
-     * 主线程略卡时易触发 [AndroidComposeView] 内部
-     * `IllegalStateException: The ACTION_HOVER_EXIT event was not cleared` 闪退。
-     * 在 Activity 层消费悬停类事件，不影响普通触摸滚动与点击。
-     */
     override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean {
         when (ev.actionMasked) {
             MotionEvent.ACTION_HOVER_ENTER,
@@ -79,8 +70,11 @@ class MainActivity : ComponentActivity() {
         return super.dispatchGenericMotionEvent(ev)
     }
 
+    private var pendingOpenUri by mutableStateOf<Uri?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingOpenUri = IncomingFileIntent.extractOpenableUri(intent)
         setContent {
             val themeMode by appSettingsViewModel.appThemeMode.collectAsStateWithLifecycle()
             val darkTheme = themeMode.resolveDarkTheme()
@@ -88,9 +82,18 @@ class MainActivity : ComponentActivity() {
             ApplySystemBarStyles(darkTheme = darkTheme)
 
             MarkdownReaderTheme(darkTheme = darkTheme) {
-                MainAppContent()
+                MainAppContent(
+                    pendingOpenUri = pendingOpenUri,
+                    onPendingOpenUriConsumed = { pendingOpenUri = null },
+                )
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingOpenUri = IncomingFileIntent.extractOpenableUri(intent)
     }
 }
 
@@ -119,8 +122,17 @@ private fun ApplySystemBarStyles(darkTheme: Boolean) {
 }
 
 @Composable
-private fun MainAppContent() {
+private fun MainAppContent(
+    pendingOpenUri: Uri? = null,
+    onPendingOpenUriConsumed: () -> Unit = {},
+) {
     val navController = rememberNavController()
+    DisposableEffect(navController) {
+        MarkdownLinkNavigation.setupNavigation(navController)
+        onDispose {
+            MarkdownLinkNavigation.cleanup()
+        }
+    }
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val shelfPageBg = shelfStylePageBackground()
@@ -198,38 +210,13 @@ private fun MainAppContent() {
                 } else {
                     PaddingValues()
                 }
-                NavHost(
+                AppNavHost(
                     navController = navController,
-                    startDestination = AppRoutes.BOOKSHELF,
                     modifier = Modifier.padding(navHostPadding),
-                ) {
-                    composable(AppRoutes.BOOKSHELF) {
-                        BookshelfScreen(
-                            navController = navController,
-                            onSelectionModeChange = { bookshelfHideBottomNav = it },
-                        )
-                    }
-                    composable(AppRoutes.PROFILE) {
-                        ProfileScreen(navController = navController)
-                    }
-                    composable(AppRoutes.READING_SETTINGS) {
-                        ReadingSettingsScreen(navController = navController)
-                    }
-                    composable(AppRoutes.READER) { backStackEntry ->
-                        val bookId =
-                            backStackEntry.arguments?.getString("bookId")?.toLongOrNull() ?: 0L
-                        ReaderScreen(
-                            navController = navController,
-                            bookId = bookId,
-                        )
-                    }
-                    composable(AppRoutes.NOTES) {
-                        NotesScreen(navController = navController)
-                    }
-                    composable(AppRoutes.STATISTICS) {
-                        StatisticsScreen(navController = navController)
-                    }
-                }
+                    pendingOpenUri = pendingOpenUri,
+                    onPendingExternalUriConsumed = onPendingOpenUriConsumed,
+                    onSelectionModeChange = { bookshelfHideBottomNav = it },
+                )
             }
             if (usesShelfStyleChrome) {
                 ShelfStyleStatusBarBackdrop(
@@ -241,7 +228,6 @@ private fun MainAppContent() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Preview(showBackground = true, name = "主导航底栏")
 @Composable
 private fun MainBottomNavigationPreview() {

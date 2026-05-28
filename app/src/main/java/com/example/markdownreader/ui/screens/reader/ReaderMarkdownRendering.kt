@@ -7,14 +7,20 @@ import android.text.Spannable
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.BackgroundColorSpan
+import android.graphics.Rect
 import android.view.ActionMode
+import android.view.HapticFeedbackConstants
 import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.ViewConfiguration
+import android.text.method.ArrowKeyMovementMethod
 import android.text.method.LinkMovementMethod
+import android.text.method.MovementMethod
+import android.text.style.ImageSpan
 import android.view.View
 import android.widget.TextView
+import io.noties.markwon.image.AsyncDrawableSpan
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -80,17 +86,13 @@ import com.example.markdownreader.model.ReaderPageTurnMode
 import com.example.markdownreader.ui.components.iconTintForDeleteStrip
 import com.example.markdownreader.ui.theme.MarkdownReaderTheme
 import com.example.markdownreader.ui.theme.ReadingTheme
+import com.example.markdownreader.R
+import com.example.markdownreader.markdown.DiagramImageLoader
+import com.example.markdownreader.markdown.NetworkImageCache
+import com.example.markdownreader.markdown.ReaderMarkwonFactory
+import java.io.File
 import io.noties.markwon.Markwon
-import io.noties.markwon.core.CorePlugin
 import io.noties.markwon.core.spans.HeadingSpan
-import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
-import io.noties.markwon.ext.tables.TablePlugin
-import io.noties.markwon.ext.latex.JLatexMathPlugin
-import io.noties.markwon.html.HtmlPlugin
-import io.noties.markwon.image.ImagesPlugin
-import io.noties.markwon.image.file.FileSchemeHandler
-import io.noties.markwon.inlineparser.MarkwonInlineParserPlugin
-import io.noties.markwon.linkify.LinkifyPlugin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -118,6 +120,17 @@ internal const val PLAIN_TEXT_PRECOMPUTE_THRESHOLD = 6000
 /** Markwon 渲染的"小内容"门槛：< 该长度直接主线程同步，避免线程切换开销让首屏更慢。 */
 internal const val MARKWON_BACKGROUND_RENDER_THRESHOLD = 4000
 
+internal fun readerRenderSignature(
+    content: String,
+    renderPlainText: Boolean,
+    themeName: String,
+    fontSize: Int,
+    highlights: List<HighlightEntity>,
+): String {
+    val hlKey = highlights.joinToString("|") { "${it.id}_${it.startPosition}_${it.endPosition}" }
+    return "${renderPlainText}_${content.length}_${content.hashCode()}_${themeName}_${fontSize}_$hlKey"
+}
+
 internal fun applyReaderTextContent(
     textView: TextView,
     content: String,
@@ -127,6 +140,7 @@ internal fun applyReaderTextContent(
     highlights: List<HighlightEntity>,
     highlightColorArgb: Int,
     pdfFullWidthImages: Boolean = false,
+    pdfCenterImageVertically: Boolean = false,
 ) {
     textView.setTag(TAG_READER_RENDER_SIG, renderSig)
     if (!renderPlainText) {
@@ -138,6 +152,7 @@ internal fun applyReaderTextContent(
             highlights = highlights,
             highlightColorArgb = highlightColorArgb,
             pdfFullWidthImages = pdfFullWidthImages,
+            pdfCenterImageVertically = pdfCenterImageVertically,
         )
         return
     }
@@ -166,27 +181,45 @@ internal fun applyMarkdownContent(
     highlights: List<HighlightEntity>,
     highlightColorArgb: Int,
     pdfFullWidthImages: Boolean = false,
+    pdfCenterImageVertically: Boolean = false,
 ) {
     fun finishMarkdownRender() {
+        textView.setTag(R.id.reader_markdown_render_complete, renderSig)
+        val anchorIndex = textView.getTag(R.id.markdown_anchor_index) as? com.example.markdownreader.markdown.MarkdownAnchorIndex
+        if (anchorIndex != null) {
+            textView.post { com.example.markdownreader.markdown.RenderedAnchorBinder.bind(textView, anchorIndex) }
+        }
         applyHighlightsToRenderedText(textView, highlights, highlightColorArgb)
         if (pdfFullWidthImages) {
-            PdfImageLayoutHelper.scheduleApplyFullWidth(textView)
+            if (pdfCenterImageVertically) {
+                PdfImageLayoutHelper.clearLayoutState(textView)
+            }
+            PdfImageLayoutHelper.scheduleApplyPdfPageLayout(
+                textView = textView,
+                centerVertically = pdfCenterImageVertically,
+            )
         }
     }
 
-    if (content.length <= MARKWON_BACKGROUND_RENDER_THRESHOLD) {
+    textView.setTag(R.id.reader_markdown_render_complete, null)
+    val prepared = ReaderMarkwonFactory.prepareMarkdown(content)
+    textView.setTag(R.id.markdown_anchor_index, prepared.anchorIndex)
+    val markdown = NetworkImageCache.rewriteCachedUrls(textView.context, prepared.text)
+    val hasDiagram = markdown.contains("diagram://")
+    if (markdown.length <= MARKWON_BACKGROUND_RENDER_THRESHOLD && !hasDiagram) {
         // 短文本同步走完，UI 首帧响应更直接
-        markwon.setMarkdown(textView, content)
+        markwon.setMarkdown(textView, markdown)
         finishMarkdownRender()
         return
     }
     // 长 Markdown：在后台线程做 CommonMark parse + Markwon render（产 Spanned），
     // 这一步通常 200~500ms（取决于内容长度与图片数）。主线程只剩 setText + measure。
     readerMarkwonRenderExecutor.execute {
-        val rendered: CharSequence = runCatching { markwon.toMarkdown(content) }
+        val rendered: CharSequence = runCatching { markwon.toMarkdown(markdown) }
             .getOrNull() ?: content
         textView.post {
             if (textView.getTag(TAG_READER_RENDER_SIG) != renderSig) return@post
+            textView.setTag(R.id.markdown_anchor_index, prepared.anchorIndex)
             // setParsedMarkdown 会在主线程上把 Spanned 应用到 TextView，并执行
             // Markwon 各插件的 `afterSetText`（如启动 AsyncDrawable 图片加载）。
             markwon.setParsedMarkdown(textView, rendered as? android.text.Spanned ?: android.text.SpannableString(rendered))
@@ -215,11 +248,14 @@ internal fun MarkdownReaderView(
     onSwipeRightBookmark: () -> Unit = {},
     onSwipeDownBookmark: (() -> Unit)? = null,
     onCenterTap: () -> Unit,
+    onDiagramTap: (android.graphics.Bitmap) -> Unit = {},
+    onReaderTextSelectionActiveChange: (Boolean) -> Unit = {},
     pdfFullWidthImages: Boolean = false,
 ) {
     val context = LocalContext.current
+    val pdfPagedLayout = pdfFullWidthImages && !allowVerticalScroll
     val markwon = remember(pdfFullWidthImages) {
-        if (pdfFullWidthImages) createPdfMarkwon(context) else createMarkwon(context)
+        ReaderMarkwonFactory.create(context)
     }
     val touchState = remember { ReaderTouchState() }
     val slop = ViewConfiguration.get(context).scaledTouchSlop
@@ -228,6 +264,10 @@ internal fun MarkdownReaderView(
         factory = { ctx ->
             SafeReaderTextView(ctx).apply {
                 this.allowVerticalScroll = allowVerticalScroll
+                if (pdfPagedLayout) {
+                    PdfImageLayoutHelper.applyPagedPdfTextGravity(this, centerVertically = true)
+                    includeFontPadding = false
+                }
                 movementMethod = LinkMovementMethod.getInstance()
                 setTextColor(theme.textColor.toArgb())
                 setBackgroundColor(theme.backgroundColor.toArgb())
@@ -239,9 +279,13 @@ internal fun MarkdownReaderView(
                 setPadding(padHPx, padTopPx, padHPx, padBottomPx)
                 setLineSpacing(0f, readerLineSpacingMultiplier)
 
-                val hlKey0 = highlights.joinToString("|") { "${it.id}_${it.startPosition}_${it.endPosition}" }
-                val sig0 =
-                    "${renderPlainText}_${content.length}_${content.hashCode()}_${theme::class.java.name}_${fontSize}_$hlKey0"
+                val sig0 = readerRenderSignature(
+                    content = content,
+                    renderPlainText = renderPlainText,
+                    themeName = theme::class.java.name,
+                    fontSize = fontSize,
+                    highlights = highlights,
+                )
                 applyReaderTextContent(
                     textView = this,
                     content = content,
@@ -251,36 +295,10 @@ internal fun MarkdownReaderView(
                     highlights = highlights,
                     highlightColorArgb = theme.highlightColor.toArgb(),
                     pdfFullWidthImages = pdfFullWidthImages,
+                    pdfCenterImageVertically = pdfPagedLayout,
                 )
 
-                customSelectionActionModeCallback = object : ActionMode.Callback {
-                    override fun onCreateActionMode(mode: ActionMode?, menu: Menu?): Boolean {
-                        return true
-                    }
-
-                    override fun onPrepareActionMode(mode: ActionMode?, menu: Menu?): Boolean {
-                        return false
-                    }
-
-                    override fun onActionItemClicked(mode: ActionMode?, item: MenuItem?): Boolean {
-                        return false
-                    }
-
-                    override fun onDestroyActionMode(mode: ActionMode?) {
-                        val start = selectionStart
-                        val end = selectionEnd
-                        val len = text.length
-                        if (start >= 0 && end >= 0 && len > 0) {
-                            val from = start.coerceAtMost(end).coerceIn(0, len)
-                            val to = start.coerceAtLeast(end).coerceIn(0, len)
-                            if (from < to) {
-                                onTextSelected(text.substring(from, to))
-                            }
-                        }
-                        exitSelectionMode()
-                    }
-                }
-
+                this.onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange
                 bindReaderGesturesAndScroll(
                     textView = this,
                     touchState = touchState,
@@ -290,14 +308,15 @@ internal fun MarkdownReaderView(
                     onReadingVerticalScroll = onReadingVerticalScroll,
                     onSwipeRightBookmark = onSwipeRightBookmark,
                     onSwipeDownBookmark = onSwipeDownBookmark,
-                    onCenterTap = onCenterTap
+                    onCenterTap = onCenterTap,
+                    onDiagramTap = onDiagramTap,
                 )
                 post { onViewReady(this) }
             }
         },
         update = { textView ->
-            (textView as? SafeReaderTextView)?.allowVerticalScroll = allowVerticalScroll
-            textView.movementMethod = LinkMovementMethod.getInstance()
+            textView.allowVerticalScroll = allowVerticalScroll
+            textView.onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange
             textView.setTextColor(theme.textColor.toArgb())
             textView.setBackgroundColor(theme.backgroundColor.toArgb())
             textView.textSize = fontSize.toFloat()
@@ -305,14 +324,32 @@ internal fun MarkdownReaderView(
             val padHPx = (readerPaddingHorizontalDp * density).toInt().coerceAtLeast(0)
             val padBottomPx = (readerPaddingDp * density).toInt().coerceAtLeast(0)
             val padTopPx = (readerPaddingTopDp * density).toInt().coerceAtLeast(0)
-            textView.setPadding(padHPx, padTopPx, padHPx, padBottomPx)
-            textView.setLineSpacing(0f, readerLineSpacingMultiplier)
-
-            val hlKey = highlights.joinToString("|") { "${it.id}_${it.startPosition}_${it.endPosition}" }
-            val renderSig =
-                "${renderPlainText}_${content.length}_${content.hashCode()}_${theme::class.java.name}_${fontSize}_$hlKey"
+            val renderSig = readerRenderSignature(
+                content = content,
+                renderPlainText = renderPlainText,
+                themeName = theme::class.java.name,
+                fontSize = fontSize,
+                highlights = highlights,
+            )
             val prevSig = textView.getTag(TAG_READER_RENDER_SIG) as? String
-            if (prevSig != renderSig) {
+            val contentChanged = prevSig != renderSig
+            if (contentChanged) {
+                if (pdfPagedLayout) {
+                    PdfImageLayoutHelper.clearLayoutState(textView)
+                }
+                textView.setPadding(padHPx, padTopPx, padHPx, padBottomPx)
+            } else if (pdfPagedLayout) {
+                textView.setPadding(padHPx, textView.paddingTop, padHPx, padBottomPx)
+            } else {
+                textView.setPadding(padHPx, padTopPx, padHPx, padBottomPx)
+            }
+            textView.setLineSpacing(0f, readerLineSpacingMultiplier)
+            if (pdfPagedLayout) {
+                PdfImageLayoutHelper.applyPagedPdfTextGravity(textView, centerVertically = true)
+                textView.includeFontPadding = false
+            }
+
+            if (contentChanged) {
                 applyReaderTextContent(
                     textView = textView,
                     content = content,
@@ -322,6 +359,7 @@ internal fun MarkdownReaderView(
                     highlights = highlights,
                     highlightColorArgb = theme.highlightColor.toArgb(),
                     pdfFullWidthImages = pdfFullWidthImages,
+                    pdfCenterImageVertically = pdfPagedLayout,
                 )
             }
 
@@ -334,10 +372,22 @@ internal fun MarkdownReaderView(
                 onReadingVerticalScroll = onReadingVerticalScroll,
                 onSwipeRightBookmark = onSwipeRightBookmark,
                 onSwipeDownBookmark = onSwipeDownBookmark,
-                onCenterTap = onCenterTap
+                onCenterTap = onCenterTap,
+                onDiagramTap = onDiagramTap,
             )
+            if (pdfPagedLayout && textView.text?.isNotEmpty() == true) {
+                PdfImageLayoutHelper.scheduleApplyPdfPageLayout(
+                    textView = textView,
+                    centerVertically = true,
+                )
+            }
             if (!allowVerticalScroll) {
-                textView.scrollTo(0, 0)
+                textView.post {
+                    textView.scrollTo(0, 0)
+                    if (pdfPagedLayout) {
+                        PdfImageLayoutHelper.applyPdfPageLayout(textView)
+                    }
+                }
             }
             textView.post { onViewReady(textView) }
         },
@@ -348,8 +398,19 @@ internal fun MarkdownReaderView(
 internal class ReaderTouchState(
     var downX: Float = 0f,
     var downY: Float = 0f,
-    var scrollYOnDown: Int = 0
+    var scrollYOnDown: Int = 0,
+    /** 本次触摸开始时已有选区，或划词过程中出现选区 → 禁用滑动加书签 */
+    var blockBookmarkSwipeGesture: Boolean = false,
 )
+
+/** 当前是否处于文本选区（含 SafeReaderTextView 会话与 Spannable 选区）。 */
+internal fun TextView.hasActiveReaderTextSelection(): Boolean {
+    (this as? SafeReaderTextView)?.let { return it.isInTextSelection() }
+    val spannable = text as? Spannable ?: return false
+    val start = Selection.getSelectionStart(spannable)
+    val end = Selection.getSelectionEnd(spannable)
+    return start >= 0 && end >= 0 && start != end
+}
 
 internal fun bindReaderGesturesAndScroll(
     textView: TextView,
@@ -360,7 +421,8 @@ internal fun bindReaderGesturesAndScroll(
     onReadingVerticalScroll: (verticalScrollDeltaPx: Int) -> Unit,
     onSwipeRightBookmark: () -> Unit,
     onSwipeDownBookmark: (() -> Unit)? = null,
-    onCenterTap: () -> Unit
+    onCenterTap: () -> Unit,
+    onDiagramTap: (android.graphics.Bitmap) -> Unit = {},
 ) {
     textView.setOnScrollChangeListener { v, _, scrollY, _, oldScrollY ->
         if (!allowVerticalScroll) return@setOnScrollChangeListener
@@ -368,17 +430,7 @@ internal fun bindReaderGesturesAndScroll(
             onReadingVerticalScroll(kotlin.math.abs(scrollY - oldScrollY))
         }
         val tv = v as? TextView ?: return@setOnScrollChangeListener
-        val layout = tv.layout ?: return@setOnScrollChangeListener
-        val innerH = tv.height - tv.paddingTop - tv.paddingBottom
-        if (innerH <= 0) return@setOnScrollChangeListener
-        val total = layout.height
-        if (total <= innerH) {
-            onScroll(0f)
-            return@setOnScrollChangeListener
-        }
-        val maxScroll = (total - innerH).coerceAtLeast(1)
-        val safeY = scrollY.coerceIn(0, maxScroll)
-        onScroll((safeY / maxScroll.toFloat()).coerceIn(0f, 1f))
+        onScroll(localCharProgressAtScrollTop(tv))
     }
 
     textView.setOnTouchListener { v, e ->
@@ -388,18 +440,25 @@ internal fun bindReaderGesturesAndScroll(
                 touchState.downX = e.x
                 touchState.downY = e.y
                 touchState.scrollYOnDown = tv?.scrollY ?: 0
-                (tv as? SafeReaderTextView)?.prepareForNewTouch()
-                if (!allowVerticalScroll) {
+                touchState.blockBookmarkSwipeGesture = tv?.hasActiveReaderTextSelection() == true
+                (tv as? SafeReaderTextView)?.prepareForNewTouch(e.x, e.y)
+                if (tv is SafeReaderTextView && tv.isInTextSelection()) {
+                    v.parent?.requestDisallowInterceptTouchEvent(true)
+                } else if (!allowVerticalScroll) {
                     v.parent?.requestDisallowInterceptTouchEvent(false)
                 }
             }
             MotionEvent.ACTION_MOVE -> {
+                if (tv?.hasActiveReaderTextSelection() == true) {
+                    touchState.blockBookmarkSwipeGesture = true
+                }
+                if (tv is SafeReaderTextView && tv.isInTextSelection()) {
+                    return@setOnTouchListener false
+                }
                 if (allowVerticalScroll && tv is SafeReaderTextView) {
                     val dx = e.x - touchState.downX
                     val dy = e.y - touchState.downY
-                    if (kotlin.math.abs(dy) > slop && kotlin.math.abs(dy) > kotlin.math.abs(dx)) {
-                        tv.markVerticalScrollDrag()
-                    }
+                    tv.tryMarkVerticalScrollDrag(dx, dy)
                 }
                 if (!allowVerticalScroll && tv != null) {
                     val dx = e.x - touchState.downX
@@ -423,12 +482,25 @@ internal fun bindReaderGesturesAndScroll(
                 if (!allowVerticalScroll) {
                     v.parent?.requestDisallowInterceptTouchEvent(false)
                 }
+                val blockBookmarkSwipe = touchState.blockBookmarkSwipeGesture ||
+                    tv?.hasActiveReaderTextSelection() == true
+                touchState.blockBookmarkSwipeGesture = false
                 if (e.actionMasked != MotionEvent.ACTION_UP) return@setOnTouchListener false
+                // 划词/选区期间跳过中心点击与滑动加书签
+                if (tv is SafeReaderTextView && tv.isInTextSelection()) {
+                    return@setOnTouchListener false
+                }
                 val dx = e.x - touchState.downX
                 val dy = e.y - touchState.downY
                 val adx = kotlin.math.abs(dx)
                 val ady = kotlin.math.abs(dy)
                 if (adx < slop && ady < slop) {
+                    val diagramBitmap = (tv as? SafeReaderTextView)
+                        ?.diagramBitmapAt(touchState.downX, touchState.downY)
+                    if (diagramBitmap != null) {
+                        onDiagramTap(diagramBitmap)
+                        return@setOnTouchListener true
+                    }
                     val w = v.width.toFloat()
                     val h = v.height.toFloat()
                     if (w > 0f && h > 0f &&
@@ -437,9 +509,9 @@ internal fun bindReaderGesturesAndScroll(
                     ) {
                         onCenterTap()
                     }
-                } else if (allowVerticalScroll && dx > 120f && dx > ady * 2f) {
+                } else if (!blockBookmarkSwipe && allowVerticalScroll && dx > 120f && dx > ady * 2f) {
                     onSwipeRightBookmark()
-                } else if (onSwipeDownBookmark != null &&
+                } else if (!blockBookmarkSwipe && onSwipeDownBookmark != null &&
                     dy > 120f &&
                     dy > adx * 2f &&
                     (!allowVerticalScroll ||
@@ -482,106 +554,336 @@ internal fun previewPlainTextFromTextViewTop(tv: TextView): String {
 }
 
 /**
- * 阅读器 TextView：默认不可拖选，**仅长按**进入选词；纵向滑动时主动取消误触发的选区。
- *
- * 另吞掉 MIUI 等机型上 `Editor.performLongClick` / `ArrowKeyMovementMethod` 的已知 NPE、越界。
+ * 阅读器 TextView：默认链接可点；长按走系统选词 + 空 ActionMode（不建复制/全选菜单）。
+ * 划词期间抑制扩窗/进度副作用；有选区时禁用滑动加书签；通知外层隐藏顶栏。
  */
 internal class SafeReaderTextView(context: Context) : TextView(context) {
-    /** 分页翻页模式下为 false：禁止上下滚动，仅由 HorizontalPager 横向翻页 */
     var allowVerticalScroll: Boolean = true
+    var onReaderTextSelectionActiveChange: ((Boolean) -> Unit)? = null
+
+    /** 引用计数：多个并发异步渲染各自递增，仅全部完成后才解除抑制。 */
+    private var suppressScrollRefCount: Int = 0
+    val suppressReaderScrollSideEffects: Boolean
+        get() = suppressScrollRefCount > 0
+    var allowReaderScrollSideEffects: Boolean = false
+        private set
 
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private val scrollDragSlop = touchSlop * 3
+    /** 略早于系统长按阈值（约 400ms）启用 selectable，避免 Editor.checkField 失败。 */
+    private val longPressPrepDelayMs = 350L
     private var touchDownX = 0f
     private var touchDownY = 0f
-    /** 当前手势是否为上下滑动（超过 slop 的纵向位移） */
+    private var lastTouchX = 0f
+    private var lastTouchY = 0f
     private var isVerticalScrollDrag = false
-    private var activeActionMode: ActionMode? = null
+    /** 本次触摸落在 Mermaid/图表 span 上，整段手势内禁止扩窗。 */
+    private var gestureOnDiagram = false
+    /** 每次手指按下只允许触发一次扩窗，避免连续扩到全书末尾。 */
+    private var windowExpandConsumedThisGesture = false
+    private var selectionActive = false
+    private var savedSelStart = -1
+    private var savedSelEnd = -1
+    private var readerSelectionActionMode: ActionMode? = null
+    /** 防止 performLongClick ↔ super.performLongClick 互相回调造成栈溢出。 */
+    private var delegatingLongClick = false
+    /** DOWN 在选区外时先标记，UP 仍为轻微点击且仍在选区外才真正清除（避免句柄 DOWN 被误杀）。 */
+    private var pendingOutsideTapDismiss = false
+    /** 长按预备是否已递增 suppressScrollRefCount（配对递减）。 */
+    private var longPressPrepIncremented = false
+    /** 划词选区是否已递增 suppressScrollRefCount（配对递减）。 */
+    private var selectionIncrementedSuppress = false
+
+    private val prepForLongPressSelection = Runnable {
+        if (isVerticalScrollDrag || selectionActive) return@Runnable
+        val offset = touchOffsetToCharOffset(lastTouchX, lastTouchY) ?: return@Runnable
+        if (!canSelectAtOffset(offset)) return@Runnable
+        suppressScrollRefCount++
+        longPressPrepIncremented = true
+        ensureSelectionInteractionMode()
+        requestFocusFromTouch()
+    }
+
+    private val linkMovement = LinkMovementMethod.getInstance()
+    private val selectionMovement = ArrowKeyMovementMethod.getInstance()
+
+    private val emptySelectionActionMode = object : ActionMode.Callback {
+        override fun onCreateActionMode(mode: ActionMode?, menu: Menu?) =
+            true.also {
+                menu?.clear()
+                readerSelectionActionMode = mode
+            }
+        override fun onPrepareActionMode(mode: ActionMode?, menu: Menu?) = false
+        override fun onActionItemClicked(mode: ActionMode?, item: MenuItem?) = false
+        override fun onDestroyActionMode(mode: ActionMode?) {
+            if (readerSelectionActionMode == mode) readerSelectionActionMode = null
+        }
+    }
 
     init {
-        // 默认关闭：避免滑动时系统 Editor 误开选区；长按前再临时打开。
         setTextIsSelectable(false)
-        movementMethod = LinkMovementMethod.getInstance()
+        movementMethod = linkMovement
         isVerticalScrollBarEnabled = false
         isLongClickable = true
+        isFocusable = true
+        isFocusableInTouchMode = true
+        customSelectionActionModeCallback = emptySelectionActionMode
     }
 
-    /** 新一次触摸开始：收起上一轮选区，避免滑动时拖着旧选区走。 */
-    fun prepareForNewTouch() {
+    fun shouldSuppressReaderScrollSideEffects(): Boolean =
+        suppressReaderScrollSideEffects || selectionActive
+
+    /** 用户手指正在纵向拖动滚动（用于区分布局重排触发的 scroll 变化）。 */
+    fun isUserVerticalScrollDrag(): Boolean = isVerticalScrollDrag
+
+    /** 本次手势是否从 diagram 区域开始（扩窗应忽略）。 */
+    fun isGestureOnDiagram(): Boolean = gestureOnDiagram
+
+    fun diagramBitmapAt(x: Float, y: Float): android.graphics.Bitmap? {
+        return DiagramImageLoader.cachedBitmapForDestination(diagramDestinationAt(x, y))
+    }
+
+    /** 每次 DOWN 仅允许一次扩窗；返回 false 表示本手势已扩过窗。 */
+    fun consumeWindowExpandThisGesture(): Boolean {
+        if (windowExpandConsumedThisGesture) return false
+        windowExpandConsumedThisGesture = true
+        return true
+    }
+
+    /** diagram 等异步改行高时临时抑制扩窗/进度副作用。 */
+    fun runSuppressingScrollSideEffects(block: () -> Unit) {
+        suppressScrollRefCount++
+        try {
+            block()
+        } finally {
+            suppressScrollRefCount--
+        }
+    }
+
+    /** 开始异步抑制（跨 requestLayout → post 周期），配对 [endAsyncScrollSuppression]。 */
+    fun beginAsyncScrollSuppression() {
+        suppressScrollRefCount++
+    }
+
+    /** 结束异步抑制。 */
+    fun endAsyncScrollSuppression() {
+        suppressScrollRefCount = (suppressScrollRefCount - 1).coerceAtLeast(0)
+    }
+
+    /** 划词会话进行中（含拖句柄），不要求 Spannable 此刻仍有有效 range。 */
+    fun isInTextSelection(): Boolean = selectionActive
+
+    fun hasVisibleTextSelection(): Boolean = selectionActive && hasSelectionRange()
+
+    fun prepareForNewTouch(x: Float, y: Float) {
         isVerticalScrollDrag = false
-        exitSelectionMode()
+        windowExpandConsumedThisGesture = false
+        gestureOnDiagram = isTouchOnDiagramSpan(x, y)
+        allowReaderScrollSideEffects = false
+        removeCallbacks(prepForLongPressSelection)
+        if (selectionActive) {
+            pendingOutsideTapDismiss = !isTouchNearSelection(x, y)
+        } else {
+            pendingOutsideTapDismiss = false
+        }
     }
 
-    /** 由外层手势层或本 View 在判定为纵向滑动时调用。 */
     fun markVerticalScrollDrag() {
-        if (!isVerticalScrollDrag) {
-            isVerticalScrollDrag = true
-            exitSelectionMode()
-        }
+        if (selectionActive) return
+        cancelLongPressPrepForScroll()
+        allowReaderScrollSideEffects = true
+        isVerticalScrollDrag = true
     }
 
-    /** 结束选词模式并关闭 ActionMode（划线面板依赖 onDestroyActionMode 回调）。 */
-    fun exitSelectionMode() {
-        activeActionMode?.finish()
-        activeActionMode = null
-        setTextIsSelectable(false)
-        val spannable = text
-        if (spannable is Spannable) {
-            val selStart = Selection.getSelectionStart(spannable)
-            val selEnd = Selection.getSelectionEnd(spannable)
-            if (selStart >= 0 && selEnd >= 0 && selStart != selEnd) {
-                val collapsed = selEnd.coerceIn(0, spannable.length)
-                Selection.setSelection(spannable, collapsed, collapsed)
+    /** 识别为纵向滚动：取消长按预备，恢复链接模式，允许扩窗/进度副作用。 */
+    private fun cancelLongPressPrepForScroll() {
+        removeCallbacks(prepForLongPressSelection)
+        if (!selectionActive && !hasSelectionRange()) {
+            if (longPressPrepIncremented) {
+                suppressScrollRefCount = (suppressScrollRefCount - 1).coerceAtLeast(0)
+                longPressPrepIncremented = false
             }
+            setTextIsSelectable(false)
+            movementMethod = linkMovement
         }
     }
 
-    override fun startActionMode(callback: ActionMode.Callback): ActionMode? {
-        val mode = super.startActionMode(callback)
-        activeActionMode = mode
-        return mode
+    internal fun tryMarkVerticalScrollDrag(dx: Float, dy: Float): Boolean {
+        if (!allowVerticalScroll || selectionActive) return false
+        if (kotlin.math.abs(dy) <= scrollDragSlop || kotlin.math.abs(dy) <= kotlin.math.abs(dx)) {
+            return false
+        }
+        markVerticalScrollDrag()
+        return true
     }
 
-    override fun startActionMode(callback: ActionMode.Callback?, type: Int): ActionMode? {
-        val mode = super.startActionMode(callback, type)
-        activeActionMode = mode
-        return mode
+    fun dismissSelection() {
+        if (!selectionActive) {
+            resetSelectionUiOnly()
+            return
+        }
+        setSelectionActive(false)
+        resetSelectionUiOnly()
+    }
+
+    /** 单元测试：同步 Spannable 选区到阅读器划词状态。 */
+    internal fun applySelectionRangeForTest(start: Int, end: Int) {
+        ensureSelectionInteractionMode()
+        (text as? Spannable)?.let { Selection.setSelection(it, start, end) }
+        onSelectionChanged(start, end)
+    }
+
+    private fun setSelectionActive(active: Boolean) {
+        if (selectionActive == active) return
+        selectionActive = active
+        post { onReaderTextSelectionActiveChange?.invoke(active) }
+    }
+
+    private fun resetSelectionUiOnly() {
+        savedSelStart = -1
+        savedSelEnd = -1
+        pendingOutsideTapDismiss = false
+        if (selectionIncrementedSuppress) {
+            suppressScrollRefCount = (suppressScrollRefCount - 1).coerceAtLeast(0)
+            selectionIncrementedSuppress = false
+        }
+        allowReaderScrollSideEffects = false
+        readerSelectionActionMode?.finish()
+        readerSelectionActionMode = null
+        setTextIsSelectable(false)
+        movementMethod = linkMovement
+        (text as? Spannable)?.let { Selection.removeSelection(it) }
+        parent?.requestDisallowInterceptTouchEvent(false)
+    }
+
+    private fun restoreSavedSelectionRange() {
+        val spannable = text as? Spannable ?: return
+        if (savedSelStart < 0 || savedSelEnd <= savedSelStart) return
+        val start = savedSelStart.coerceIn(0, spannable.length)
+        val end = savedSelEnd.coerceIn(0, spannable.length)
+        if (start < end) {
+            Selection.setSelection(spannable, start, end)
+        }
+    }
+
+    private fun revertToLinkModeIfIdle() {
+        if (selectionActive || hasSelectionRange()) return
+        setTextIsSelectable(false)
+        movementMethod = linkMovement
+    }
+
+    /** 仅拦截图片/图表上的长按，其余完全交给 Editor 原生划词流程（含句柄）。 */
+    private fun allowLongPressSelectionAt(x: Float, y: Float): Boolean {
+        val offset = touchOffsetToCharOffset(x, y) ?: return false
+        return canSelectAtOffset(offset)
+    }
+
+    private fun ensureSelectionPreparedForLongPress() {
+        removeCallbacks(prepForLongPressSelection)
+        prepForLongPressSelection.run()
     }
 
     override fun canScrollVertically(direction: Int): Boolean =
         allowVerticalScroll && super.canScrollVertically(direction)
 
     override fun scrollTo(x: Int, y: Int) {
-        if (allowVerticalScroll) {
-            super.scrollTo(x, y)
-        } else {
-            super.scrollTo(x, 0)
-        }
+        if (allowVerticalScroll) super.scrollTo(x, y) else super.scrollTo(x, 0)
     }
 
     override fun performLongClick(): Boolean {
-        if (isVerticalScrollDrag) return false
-        return performLongClickForSelection()
+        if (delegatingLongClick) return super.performLongClick()
+        if (!allowLongPressSelectionAt(lastTouchX, lastTouchY)) return false
+        isVerticalScrollDrag = false
+        ensureSelectionPreparedForLongPress()
+        delegatingLongClick = true
+        return try {
+            super.performLongClick()
+        } finally {
+            delegatingLongClick = false
+        }
     }
 
     override fun performLongClick(x: Float, y: Float): Boolean {
-        if (isVerticalScrollDrag) return false
-        return performLongClickForSelection(x, y)
+        if (delegatingLongClick) return super.performLongClick(x, y)
+        if (!allowLongPressSelectionAt(x, y)) return false
+        isVerticalScrollDrag = false
+        ensureSelectionPreparedForLongPress()
+        delegatingLongClick = true
+        return try {
+            super.performLongClick(x, y)
+        } finally {
+            delegatingLongClick = false
+        }
     }
 
-    private fun performLongClickForSelection(x: Float? = null, y: Float? = null): Boolean = try {
+    private fun hasSelectionRange(): Boolean {
+        val spannable = text as? Spannable ?: return false
+        val start = Selection.getSelectionStart(spannable)
+        val end = Selection.getSelectionEnd(spannable)
+        return start >= 0 && end >= 0 && start != end
+    }
+
+    private fun isTouchNearSelection(x: Float, y: Float): Boolean =
+        ReaderTextSelectionTouch.isTouchNearSelectionOnTextView(this, x, y)
+
+    private fun ensureSelectionInteractionMode() {
+        movementMethod = selectionMovement
         setTextIsSelectable(true)
-        val ok = if (x != null && y != null) {
-            super.performLongClick(x, y)
-        } else {
-            super.performLongClick()
+    }
+
+    private fun shouldDismissSelectionOnOutsideTap(): Boolean {
+        if (!pendingOutsideTapDismiss || !selectionActive) return false
+        val dx = kotlin.math.abs(lastTouchX - touchDownX)
+        val dy = kotlin.math.abs(lastTouchY - touchDownY)
+        if (dx > touchSlop || dy > touchSlop) return false
+        return !isTouchNearSelection(lastTouchX, lastTouchY)
+    }
+
+    private fun dismissSelectionOnOutsideTapIfNeeded() {
+        if (shouldDismissSelectionOnOutsideTap()) {
+            dismissSelection()
         }
-        if (!ok) {
-            setTextIsSelectable(false)
+    }
+
+    private fun touchOffsetToCharOffset(x: Float, y: Float): Int? {
+        val len = text?.length ?: 0
+        if (len == 0 || layout == null) return null
+        return getOffsetForPosition(x, y).coerceIn(0, len)
+    }
+
+    private fun canSelectAtOffset(offset: Int): Boolean {
+        val spannable = text as? Spanned ?: return true
+        if (spannable.isEmpty()) return false
+        val check = offset.coerceIn(0, spannable.length - 1)
+        return spannable.getSpans(check, check + 1, Any::class.java).none {
+            it is AsyncDrawableSpan || it is ImageSpan
         }
-        ok
-    } catch (_: NullPointerException) {
-        setTextIsSelectable(false)
-        false
+    }
+
+    private fun isTouchOnDiagramSpan(x: Float, y: Float): Boolean {
+        return diagramDestinationAt(x, y) != null
+    }
+
+    private fun diagramDestinationAt(x: Float, y: Float): String? {
+        val layout = layout ?: return null
+        val spanned = text as? Spanned ?: return null
+        if (spanned.isEmpty()) return null
+        val contentX = x - totalPaddingLeft
+        if (contentX < 0f || contentX > (width - totalPaddingLeft - totalPaddingRight)) return null
+        val contentY = (y + scrollY - totalPaddingTop).toInt().coerceAtLeast(0)
+        val line = layout.getLineForVertical(contentY).coerceIn(0, layout.lineCount - 1)
+        val lineStart = layout.getLineStart(line).coerceIn(0, spanned.length)
+        val lineEnd = layout.getLineEnd(line).coerceIn(lineStart, spanned.length)
+        val spans = spanned.getSpans(lineStart, lineEnd, AsyncDrawableSpan::class.java)
+        for (span in spans) {
+            val spanStart = spanned.getSpanStart(span)
+            val spanEnd = spanned.getSpanEnd(span)
+            if (spanStart < lineEnd && spanEnd > lineStart) {
+                val destination = span.drawable.destination
+                if (destination.startsWith("diagram://")) return destination
+            }
+        }
+        return null
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -589,68 +891,94 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             MotionEvent.ACTION_DOWN -> {
                 touchDownX = event.x
                 touchDownY = event.y
+                lastTouchX = event.x
+                lastTouchY = event.y
                 isVerticalScrollDrag = false
-            }
-            MotionEvent.ACTION_MOVE -> {
-                if (allowVerticalScroll) {
-                    val dx = kotlin.math.abs(event.x - touchDownX)
-                    val dy = kotlin.math.abs(event.y - touchDownY)
-                    if (dy > touchSlop && dy > dx) {
-                        markVerticalScrollDrag()
-                    }
+                windowExpandConsumedThisGesture = false
+                gestureOnDiagram = isTouchOnDiagramSpan(event.x, event.y)
+                removeCallbacks(prepForLongPressSelection)
+                if (selectionActive) {
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    pendingOutsideTapDismiss = !isTouchNearSelection(event.x, event.y)
+                } else {
+                    parent?.requestDisallowInterceptTouchEvent(false)
+                    postDelayed(prepForLongPressSelection, longPressPrepDelayMs)
                 }
             }
+            MotionEvent.ACTION_MOVE -> {
+                lastTouchX = event.x
+                lastTouchY = event.y
+                if (selectionActive && isTouchNearSelection(event.x, event.y)) {
+                    pendingOutsideTapDismiss = false
+                }
+                tryMarkVerticalScrollDrag(event.x - touchDownX, event.y - touchDownY)
+            }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                isVerticalScrollDrag = false
+                lastTouchX = event.x
+                lastTouchY = event.y
+                removeCallbacks(prepForLongPressSelection)
             }
         }
-        return dispatchReaderTouchEvent(event)
+        val outsideTapDismiss = event.actionMasked == MotionEvent.ACTION_UP &&
+            shouldDismissSelectionOnOutsideTap()
+        if (event.actionMasked == MotionEvent.ACTION_UP) {
+            pendingOutsideTapDismiss = false
+            dismissSelectionOnOutsideTapIfNeeded()
+        }
+        val handled = try {
+            super.onTouchEvent(event)
+        } catch (_: NullPointerException) {
+            false
+        } catch (_: IndexOutOfBoundsException) {
+            false
+        }
+        if (event.actionMasked == MotionEvent.ACTION_UP) {
+            isVerticalScrollDrag = false
+            gestureOnDiagram = false
+            if (!selectionActive) {
+                allowReaderScrollSideEffects = false
+            }
+            if (outsideTapDismiss) {
+                dismissSelection()
+            }
+            if (selectionActive && !hasSelectionRange()) {
+                restoreSavedSelectionRange()
+            }
+            if (selectionActive) {
+                ensureSelectionInteractionMode()
+                parent?.requestDisallowInterceptTouchEvent(true)
+            } else {
+                parent?.requestDisallowInterceptTouchEvent(false)
+                revertToLinkModeIfIdle()
+            }
+        }
+        return handled
     }
 
-    private fun dispatchReaderTouchEvent(event: MotionEvent): Boolean = try {
-        if (!allowVerticalScroll) {
-            val spannable = text as? Spannable
-            movementMethod?.onTouchEvent(this, spannable, event) == true
-        } else {
-            super.onTouchEvent(event)
+    override fun onSelectionChanged(selStart: Int, selEnd: Int) {
+        super.onSelectionChanged(selStart, selEnd)
+        if (selStart >= 0 && selEnd >= 0 && selStart != selEnd) {
+            savedSelStart = minOf(selStart, selEnd)
+            savedSelEnd = maxOf(selStart, selEnd)
+            ensureSelectionInteractionMode()
+            if (!selectionActive) {
+                setSelectionActive(true)
+                suppressScrollRefCount++
+                selectionIncrementedSuppress = true
+                parent?.requestDisallowInterceptTouchEvent(true)
+                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            }
         }
-    } catch (_: NullPointerException) {
-        false
-    } catch (_: IndexOutOfBoundsException) {
-        false
     }
+
+    private companion object
 }
+
+/** @see ReaderMarkwonFactory */
+internal fun createMarkwon(context: Context): Markwon = ReaderMarkwonFactory.create(context)
 
 /** PDF 阅读：与默认配置相同，渲染后由 [PdfImageLayoutHelper] 将页图拉满内容区宽度。 */
-internal fun createPdfMarkwon(context: Context): Markwon = createMarkwon(context)
-
-internal fun createMarkwon(context: Context): Markwon {
-    return Markwon.builder(context)
-        .usePlugin(CorePlugin.create())
-        // JLatexMathPlugin 启用 inline `$...$` 模式后会 require 这个插件；
-        // 同时它的 commonmark inline parser 会替换 CorePlugin 默认的解析器，
-        // 让 `$...$` 不再被当作普通文本拆分。
-        .usePlugin(MarkwonInlineParserPlugin.create())
-        .usePlugin(HtmlPlugin.create())
-        .usePlugin(StrikethroughPlugin.create())
-        .usePlugin(TablePlugin.create(context))
-        .usePlugin(LinkifyPlugin.create())
-        .usePlugin(
-            ImagesPlugin.create { plugin ->
-                // 仅启用 file:// 本地图片：内嵌图已落盘到 parsed_books/<id>/assets/，
-                // ParsedBookStorage.readBundle 读取时把 book-asset:// 占位换成了 file://。
-                // 出于隐私 / 流量考虑暂不启用 HTTP 远程图片加载。
-                plugin.addSchemeHandler(FileSchemeHandler.create())
-            }
-        )
-        .usePlugin(
-            // `$$...$$` 块、`$...$` 内联 LaTeX 公式渲染（基于 jlatexmath）。
-            JLatexMathPlugin.create(context.resources.getDimension(android.R.dimen.app_icon_size) / 2f) { builder ->
-                builder.inlinesEnabled(true)
-            }
-        )
-        .build()
-}
+internal fun createPdfMarkwon(context: Context): Markwon = ReaderMarkwonFactory.create(context)
 
 /**
  * 在 Markwon 渲染后的纯文本上按划线内容做背景高亮（源码下标与渲染后 Spanned 长度不一致，故用文本匹配）。

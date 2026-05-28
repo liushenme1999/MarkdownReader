@@ -1,3 +1,4 @@
 <resources>
-    <string name="app_name">Markdown Reader</string>
+    <string name="app_name">MD阅读器</string>
+    <string name="open_with_label">用 MD阅读器 打开</string>
 </resources>

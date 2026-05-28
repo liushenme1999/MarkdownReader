@@ -68,7 +68,7 @@ fun ProfileScreen(
             },
             title = {
                 Text(
-                    "关于 Markdown Reader",
+                    "关于 MD阅读器",
                     fontWeight = FontWeight.Bold
                 )
             },
@@ -113,12 +113,19 @@ fun ProfileScreen(
                 )
             },
             text = {
-                Text("确定要清理所有缓存数据吗？此操作不可撤销。")
+                Text("将清理网络图片等缓存数据，不影响书架与阅读进度。此操作不可撤销。")
             },
             confirmButton = {
                 TextButton(onClick = {
                     showClearCacheDialog = false
-                    Toast.makeText(context, "缓存已清理", Toast.LENGTH_SHORT).show()
+                    viewModel.clearCache { bytesFreed ->
+                        val message = if (bytesFreed > 0) {
+                            "缓存已清理（${formatCacheBytes(bytesFreed)}）"
+                        } else {
+                            "缓存已清理"
+                        }
+                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                    }
                 }) {
                     Text("确定", color = MaterialTheme.colorScheme.error)
                 }
@@ -355,7 +362,7 @@ fun ProfileScreen(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    "Markdown Reader v1.0.0",
+                    "MD阅读器 v1.0.0",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
                 )
@@ -454,6 +461,12 @@ private fun ProfileMenuItem(
             tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
         )
     }
+}
+
+private fun formatCacheBytes(bytes: Long): String = when {
+    bytes >= 1024 * 1024 -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
+    bytes >= 1024 -> "%.0f KB".format(bytes / 1024.0)
+    else -> "$bytes B"
 }
 
 @Preview(showBackground = true, name = "我的")

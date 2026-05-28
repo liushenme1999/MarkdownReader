@@ -22,6 +22,24 @@ class PdfReaderContentTest {
     }
 
     @Test
+    fun pageIndexForSourceOffset_alignsWithSplitToPages() {
+        val body = buildString {
+            append(PdfReaderContent.buildPageImgTag("book-asset://pdf_page_001.png"))
+            append('\n')
+            append(PdfReaderContent.buildPageImgTag("book-asset://pdf_page_002.png"))
+            append('\n')
+            append(PdfReaderContent.buildPageImgTag("book-asset://pdf_page_003.png"))
+        }
+        val pages = PdfReaderContent.splitToPages(body)
+        val toc = PdfReaderContent.tocEntriesFromBody(body)
+        assertEquals(pages.size, toc.size)
+        toc.forEachIndexed { index, entry ->
+            assertEquals(index, PdfReaderContent.pageIndexForSourceOffset(body, entry.sourceOffset))
+            assertEquals(entry.sourceOffset, pages[index].second)
+        }
+    }
+
+    @Test
     fun splitToPages_oneImagePerPage() {
         val body = buildString {
             append(PdfReaderContent.buildPageImgTag("book-asset://pdf_page_001.png"))

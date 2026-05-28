@@ -14,6 +14,9 @@ import com.example.markdownreader.importing.ExtractedBookText
 import com.example.markdownreader.importing.ImportedBookFormat
 import com.example.markdownreader.importing.ParsedBookStorage
 import com.example.markdownreader.importing.UrlBookDownloader
+import com.example.markdownreader.markdown.DiagramImageLoader
+import com.example.markdownreader.markdown.MarkdownPreprocessor
+import com.example.markdownreader.markdown.NetworkImageCache
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -40,7 +43,14 @@ class BookshelfViewModel @Inject constructor(
     private val toastChannel = Channel<String>(Channel.BUFFERED)
     val toastMessages = toastChannel.receiveAsFlow()
 
-    fun importFromLocalUri(context: Context, uri: Uri) {
+    private val readerOpenRequestChannel = Channel<Long>(Channel.BUFFERED)
+    val readerOpenRequests = readerOpenRequestChannel.receiveAsFlow()
+
+    fun importFromLocalUri(
+        context: Context,
+        uri: Uri,
+        openReaderWhenDone: Boolean = false,
+    ) {
         viewModelScope.launch {
             try {
                 try {
@@ -66,12 +76,16 @@ class BookshelfViewModel @Inject constructor(
                 if (extracted.body.isBlank() && format.hasBuiltInTextExtract) {
                     toastChannel.trySend("未能解析出正文，请确认文件未损坏。")
                 }
-                persistImportedBook(
+                val bookId = persistImportedBook(
+                    importContext = context,
                     title = BookImportSupport.stripKnownExtension(fileName),
                     extracted = extracted,
                     filePath = uri.toString(),
-                    format = format
+                    format = format,
                 )
+                if (openReaderWhenDone && bookId > 0L) {
+                    readerOpenRequestChannel.trySend(bookId)
+                }
             } catch (e: Exception) {
                 toastChannel.trySend("导入失败：${e.message ?: "未知错误"}")
             }
@@ -109,6 +123,7 @@ class BookshelfViewModel @Inject constructor(
                     toastChannel.trySend("下载成功但未解析出正文。")
                 }
                 persistImportedBook(
+                    importContext = appContext,
                     title = BookImportSupport.stripKnownExtension(name.ifBlank { "网络书籍" }),
                     extracted = extracted,
                     filePath = url,
@@ -121,13 +136,15 @@ class BookshelfViewModel @Inject constructor(
     }
 
     private suspend fun persistImportedBook(
+        importContext: Context,
         title: String,
         extracted: ExtractedBookText,
         filePath: String,
-        format: ImportedBookFormat
-    ) {
+        format: ImportedBookFormat,
+    ): Long {
         val enriched = BookTocEnricher.enrichIfEmpty(format, extracted)
-        val content = enriched.body
+        val enrichedForStore = prepareImportedContent(importContext, format, enriched)
+        val content = enrichedForStore.body
         val author = BookImportSupport.extractAuthorFromContent(content)
         val book = BookEntity(
             title = title.ifBlank { "未命名书籍" },
@@ -141,11 +158,15 @@ class BookshelfViewModel @Inject constructor(
         val id = bookRepository.addBook(book)
         if (id <= 0L) {
             toastChannel.trySend("导入失败：无法写入书架。")
-            return
+            return 0L
         }
         val writeOk = withContext(Dispatchers.IO) {
             val dir = ParsedBookStorage.bundleDir(appContext, id)
-            val ok = ParsedBookStorage.writeBundle(dir, enriched, enriched.coverImageBytes)
+            val ok = ParsedBookStorage.writeBundle(
+                dir = dir,
+                extracted = enrichedForStore,
+                coverBytes = enriched.coverImageBytes,
+            )
             if (!ok) {
                 ParsedBookStorage.deleteBundleDir(dir.absolutePath)
                 return@withContext false
@@ -171,6 +192,24 @@ class BookshelfViewModel @Inject constructor(
             if (writeOk) "已导入「${book.title}」"
             else "「${book.title}」已加入书架，但解析缓存写入失败；阅读时将尝试从原文件重新解析。"
         )
+        return id
+    }
+
+    private suspend fun prepareImportedContent(
+        importContext: Context,
+        format: ImportedBookFormat,
+        extracted: ExtractedBookText,
+    ): ExtractedBookText {
+        if (format.usesReaderPlainBody) {
+            return extracted.copy(body = MarkdownPreprocessor.stripLocalRelativeImages(extracted.body))
+        }
+        var body = MarkdownPreprocessor.prepare(extracted.body)
+        withContext(Dispatchers.IO) {
+            NetworkImageCache.preloadFromMarkdown(appContext, body)
+        }
+        body = NetworkImageCache.rewriteCachedUrls(appContext, body)
+        DiagramImageLoader.preloadFromMarkdown(importContext, body)
+        return extracted.copy(body = body)
     }
 
     fun toggleFavorite(book: BookEntity) {

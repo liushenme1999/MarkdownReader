@@ -1,6 +1,8 @@
 package com.example.markdownreader.importing
 
 import android.content.Context
+import com.example.markdownreader.markdown.DiagramPayloadStore
+import com.example.markdownreader.markdown.MarkdownPreprocessor
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -18,20 +20,27 @@ object ParsedBookStorage {
 
     const val BODY_FILE = "body.txt"
     const val TOC_FILE = "toc.json"
+    const val DIAGRAM_PAYLOADS_FILE = "diagram_payloads.json"
     const val COVER_JPG = "cover.jpg"
     const val COVER_PNG = "cover.png"
     const val ASSETS_DIR = "assets"
 
     private const val ASSET_SCHEME = "book-asset://"
+    private val DIAGRAM_URI = Regex("""diagram://([A-Za-z0-9_-]+)/([A-Za-z0-9._-]+)""")
 
     fun bundleDir(context: Context, bookId: Long): File =
         File(context.filesDir, "parsed_books/$bookId")
 
-    fun writeBundle(dir: File, extracted: ExtractedBookText, coverBytes: ByteArray?): Boolean {
+    fun writeBundle(
+        dir: File,
+        extracted: ExtractedBookText,
+        coverBytes: ByteArray?,
+    ): Boolean {
         return runCatching {
             dir.mkdirs()
             File(dir, BODY_FILE).writeText(extracted.body, StandardCharsets.UTF_8)
             File(dir, TOC_FILE).writeText(tocToJson(extracted.toc), StandardCharsets.UTF_8)
+            writeDiagramPayloads(dir, extracted.body)
             when {
                 coverBytes == null || coverBytes.isEmpty() -> Unit
                 isJpegMagic(coverBytes) -> File(dir, COVER_JPG).writeBytes(coverBytes)
@@ -55,7 +64,9 @@ object ParsedBookStorage {
         if (!bodyFile.isFile) return null
         val rawBody = runCatching { bodyFile.readText(StandardCharsets.UTF_8) }.getOrNull()
             ?: return null
-        val body = materializeAssetUrls(rawBody, dir)
+        loadDiagramPayloads(dir)
+        var body = materializeAssetUrls(rawBody, dir)
+        body = MarkdownPreprocessor.stripLocalRelativeImages(body)
         val tocFile = File(dir, TOC_FILE)
         val toc = if (tocFile.isFile) {
             runCatching { tocFromJson(tocFile.readText(StandardCharsets.UTF_8)) }.getOrElse { emptyList() }
@@ -63,6 +74,43 @@ object ParsedBookStorage {
             emptyList()
         }
         return ExtractedBookText(body = body, toc = toc, coverImageBytes = null)
+    }
+
+    private fun writeDiagramPayloads(dir: File, body: String) {
+        if (!body.contains("diagram://")) return
+        val arr = JSONArray()
+        val seen = mutableSetOf<String>()
+        DIAGRAM_URI.findAll(body).forEach { match ->
+            val id = match.groupValues[2]
+            if (!seen.add(id)) return@forEach
+            val payload = DiagramPayloadStore.get(id) ?: return@forEach
+            arr.put(
+                JSONObject().apply {
+                    put("id", id)
+                    put("type", payload.type)
+                    put("source", payload.source)
+                }
+            )
+        }
+        if (arr.length() > 0) {
+            File(dir, DIAGRAM_PAYLOADS_FILE).writeText(arr.toString(), StandardCharsets.UTF_8)
+        }
+    }
+
+    private fun loadDiagramPayloads(dir: File) {
+        val file = File(dir, DIAGRAM_PAYLOADS_FILE)
+        if (!file.isFile) return
+        runCatching {
+            val arr = JSONArray(file.readText(StandardCharsets.UTF_8))
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val type = o.optString("type").trim()
+                val source = o.optString("source")
+                if (type.isNotEmpty() && source.isNotEmpty()) {
+                    DiagramPayloadStore.put(type, source)
+                }
+            }
+        }
     }
 
     /** 把 body 内的 `book-asset://xxx` 替换为 `file:///abs/path/to/assets/xxx`。 */

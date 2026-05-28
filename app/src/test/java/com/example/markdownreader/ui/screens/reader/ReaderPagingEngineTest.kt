@@ -38,6 +38,74 @@ class ReaderPagingEngineTest {
     }
 
     @Test
+    fun pdfPageIndexForTocOrBookmark_prefersTocEntryIndex() {
+        val toc = listOf(
+            MarkdownTocEntry(2, "第 1 页", 0),
+            MarkdownTocEntry(2, "第 2 页", 100),
+        )
+        val idx = pdfPageIndexForTocOrBookmark(
+            isPdfBook = true,
+            tocEntries = toc,
+            readerContent = "",
+            charPos = 0,
+            tocEntry = toc[1],
+        )
+        assertEquals(1, idx)
+    }
+
+    @Test
+    fun resolveStoredCharPos_prefersCurrentPositionOverProgress() {
+        val pos = resolveStoredCharPos(
+            currentPosition = 800,
+            readingProgress = 0.1f,
+            contentLength = 1000,
+            totalChars = 1000,
+        )
+        assertEquals(800, pos)
+    }
+
+    @Test
+    fun proportionalSourceOffset_mapsRenderedOffsetLinearly() {
+        val source = proportionalSourceOffset(
+            windowStart = 10_000,
+            windowEnd = 42_000,
+            displayedLen = 5_000,
+            renderedOffset = 2_500,
+        )
+        assertTrue(kotlin.math.abs(source - 26_000) <= 500)
+    }
+
+    @Test
+    fun resolveSourceCharOffset_plainText_matchesDisplayedOffset() {
+        val prefix = "intro\n\n"
+        val chapter = "第三章"
+        val body = "y".repeat(200)
+        val full = prefix + chapter + "\n" + body
+        val winStart = 0
+        val displayed = full
+        val sourceOffset = full.indexOf(chapter)
+        val rendered = resolveDisplayedCharOffset(
+            sourceContent = full,
+            sourceOffset = sourceOffset,
+            displayedText = displayed,
+            renderPlainText = true,
+            windowStart = winStart,
+            tocEntries = emptyList(),
+            preferredEntry = null,
+        )
+        val back = resolveSourceCharOffset(
+            sourceContent = full,
+            windowStart = winStart,
+            windowEnd = full.length,
+            displayedText = displayed,
+            renderedOffset = rendered,
+            renderPlainText = true,
+            tocEntries = emptyList(),
+        )
+        assertEquals(sourceOffset, back)
+    }
+
+    @Test
     fun resolveDisplayedCharOffset_plainText_prefersTitleLineInWindow() {
         val prefix = "intro\n\n"
         val chapter = "第三章 风暴"

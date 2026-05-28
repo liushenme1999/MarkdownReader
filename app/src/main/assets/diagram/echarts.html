@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <script src="file:///android_asset/diagram/echarts.min.js"></script>
+  <style>
+    html, body { margin: 0; padding: 8px; background: #fff; overflow: visible; }
+    #chart { width: 100%; min-height: 280px; height: 360px; }
+  </style>
+</head>
+<body>
+  <div id="chart"></div>
+  <script>
+    function decodeSourceB64(b64) {
+      try {
+        var binary = window.atob(b64);
+        if (typeof TextDecoder !== 'undefined') {
+          var bytes = new Uint8Array(binary.length);
+          for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          return new TextDecoder('utf-8').decode(bytes);
+        }
+        return decodeURIComponent(escape(binary));
+      } catch (e) {
+        return decodeURIComponent(escape(window.atob(b64)));
+      }
+    }
+
+    function renderDiagram() {
+      try {
+        if (typeof echarts === 'undefined') {
+          AndroidDiagram.onError('echarts-not-loaded');
+          return;
+        }
+        var b64 = AndroidDiagram.getSourceB64();
+        if (!b64) { AndroidDiagram.onError('empty'); return; }
+        var jsonText = decodeSourceB64(b64);
+        var option = JSON.parse(jsonText);
+        var chart = echarts.init(document.getElementById('chart'));
+        chart.setOption(option);
+        setTimeout(function () {
+          chart.resize();
+          var w = Math.ceil(document.body.scrollWidth);
+          var h = Math.ceil(document.body.scrollHeight);
+          AndroidDiagram.onRendered(w, h);
+        }, 200);
+      } catch (e) {
+        AndroidDiagram.onError(String(e));
+      }
+    }
+  </script>
+</body>
+</html>

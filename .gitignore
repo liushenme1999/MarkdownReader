@@ -1,7 +1,7 @@
 # Built application files
 *.apk
-*.aab
 *.ap_
+*.aab
 *.dex
 
 # Files for the ART/Dalvik VM
@@ -14,34 +14,81 @@
 bin/
 gen/
 out/
+release/
 
 # Gradle files
 .gradle/
 build/
+gradle-app.setting
 
 # Local configuration file
 local.properties
+*.properties.bak
 
 # Android Studio
 .idea/
 *.iml
+*.iws
+*.ipr
 .navigation/
 captures/
+.externalNativeBuild/
+.cxx/
+compose_compiler/
 
 # Keystore files
 *.jks
 *.keystore
-
-# External native build folder generated in Android Studio
-.externalNativeBuild/
-.cxx/
 
 # Google Services
 google-services.json
 
 # OS-specific files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 
 # Log files
 *.log
+logcat-*
+
+# Test coverage
+jacoco.exec
+*.ec
+*.exec
+code-coverage-report/
+coverage/
+
+# Kotlin
+*.ktlint
+*.kotlintest
+kotlin-js-store/
+.kotlin/
+
+# Dependency cache
+**/.kotlin/
+**/.kotlin/**/*
+
+# Android specific
+/.android/
+proguard-rules.pro.bak
+signing/
+
+# Crashlytics
+com.crashlytics.tools.buildId.properties
+
+# Moved build files
+buildSystem/
+app/build-system/
+
+# Temporary files
+*.swp
+*.swo
+*~
+*.tmp
+*.bak
+

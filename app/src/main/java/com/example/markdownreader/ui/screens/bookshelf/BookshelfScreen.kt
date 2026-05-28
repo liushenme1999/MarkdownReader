@@ -71,7 +71,9 @@ import kotlinx.coroutines.withContext
 fun BookshelfScreen(
     navController: NavController,
     onSelectionModeChange: (Boolean) -> Unit = {},
-    viewModel: BookshelfViewModel = hiltViewModel()
+    pendingExternalUri: Uri? = null,
+    onPendingExternalUriConsumed: () -> Unit = {},
+    viewModel: BookshelfViewModel = hiltViewModel(),
 ) {
     val books by viewModel.books.collectAsState()
     val context = LocalContext.current
@@ -100,6 +102,24 @@ fun BookshelfScreen(
     LaunchedEffect(Unit) {
         viewModel.toastMessages.collectLatest { msg ->
             snackbarHostState.showSnackbar(msg)
+        }
+    }
+
+    LaunchedEffect(pendingExternalUri) {
+        val uri = pendingExternalUri ?: return@LaunchedEffect
+        viewModel.importFromLocalUri(
+            context = context,
+            uri = uri,
+            openReaderWhenDone = true,
+        )
+        onPendingExternalUriConsumed()
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.readerOpenRequests.collectLatest { bookId ->
+            navController.navigate(AppRoutes.reader(bookId)) {
+                launchSingleTop = true
+            }
         }
     }
 

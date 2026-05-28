@@ -17,11 +17,13 @@ import com.example.markdownreader.importing.ExtractedBookText
 import com.example.markdownreader.importing.ImportedBookFormat
 import com.example.markdownreader.importing.ParsedBookStorage
 import com.example.markdownreader.importing.UrlBookDownloader
+import com.example.markdownreader.markdown.MarkdownPreprocessor
 import com.example.markdownreader.model.ReaderPageTurnMode
 import com.example.markdownreader.ui.theme.ReadingTheme
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -109,6 +111,7 @@ class ReaderViewModel @Inject constructor(
     private var loadBookJob: Job? = null
     private var bookmarkCollectJob: Job? = null
     private var highlightCollectJob: Job? = null
+    private var progressPersistJob: Job? = null
 
     fun loadBook(context: Context, bookId: Long) {
         loadBookJob?.cancel()
@@ -134,14 +137,19 @@ class ReaderViewModel @Inject constructor(
             val extracted = withContext(Dispatchers.IO) {
                 loadFileExtracted(context, bookEntity)
             }
-            _content.value = extracted.body
+            val text = MarkdownPreprocessor.stripLocalRelativeImages(extracted.body)
+            _content.value = text
             _structuredToc.value = extracted.toc
                 .map { MarkdownTocEntry(it.level, it.title, it.sourceOffset) }
                 .takeIf { it.isNotEmpty() }
             _readingProgress.value = bookEntity.readingProgress
+            if (text.isNotEmpty() && text.length != bookEntity.totalChars) {
+                val synced = bookEntity.copy(totalChars = text.length)
+                bookRepository.updateBook(synced)
+                _book.value = synced
+            }
             _readerLoadEpoch.value = _readerLoadEpoch.value + 1L
 
-            val text = extracted.body
             if (text.isEmpty()) {
                 _loadError.value =
                     "无法读取正文（文件权限失效或路径无效）。请返回书架删除该书后，使用「导入」重新选择文件。"
@@ -161,15 +169,54 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    fun updateReadingProgress(progress: Float) {
+    /** 按全书源码字符下标更新进度（与书签/目录跳转坐标一致）。 */
+    fun updateReadingProgressAtChar(globalChar: Int) {
+        val contentLen = _content.value.length
+        if (contentLen <= 0) return
+        val pos = globalChar.coerceIn(0, contentLen)
+        val progress = pos.toFloat() / contentLen
         _readingProgress.value = progress
+        scheduleProgressPersist(progress, pos)
+    }
 
+    fun updateReadingProgressAtCharNow(globalChar: Int) {
+        val contentLen = _content.value.length
+        if (contentLen <= 0) return
+        val pos = globalChar.coerceIn(0, contentLen)
+        val progress = pos.toFloat() / contentLen
+        _readingProgress.value = progress
+        progressPersistJob?.cancel()
+        progressPersistJob = null
         viewModelScope.launch {
             _book.value?.let { book ->
-                val currentPosition = (progress * book.totalChars).toInt()
-                bookRepository.updateReadingProgress(book.id, progress, currentPosition)
+                bookRepository.updateReadingProgress(book.id, progress, pos)
             }
         }
+    }
+
+    fun updateReadingProgress(progress: Float) {
+        val contentLen = _content.value.length.coerceAtLeast(1)
+        updateReadingProgressAtChar((progress * contentLen).toInt())
+    }
+
+    private fun scheduleProgressPersist(progress: Float, position: Int) {
+        progressPersistJob?.cancel()
+        progressPersistJob = viewModelScope.launch {
+            delay(300)
+            _book.value?.let { book ->
+                bookRepository.updateReadingProgress(book.id, progress, position)
+            }
+        }
+    }
+
+    private suspend fun flushReadingProgressNow() {
+        progressPersistJob?.cancel()
+        progressPersistJob = null
+        val book = _book.value ?: return
+        val contentLen = _content.value.length.coerceAtLeast(1)
+        val pos = (_readingProgress.value * contentLen).toInt().coerceIn(0, contentLen)
+        val progress = pos.toFloat() / contentLen
+        bookRepository.updateReadingProgress(book.id, progress, pos)
     }
 
     fun addBookmark(previewText: String, note: String? = null) {
@@ -196,14 +243,21 @@ class ReaderViewModel @Inject constructor(
     /**
      * 右滑 / 分页模式下拉：当前阅读位置附近已有书签则删除，否则添加。
      * @param previewForAdd 添加时用于书签列表的预览文案；非空则优先使用（一般为屏幕顶部可见文字），否则按源码位置估算。
+     * @param positionForAdd 当前视口顶部在全书正文中的字符下标；传入后不再依赖可能滞后的 readingProgress。
      */
-    suspend fun toggleBookmarkAtSwipe(previewForAdd: String? = null): Boolean? {
+    suspend fun toggleBookmarkAtSwipe(
+        previewForAdd: String? = null,
+        positionForAdd: Int? = null,
+    ): Boolean? {
         val book = _book.value ?: return null
         val total = book.totalChars.coerceAtLeast(1)
         val raw = _content.value
         if (raw.isEmpty()) return null
 
-        val pos = (readingProgress.value * total).toInt().coerceIn(0, total)
+        val pos = (positionForAdd ?: (readingProgress.value * total).toInt()).coerceIn(0, raw.length)
+        val progress = pos.toFloat() / raw.length.coerceAtLeast(1)
+        _readingProgress.value = progress
+        scheduleProgressPersist(progress, pos)
         val window = (total / 40).coerceIn(300, 1500)
         val near = bookmarks.value.find { abs(it.position - pos) <= window }
 
@@ -329,14 +383,13 @@ class ReaderViewModel @Inject constructor(
         if (book != null) {
             // onCleared 调用时 viewModelScope 已被取消，必须用 runBlocking 同步落盘，
             // 否则在此处 launch 出来的协程会被立即取消，进度与阅读时长会丢失。
-            val p = _readingProgress.value.coerceIn(0f, 1f)
-            val total = book.totalChars.coerceAtLeast(1)
-            val endPosition = (p * total).toInt()
             val endTime = System.currentTimeMillis()
             val minutesRead = ((endTime - readingStartTime) / 60_000).toInt()
+            val contentLen = _content.value.length.coerceAtLeast(1)
+            val endPosition = (_readingProgress.value * contentLen).toInt().coerceIn(0, contentLen)
             val charsRead = (endPosition - startPosition).coerceAtLeast(0)
             runBlocking {
-                bookRepository.updateReadingProgress(book.id, p, endPosition)
+                flushReadingProgressNow()
                 if (minutesRead > 0 || charsRead > 0) {
                     readingProgressRepository.recordReading(book.id, charsRead, minutesRead)
                 }

@@ -3,6 +3,7 @@ package com.example.markdownreader.ui.screens.profile
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.markdownreader.data.repository.AppCacheRepository
 import com.example.markdownreader.data.repository.UserProfile
 import com.example.markdownreader.data.repository.UserProfileRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -14,6 +15,7 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class ProfileViewModel @Inject constructor(
     private val userProfileRepository: UserProfileRepository,
+    private val appCacheRepository: AppCacheRepository,
 ) : ViewModel() {
 
     val profile = userProfileRepository.profile.stateIn(
@@ -40,5 +42,12 @@ class ProfileViewModel @Inject constructor(
 
     fun clearAvatar() {
         viewModelScope.launch { userProfileRepository.clearAvatar() }
+    }
+
+    fun clearCache(onComplete: (bytesFreed: Long) -> Unit) {
+        viewModelScope.launch {
+            val bytesFreed = appCacheRepository.clearAll()
+            onComplete(bytesFreed)
+        }
     }
 }

@@ -2,6 +2,7 @@ package com.example.markdownreader.ui.screens.reader
 
 import android.app.Activity
 import android.content.Context
+import android.graphics.Bitmap
 import android.text.Spannable
 import android.text.SpannableString
 import android.text.Spanned
@@ -117,6 +118,8 @@ internal fun ReaderPagedMarkdownHost(
     onReadingVerticalScroll: (Int) -> Unit,
     onSwipeDownBookmark: () -> Unit,
     onCenterTap: () -> Unit,
+    onDiagramTap: (Bitmap) -> Unit = {},
+    onReaderTextSelectionActiveChange: (Boolean) -> Unit = {},
     onPageTextViewReady: (Int, TextView) -> Unit,
     pdfFullWidthImages: Boolean = false,
 ) {
@@ -185,6 +188,8 @@ internal fun ReaderPagedMarkdownHost(
                 onSwipeDownBookmark = onSwipeDownBookmark,
                 onSwipeRightBookmark = {},
                 onCenterTap = onCenterTap,
+                onDiagramTap = onDiagramTap,
+                onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange,
                 pdfFullWidthImages = pdfFullWidthImages,
             )
         }
