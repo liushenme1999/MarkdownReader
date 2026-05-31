@@ -83,8 +83,8 @@
 
 # ==================== Data Classes / Entities ====================
 
--keep class com.example.markdownreader.data.local.entity.** { *; }
--keep class com.example.markdownreader.model.** { *; }
+-keep class space.liushenme.markdownreader.data.local.entity.** { *; }
+-keep class space.liushenme.markdownreader.model.** { *; }
 
 # ==================== Gson ====================
 
@@ -101,8 +101,8 @@
 }
 
 # Application data classes
--keep class com.example.markdownreader.importing.** { *; }
--keep class com.example.markdownreader.data.** { *; }
+-keep class space.liushenme.markdownreader.importing.** { *; }
+-keep class space.liushenme.markdownreader.data.** { *; }
 
 # ==================== Vico Charts ====================
 
@@ -139,16 +139,16 @@
 
 # ==================== Keep custom views and components ====================
 
--keep class com.example.markdownreader.ui.screens.** { *; }
--keep class com.example.markdownreader.ui.components.** { *; }
--keep class com.example.markdownreader.ui.theme.** { *; }
--keep class com.example.markdownreader.ui.system.** { *; }
+-keep class space.liushenme.markdownreader.ui.screens.** { *; }
+-keep class space.liushenme.markdownreader.ui.components.** { *; }
+-keep class space.liushenme.markdownreader.ui.theme.** { *; }
+-keep class space.liushenme.markdownreader.ui.system.** { *; }
 
 # ==================== Keep markdown related classes ====================
 
--keep class com.example.markdownreader.markdown.** { *; }
--keep class com.example.markdownreader.intent.** { *; }
--keep class com.example.markdownreader.navigation.** { *; }
+-keep class space.liushenme.markdownreader.markdown.** { *; }
+-keep class space.liushenme.markdownreader.intent.** { *; }
+-keep class space.liushenme.markdownreader.navigation.** { *; }
 
 # ==================== General Android Rules ====================
 

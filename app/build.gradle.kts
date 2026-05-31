@@ -19,12 +19,28 @@ val localProperties = Properties().apply {
     }
 }
 
+fun Properties.signingValue(key: String): String? =
+    getProperty(key)?.trim()?.takeIf { it.isNotEmpty() }
+        ?: System.getenv(key)?.trim()?.takeIf { it.isNotEmpty() }
+
+val releaseStoreFilePath = localProperties.signingValue("RELEASE_STORE_FILE")
+val releaseStorePassword = localProperties.signingValue("RELEASE_STORE_PASSWORD")
+val releaseKeyAlias = localProperties.signingValue("RELEASE_KEY_ALIAS")
+val releaseKeyPassword = localProperties.signingValue("RELEASE_KEY_PASSWORD")
+
+val releaseSigningConfigured = listOf(
+    releaseStoreFilePath,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { it != null }
+
 android {
-    namespace = "com.example.markdownreader"
+    namespace = "space.liushenme.markdownreader"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.markdownreader"
+        applicationId = "space.liushenme.markdownreader"
         minSdk = 24
         targetSdk = 35
         versionCode = 1
@@ -37,19 +53,21 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            val storeFilePath = localProperties.getProperty("RELEASE_STORE_FILE")
-                ?: "signing/release.keystore"
-            storeFile = rootProject.file(storeFilePath)
-            storePassword = localProperties.getProperty("RELEASE_STORE_PASSWORD") ?: "markdownreader"
-            keyAlias = localProperties.getProperty("RELEASE_KEY_ALIAS") ?: "markdownreader"
-            keyPassword = localProperties.getProperty("RELEASE_KEY_PASSWORD") ?: "markdownreader"
+        if (releaseSigningConfigured) {
+            create("release") {
+                storeFile = rootProject.file(releaseStoreFilePath!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
         }
     }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
+            if (releaseSigningConfigured) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -77,6 +95,37 @@ android {
         unitTests {
             isIncludeAndroidResources = true
         }
+    }
+}
+
+gradle.taskGraph.whenReady {
+    val requestsReleaseArtifact = gradle.startParameter.taskNames.any { taskName ->
+        taskName.contains("Release", ignoreCase = true) &&
+            (
+                taskName.contains("assemble", ignoreCase = true) ||
+                    taskName.contains("bundle", ignoreCase = true) ||
+                    taskName.contains("package", ignoreCase = true) ||
+                    taskName.contains("sign", ignoreCase = true)
+                )
+    }
+    if (!requestsReleaseArtifact) return@whenReady
+
+    if (!releaseSigningConfigured) {
+        error(
+            """
+            Release 构建需要签名配置，请在项目根目录 local.properties 或环境变量中设置：
+              RELEASE_STORE_FILE
+              RELEASE_STORE_PASSWORD
+              RELEASE_KEY_ALIAS
+              RELEASE_KEY_PASSWORD
+            不要将密码提交到 Git 仓库。
+            """.trimIndent(),
+        )
+    }
+
+    val keystore = rootProject.file(releaseStoreFilePath!!)
+    if (!keystore.isFile) {
+        error("Release 签名 keystore 不存在: ${keystore.absolutePath}")
     }
 }
 
