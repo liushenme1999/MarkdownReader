@@ -6,6 +6,7 @@ import android.text.Selection
 import android.text.Spannable
 import android.text.SpannableString
 import android.text.Spanned
+import android.text.style.ClickableSpan
 import android.text.style.BackgroundColorSpan
 import android.graphics.Rect
 import android.os.Build
@@ -119,7 +120,10 @@ internal val readerMarkwonRenderExecutor =
 
 internal const val PLAIN_TEXT_PRECOMPUTE_THRESHOLD = 6000
 
-/** Markwon 渲染的"小内容"门槛：< 该长度直接主线程同步，避免线程切换开销让首屏更慢。 */
+/** Markwon 非线程安全（HtmlPlugin 内部状态）；串行化 parse/render，避免与后台 toMarkdown 并发。 */
+internal val markwonRenderLock = Any()
+
+/** 曾用于主线程同步渲染；现一律走 [readerMarkwonRenderExecutor] 以避免 HtmlPlugin 并发崩溃。 */
 internal const val MARKWON_BACKGROUND_RENDER_THRESHOLD = 4000
 
 internal fun readerRenderSignature(
@@ -207,24 +211,20 @@ internal fun applyMarkdownContent(
     val prepared = ReaderMarkwonFactory.prepareMarkdown(content)
     textView.setTag(R.id.markdown_anchor_index, prepared.anchorIndex)
     val markdown = NetworkImageCache.rewriteCachedUrls(textView.context, prepared.text)
-    val hasDiagram = markdown.contains("diagram://")
-    if (markdown.length <= MARKWON_BACKGROUND_RENDER_THRESHOLD && !hasDiagram) {
-        // 短文本同步走完，UI 首帧响应更直接
-        markwon.setMarkdown(textView, markdown)
-        finishMarkdownRender()
-        return
-    }
-    // 长 Markdown：在后台线程做 CommonMark parse + Markwon render（产 Spanned），
-    // 这一步通常 200~500ms（取决于内容长度与图片数）。主线程只剩 setText + measure。
+    // 一律后台 Markwon 渲染：主线程 setMarkdown 与 executor 上 toMarkdown 并发会触发 HtmlPlugin CME。
     readerMarkwonRenderExecutor.execute {
-        val rendered: CharSequence = runCatching { markwon.toMarkdown(markdown) }
-            .getOrNull() ?: content
+        val rendered: CharSequence = synchronized(markwonRenderLock) {
+            runCatching { markwon.toMarkdown(markdown) }.getOrNull() ?: content
+        }
         textView.post {
             if (textView.getTag(TAG_READER_RENDER_SIG) != renderSig) return@post
             textView.setTag(R.id.markdown_anchor_index, prepared.anchorIndex)
-            // setParsedMarkdown 会在主线程上把 Spanned 应用到 TextView，并执行
-            // Markwon 各插件的 `afterSetText`（如启动 AsyncDrawable 图片加载）。
-            markwon.setParsedMarkdown(textView, rendered as? android.text.Spanned ?: android.text.SpannableString(rendered))
+            synchronized(markwonRenderLock) {
+                markwon.setParsedMarkdown(
+                    textView,
+                    rendered as? android.text.Spanned ?: android.text.SpannableString(rendered),
+                )
+            }
             finishMarkdownRender()
         }
     }
@@ -488,6 +488,9 @@ internal fun bindReaderGesturesAndScroll(
                     tv?.hasActiveReaderTextSelection() == true
                 touchState.blockBookmarkSwipeGesture = false
                 if (e.actionMasked != MotionEvent.ACTION_UP) return@setOnTouchListener false
+                if (tv is SafeReaderTextView && tv.dispatchLinkClickIfPresent(e.x, e.y)) {
+                    return@setOnTouchListener true
+                }
                 // 划词/选区期间跳过中心点击与滑动加书签
                 if (tv is SafeReaderTextView && tv.isInTextSelection()) {
                     return@setOnTouchListener false
@@ -589,6 +592,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     private var pendingOutsideTapDismiss = false
     /** 划词选区是否已递增 suppressScrollRefCount（配对递减）。 */
     private var selectionIncrementedSuppress = false
+    /** DOWN 时命中链接，UP 时优先跳转而非进入 Editor 选词。 */
+    private var pendingLinkSpan: ClickableSpan? = null
 
     private val linkMovement = LinkMovementMethod.getInstance()
     private val selectionMovement = ArrowKeyMovementMethod.getInstance()
@@ -634,6 +639,26 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     fun diagramBitmapAt(x: Float, y: Float): android.graphics.Bitmap? {
         return DiagramImageLoader.cachedBitmapForDestination(diagramDestinationAt(x, y))
+    }
+
+    /**
+     * 轻触链接时分发跳转（由 [bindReaderGesturesAndScroll] 在 OnTouchListener 中优先调用）。
+     * 可选中 TextView 下 Editor 会吞掉 LinkMovementMethod，需显式触发 [ClickableSpan.onClick]。
+     */
+    fun dispatchLinkClickIfPresent(x: Float, y: Float): Boolean {
+        if (selectionActive || gestureOnDiagram) return false
+        if (!isTapGesture(x, y)) return false
+        val span = ReaderTextLinkTouch.findClickableSpanAt(this, x, y) ?: return false
+        pendingLinkSpan = null
+        ReaderTextLinkTouch.dispatchClickableSpan(this, span)
+        (text as? Spannable)?.let { Selection.removeSelection(it) }
+        return true
+    }
+
+    private fun isTapGesture(x: Float, y: Float): Boolean {
+        val dx = kotlin.math.abs(x - touchDownX)
+        val dy = kotlin.math.abs(y - touchDownY)
+        return dx <= touchSlop && dy <= touchSlop
     }
 
     /** 每次 DOWN 仅允许一次扩窗；返回 false 表示本手势已扩过窗。 */
@@ -867,6 +892,15 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 isVerticalScrollDrag = false
                 windowExpandConsumedThisGesture = false
                 gestureOnDiagram = isTouchOnDiagramSpan(event.x, event.y)
+                pendingLinkSpan = if (!selectionActive && !gestureOnDiagram) {
+                    ReaderTextLinkTouch.findClickableSpanAt(this, event.x, event.y)
+                } else {
+                    null
+                }
+                if (pendingLinkSpan != null) {
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    return true
+                }
                 if (selectionActive) {
                     pendingOutsideTapDismiss = !isTouchNearSelection(event.x, event.y)
                 } else {
@@ -884,6 +918,17 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 lastTouchX = event.x
                 lastTouchY = event.y
+                if (event.actionMasked == MotionEvent.ACTION_UP) {
+                    val link = pendingLinkSpan
+                    pendingLinkSpan = null
+                    if (link != null && isTapGesture(event.x, event.y)) {
+                        ReaderTextLinkTouch.dispatchClickableSpan(this, link)
+                        (text as? Spannable)?.let { Selection.removeSelection(it) }
+                        return true
+                    }
+                } else {
+                    pendingLinkSpan = null
+                }
             }
         }
         val handled = try {
