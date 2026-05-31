@@ -76,6 +76,31 @@ class ReaderPagingEngineTest {
     }
 
     @Test
+    fun progressAnchorMapping_roundTripsAcrossCompressedWindow() {
+        val windowStart = 10_000
+        val windowEnd = 42_000
+        val displayedLen = 5_000
+        val sourceOffset = 26_000
+        val rendered = resolveDisplayedCharOffsetForProgressRestore(
+            sourceOffset = sourceOffset,
+            windowStart = windowStart,
+            windowEnd = windowEnd,
+            displayedLen = displayedLen,
+            renderPlainText = false,
+        )
+        val back = resolveSourceCharOffset(
+            sourceContent = "x".repeat(windowEnd),
+            windowStart = windowStart,
+            windowEnd = windowEnd,
+            displayedText = "y".repeat(displayedLen),
+            renderedOffset = rendered,
+            renderPlainText = false,
+            tocEntries = emptyList(),
+        )
+        assertTrue(kotlin.math.abs(back - sourceOffset) <= 32)
+    }
+
+    @Test
     fun resolveSourceCharOffset_plainText_matchesDisplayedOffset() {
         val prefix = "intro\n\n"
         val chapter = "第三章"

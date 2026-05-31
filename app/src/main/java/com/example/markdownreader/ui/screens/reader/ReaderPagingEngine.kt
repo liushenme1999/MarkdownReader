@@ -606,7 +606,37 @@ internal fun isViewportTopOnDiagramSpan(tv: TextView): Boolean =
     isDiagramSpanAtOffset(tv.text, charOffsetAtScrollTop(tv))
 
 /**
- * 将 TextView 内已渲染文本的字符下标反查为全书 Markdown 源码下标（与 [resolveDisplayedCharOffset] 互逆）。
+ * 阅读进度保存/恢复专用：在窗口内用单调比例映射，避免标题/锚点启发式导致前后偏移。
+ */
+internal fun resolveDisplayedCharOffsetForProgressRestore(
+    sourceOffset: Int,
+    windowStart: Int,
+    windowEnd: Int,
+    displayedLen: Int,
+    renderPlainText: Boolean,
+): Int {
+    if (displayedLen <= 0) return 0
+    if (renderPlainText) {
+        return (sourceOffset - windowStart).coerceIn(0, displayedLen - 1)
+    }
+    var lo = 0
+    var hi = displayedLen - 1
+    var best = 0
+    while (lo <= hi) {
+        val mid = lo + (hi - lo) / 2
+        val src = proportionalSourceOffset(windowStart, windowEnd, displayedLen, mid)
+        if (src <= sourceOffset) {
+            best = mid
+            lo = mid + 1
+        } else {
+            hi = mid - 1
+        }
+    }
+    return best
+}
+
+/**
+ * 将 TextView 内已渲染文本的字符下标反查为全书 Markdown 源码下标（与进度恢复映射互逆）。
  */
 internal fun resolveSourceCharOffset(
     sourceContent: String,
@@ -631,15 +661,11 @@ internal fun resolveSourceCharOffset(
     var best = lo
     while (lo <= hi) {
         val mid = lo + (hi - lo) / 2
-        val disp = resolveDisplayedCharOffset(
-            sourceContent = sourceContent,
+        val disp = proportionalDisplayedOffset(
             sourceOffset = mid,
-            displayedText = displayedText,
-            renderPlainText = false,
             windowStart = windowStart,
-            tocEntries = tocEntries,
-            preferredEntry = null,
             windowEnd = windowEnd,
+            displayedLen = displayed.length,
         )
         if (disp <= rend) {
             best = mid
@@ -648,11 +674,7 @@ internal fun resolveSourceCharOffset(
             hi = mid - 1
         }
     }
-    val proportional = proportionalSourceOffset(windowStart, windowEnd, displayed.length, rend)
-    if (kotlin.math.abs(best - proportional) > (windowEnd - windowStart) / 3) {
-        return proportional
-    }
-    return best
+    return best.coerceIn(0, sourceContent.length)
 }
 
 /** 按窗口内滚动比例快速估算源码坐标（用于滚动时保存进度，避免每帧二分查找卡顿）。 */
@@ -875,6 +897,110 @@ internal fun scrollTextViewToCharOffset(tv: TextView, charOffsetInText: Int) {
     val lineTop = layout.getLineTop(line)
     val maxScroll = (layout.height - innerH).coerceAtLeast(0)
     tv.scrollTo(0, lineTop.coerceIn(0, maxScroll))
+}
+
+/** 记录当前 scrollY、视口顶行 lineTop 及窗口起点，供 layout 重排后恢复子像素位置。 */
+internal data class TextViewScrollAnchor(
+    val scrollY: Int,
+    val lineTop: Int,
+    val windowStart: Int,
+)
+
+internal fun captureTextViewScrollAnchor(tv: TextView, windowStart: Int): TextViewScrollAnchor {
+    val layout = tv.layout
+    if (layout == null || layout.lineCount <= 0) {
+        return TextViewScrollAnchor(tv.scrollY, tv.scrollY, windowStart)
+    }
+    val scrollY = tv.scrollY
+    val y = (scrollY + tv.paddingTop).coerceAtLeast(0)
+    val line = layout.getLineForVertical(y).coerceIn(0, layout.lineCount - 1)
+    return TextViewScrollAnchor(scrollY, layout.getLineTop(line), windowStart)
+}
+
+internal fun scrollTextViewPreservingScrollY(tv: TextView, savedScrollY: Int) {
+    val layout = tv.layout ?: return
+    val innerH = tv.height - tv.paddingTop - tv.paddingBottom
+    if (innerH <= 0) return
+    val maxScroll = (layout.height - innerH).coerceAtLeast(0)
+    tv.scrollTo(0, savedScrollY.coerceIn(0, maxScroll))
+}
+
+/**
+ * 扩窗后恢复滚动：向下扩窗时 layout 前缀不变，直接保留 scrollY；
+ * 向上扩窗时在原 scrollY 上叠加 prepend 段高度。
+ */
+internal fun restoreTextViewScrollAfterWindowChange(
+    tv: TextView,
+    anchor: TextViewScrollAnchor,
+    newWindowStart: Int,
+    newWindowEnd: Int,
+    renderPlainText: Boolean,
+) {
+    if (newWindowStart >= anchor.windowStart) {
+        scrollTextViewPreservingScrollY(tv, anchor.scrollY)
+        return
+    }
+    val layout = tv.layout ?: run {
+        scrollTextViewPreservingScrollY(tv, anchor.scrollY)
+        return
+    }
+    val len = tv.text?.length ?: 0
+    if (len <= 0) {
+        scrollTextViewPreservingScrollY(tv, anchor.scrollY)
+        return
+    }
+    val boundaryOffset = if (renderPlainText) {
+        (anchor.windowStart - newWindowStart).coerceIn(0, len - 1)
+    } else {
+        resolveDisplayedCharOffsetForProgressRestore(
+            sourceOffset = anchor.windowStart,
+            windowStart = newWindowStart,
+            windowEnd = newWindowEnd,
+            displayedLen = len,
+            renderPlainText = false,
+        ).coerceIn(0, len - 1)
+    }
+    val prependedHeight = layout.getLineTop(
+        layout.getLineForOffset(boundaryOffset).coerceIn(0, layout.lineCount - 1),
+    )
+    scrollTextViewPreservingScrollY(tv, anchor.scrollY + prependedHeight)
+}
+
+/** 按源码行内比例滚动，避免标题/正文在行顶 snap（用于进度恢复，非目录/书签跳转）。 */
+internal fun scrollTextViewToSourceProgressAnchor(
+    tv: TextView,
+    sourceContent: String,
+    sourceOffset: Int,
+    windowStart: Int,
+    windowEnd: Int,
+    renderPlainText: Boolean,
+) {
+    val layout = tv.layout ?: return
+    val len = tv.text?.length ?: 0
+    if (len <= 0 || sourceContent.isEmpty()) return
+    val safeSource = sourceOffset.coerceIn(0, sourceContent.length - 1)
+    val displayedOffset = resolveDisplayedCharOffsetForProgressRestore(
+        sourceOffset = safeSource,
+        windowStart = windowStart,
+        windowEnd = windowEnd,
+        displayedLen = len,
+        renderPlainText = renderPlainText,
+    ).coerceIn(0, len - 1)
+    val innerH = tv.height - tv.paddingTop - tv.paddingBottom
+    if (innerH <= 0) return
+    val maxScroll = (layout.height - innerH).coerceAtLeast(0)
+    val line = layout.getLineForOffset(displayedOffset).coerceIn(0, layout.lineCount - 1)
+    val lineTop = layout.getLineTop(line)
+    val lineBottom = layout.getLineBottom(line)
+    val lineStartInSource = sourceContent.lastIndexOf('\n', safeSource - 1).let { if (it < 0) 0 else it + 1 }
+    val lineEndInSource = sourceContent.indexOf('\n', safeSource).let {
+        if (it < 0) sourceContent.length else it
+    }
+    val lineLenInSource = (lineEndInSource - lineStartInSource).coerceAtLeast(1)
+    val inLineRatio = ((safeSource - lineStartInSource).toFloat() / lineLenInSource).coerceIn(0f, 1f)
+    val lineHeight = (lineBottom - lineTop).coerceAtLeast(1)
+    val targetScrollY = lineTop + (lineHeight * inLineRatio).toInt()
+    tv.scrollTo(0, targetScrollY.coerceIn(0, maxScroll))
 }
 
 /**

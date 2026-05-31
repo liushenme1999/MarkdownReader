@@ -8,12 +8,14 @@ import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.BackgroundColorSpan
 import android.graphics.Rect
+import android.os.Build
 import android.view.ActionMode
 import android.view.HapticFeedbackConstants
 import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.ViewConfiguration
+import android.view.textclassifier.TextClassifier
 import android.text.method.ArrowKeyMovementMethod
 import android.text.method.LinkMovementMethod
 import android.text.method.MovementMethod
@@ -554,8 +556,8 @@ internal fun previewPlainTextFromTextViewTop(tv: TextView): String {
 }
 
 /**
- * 阅读器 TextView：默认链接可点；长按走系统选词 + 空 ActionMode（不建复制/全选菜单）。
- * 划词期间抑制扩窗/进度副作用；有选区时禁用滑动加书签；通知外层隐藏顶栏。
+ * 阅读器 TextView：参考 Legado MdRead，始终 textIsSelectable + 系统 Editor 选词；
+ * 仅拦截图表/图片长按，选区期间抑制扩窗与滑动加书签。
  */
 internal class SafeReaderTextView(context: Context) : TextView(context) {
     var allowVerticalScroll: Boolean = true
@@ -570,8 +572,6 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
     private val scrollDragSlop = touchSlop * 3
-    /** 略早于系统长按阈值（约 400ms）启用 selectable，避免 Editor.checkField 失败。 */
-    private val longPressPrepDelayMs = 350L
     private var touchDownX = 0f
     private var touchDownY = 0f
     private var lastTouchX = 0f
@@ -585,24 +585,10 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     private var savedSelStart = -1
     private var savedSelEnd = -1
     private var readerSelectionActionMode: ActionMode? = null
-    /** 防止 performLongClick ↔ super.performLongClick 互相回调造成栈溢出。 */
-    private var delegatingLongClick = false
     /** DOWN 在选区外时先标记，UP 仍为轻微点击且仍在选区外才真正清除（避免句柄 DOWN 被误杀）。 */
     private var pendingOutsideTapDismiss = false
-    /** 长按预备是否已递增 suppressScrollRefCount（配对递减）。 */
-    private var longPressPrepIncremented = false
     /** 划词选区是否已递增 suppressScrollRefCount（配对递减）。 */
     private var selectionIncrementedSuppress = false
-
-    private val prepForLongPressSelection = Runnable {
-        if (isVerticalScrollDrag || selectionActive) return@Runnable
-        val offset = touchOffsetToCharOffset(lastTouchX, lastTouchY) ?: return@Runnable
-        if (!canSelectAtOffset(offset)) return@Runnable
-        suppressScrollRefCount++
-        longPressPrepIncremented = true
-        ensureSelectionInteractionMode()
-        requestFocusFromTouch()
-    }
 
     private val linkMovement = LinkMovementMethod.getInstance()
     private val selectionMovement = ArrowKeyMovementMethod.getInstance()
@@ -613,21 +599,28 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 menu?.clear()
                 readerSelectionActionMode = mode
             }
+
         override fun onPrepareActionMode(mode: ActionMode?, menu: Menu?) = false
+
         override fun onActionItemClicked(mode: ActionMode?, item: MenuItem?) = false
+
         override fun onDestroyActionMode(mode: ActionMode?) {
             if (readerSelectionActionMode == mode) readerSelectionActionMode = null
         }
     }
 
     init {
-        setTextIsSelectable(false)
+        // Legado MdRead：始终可选中，由系统 Editor 处理长按/句柄/ActionMode
+        setTextIsSelectable(true)
         movementMethod = linkMovement
         isVerticalScrollBarEnabled = false
         isLongClickable = true
         isFocusable = true
         isFocusableInTouchMode = true
         customSelectionActionModeCallback = emptySelectionActionMode
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            setTextClassifier(TextClassifier.NO_OP)
+        }
     }
 
     fun shouldSuppressReaderScrollSideEffects(): Boolean =
@@ -680,7 +673,6 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         windowExpandConsumedThisGesture = false
         gestureOnDiagram = isTouchOnDiagramSpan(x, y)
         allowReaderScrollSideEffects = false
-        removeCallbacks(prepForLongPressSelection)
         if (selectionActive) {
             pendingOutsideTapDismiss = !isTouchNearSelection(x, y)
         } else {
@@ -690,22 +682,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     fun markVerticalScrollDrag() {
         if (selectionActive) return
-        cancelLongPressPrepForScroll()
         allowReaderScrollSideEffects = true
         isVerticalScrollDrag = true
-    }
-
-    /** 识别为纵向滚动：取消长按预备，恢复链接模式，允许扩窗/进度副作用。 */
-    private fun cancelLongPressPrepForScroll() {
-        removeCallbacks(prepForLongPressSelection)
-        if (!selectionActive && !hasSelectionRange()) {
-            if (longPressPrepIncremented) {
-                suppressScrollRefCount = (suppressScrollRefCount - 1).coerceAtLeast(0)
-                longPressPrepIncremented = false
-            }
-            setTextIsSelectable(false)
-            movementMethod = linkMovement
-        }
     }
 
     internal fun tryMarkVerticalScrollDrag(dx: Float, dy: Float): Boolean {
@@ -750,7 +728,6 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         allowReaderScrollSideEffects = false
         readerSelectionActionMode?.finish()
         readerSelectionActionMode = null
-        setTextIsSelectable(false)
         movementMethod = linkMovement
         (text as? Spannable)?.let { Selection.removeSelection(it) }
         parent?.requestDisallowInterceptTouchEvent(false)
@@ -768,52 +745,26 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     private fun revertToLinkModeIfIdle() {
         if (selectionActive || hasSelectionRange()) return
-        setTextIsSelectable(false)
         movementMethod = linkMovement
     }
 
     /** 仅拦截图片/图表上的长按，其余完全交给 Editor 原生划词流程（含句柄）。 */
     private fun allowLongPressSelectionAt(x: Float, y: Float): Boolean {
+        if (isTouchOnDiagramSpan(x, y)) return false
         val offset = touchOffsetToCharOffset(x, y) ?: return false
         return canSelectAtOffset(offset)
     }
 
-    private fun ensureSelectionPreparedForLongPress() {
-        removeCallbacks(prepForLongPressSelection)
-        prepForLongPressSelection.run()
-    }
-
-    override fun canScrollVertically(direction: Int): Boolean =
-        allowVerticalScroll && super.canScrollVertically(direction)
-
-    override fun scrollTo(x: Int, y: Int) {
-        if (allowVerticalScroll) super.scrollTo(x, y) else super.scrollTo(x, 0)
-    }
-
     override fun performLongClick(): Boolean {
-        if (delegatingLongClick) return super.performLongClick()
-        if (!allowLongPressSelectionAt(lastTouchX, lastTouchY)) return false
-        isVerticalScrollDrag = false
-        ensureSelectionPreparedForLongPress()
-        delegatingLongClick = true
-        return try {
-            super.performLongClick()
-        } finally {
-            delegatingLongClick = false
-        }
+        if (gestureOnDiagram || !allowLongPressSelectionAt(lastTouchX, lastTouchY)) return false
+        return super.performLongClick()
     }
 
     override fun performLongClick(x: Float, y: Float): Boolean {
-        if (delegatingLongClick) return super.performLongClick(x, y)
-        if (!allowLongPressSelectionAt(x, y)) return false
-        isVerticalScrollDrag = false
-        ensureSelectionPreparedForLongPress()
-        delegatingLongClick = true
-        return try {
-            super.performLongClick(x, y)
-        } finally {
-            delegatingLongClick = false
-        }
+        lastTouchX = x
+        lastTouchY = y
+        if (gestureOnDiagram || !allowLongPressSelectionAt(x, y)) return false
+        return super.performLongClick(x, y)
     }
 
     private fun hasSelectionRange(): Boolean {
@@ -828,7 +779,27 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     private fun ensureSelectionInteractionMode() {
         movementMethod = selectionMovement
-        setTextIsSelectable(true)
+    }
+
+    override fun canScrollVertically(direction: Int): Boolean =
+        allowVerticalScroll && super.canScrollVertically(direction)
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        val preserveScrollY = if (changed && allowVerticalScroll && scrollY > 0) scrollY else null
+        super.onLayout(changed, left, top, right, bottom)
+        if (preserveScrollY == null) return
+        val layout = layout ?: return
+        val innerH = height - paddingTop - paddingBottom
+        if (innerH <= 0) return
+        val maxScroll = (layout.height - innerH).coerceAtLeast(0)
+        val target = preserveScrollY.coerceIn(0, maxScroll)
+        if (scrollY != target) {
+            super.scrollTo(0, target)
+        }
+    }
+
+    override fun scrollTo(x: Int, y: Int) {
+        if (allowVerticalScroll) super.scrollTo(x, y) else super.scrollTo(x, 0)
     }
 
     private fun shouldDismissSelectionOnOutsideTap(): Boolean {
@@ -896,13 +867,10 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 isVerticalScrollDrag = false
                 windowExpandConsumedThisGesture = false
                 gestureOnDiagram = isTouchOnDiagramSpan(event.x, event.y)
-                removeCallbacks(prepForLongPressSelection)
                 if (selectionActive) {
-                    parent?.requestDisallowInterceptTouchEvent(true)
                     pendingOutsideTapDismiss = !isTouchNearSelection(event.x, event.y)
                 } else {
-                    parent?.requestDisallowInterceptTouchEvent(false)
-                    postDelayed(prepForLongPressSelection, longPressPrepDelayMs)
+                    pendingOutsideTapDismiss = false
                 }
             }
             MotionEvent.ACTION_MOVE -> {
@@ -916,14 +884,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 lastTouchX = event.x
                 lastTouchY = event.y
-                removeCallbacks(prepForLongPressSelection)
             }
-        }
-        val outsideTapDismiss = event.actionMasked == MotionEvent.ACTION_UP &&
-            shouldDismissSelectionOnOutsideTap()
-        if (event.actionMasked == MotionEvent.ACTION_UP) {
-            pendingOutsideTapDismiss = false
-            dismissSelectionOnOutsideTapIfNeeded()
         }
         val handled = try {
             super.onTouchEvent(event)
@@ -933,13 +894,11 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             false
         }
         if (event.actionMasked == MotionEvent.ACTION_UP) {
+            dismissSelectionOnOutsideTapIfNeeded()
             isVerticalScrollDrag = false
             gestureOnDiagram = false
             if (!selectionActive) {
                 allowReaderScrollSideEffects = false
-            }
-            if (outsideTapDismiss) {
-                dismissSelection()
             }
             if (selectionActive && !hasSelectionRange()) {
                 restoreSavedSelectionRange()

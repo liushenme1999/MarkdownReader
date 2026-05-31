@@ -25,14 +25,59 @@ object MarkdownPreprocessor {
     private val MD_IMAGE = Regex("""!\[([^\]]*)\]\(([^)\s]+)\)""")
     private val MD_LOCAL_IMAGE = Regex("""!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)""")
 
+    /** GFM 表格分隔行，如 `| --- | :---: |` */
+    private val TABLE_SEPARATOR = Regex("""^\|(?:\s*:?-+:?\s*\|)+\s*$""")
+
     fun prepare(markdown: String): String {
         if (markdown.isEmpty()) return markdown
         var out = expandHighlight(markdown)
         out = expandFootnotes(out)
         out = expandDiagramFences(out)
+        out = ensureBlankLineBeforeTables(out)
         out = stripLocalRelativeImages(out)
         out = normalizeReaderImageLayout(out)
         return out
+    }
+
+    /**
+     * Typora 等编辑器允许「段落/标题后直接接表格」；CommonMark / Markwon 要求表格前有空行。
+     * 仅在检测到 GFM 表格块（表头行 + 分隔行）且上一行非空、非表格行时补一行，不改变书籍源码存储。
+     */
+    internal fun ensureBlankLineBeforeTables(markdown: String): String {
+        if (!markdown.contains('|')) return markdown
+        val lines = markdown.split('\n')
+        if (lines.size < 2) return markdown
+        return buildString {
+            lines.forEachIndexed { i, line ->
+                if (i > 0) {
+                    if (isTableBlockStart(lines, i)) {
+                        val prev = lines[i - 1]
+                        if (prev.isNotBlank() && !isTableLine(prev)) {
+                            append('\n')
+                        }
+                    }
+                    append('\n')
+                }
+                append(line)
+            }
+        }
+    }
+
+    private fun isTableBlockStart(lines: List<String>, index: Int): Boolean {
+        if (index + 1 >= lines.size) return false
+        return isTableLine(lines[index]) && isTableSeparatorLine(lines[index + 1])
+    }
+
+    private fun isTableLine(line: String): Boolean {
+        val trimmed = line.trim()
+        if (!trimmed.startsWith('|')) return false
+        return trimmed.indexOf('|', startIndex = 1) >= 0
+    }
+
+    private fun isTableSeparatorLine(line: String): Boolean {
+        val trimmed = line.trim()
+        if (!trimmed.startsWith('|')) return false
+        return TABLE_SEPARATOR.matches(trimmed)
     }
 
     /**

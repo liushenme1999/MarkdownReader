@@ -120,4 +120,47 @@ class MarkdownPreprocessorTest {
         val out = MarkdownPreprocessor.expandHighlight("==高亮文本==")
         assertTrue(out.contains("<mark>高亮文本</mark>"))
     }
+
+    @Test
+    fun ensureBlankLineBeforeTables_insertsBlankWhenParagraphDirectlyPrecedesTable() {
+        val md = """
+            **核心概念：**
+            | 概念 | 解释 |
+            |------|------|
+            | 节点 | 说明 |
+        """.trimIndent()
+        val out = MarkdownPreprocessor.ensureBlankLineBeforeTables(md)
+        assertTrue(out.contains("**核心概念：**\n\n| 概念 | 解释 |"))
+    }
+
+    @Test
+    fun ensureBlankLineBeforeTables_leavesExistingBlankLineUntouched() {
+        val md = """
+            **标题**
+
+            | A | B |
+            |---|---|
+        """.trimIndent()
+        val out = MarkdownPreprocessor.ensureBlankLineBeforeTables(md)
+        assertEquals(md, out)
+    }
+
+    @Test
+    fun ensureBlankLineBeforeTables_doesNotTreatPipeInParagraphAsTable() {
+        val md = "Use | a | b | in text\n\nMore body"
+        val out = MarkdownPreprocessor.ensureBlankLineBeforeTables(md)
+        assertEquals(md, out)
+    }
+
+    @Test
+    fun prepare_rendersTableAfterBoldWithoutManualBlankLine() {
+        val md = """
+            **核心概念：**
+            | 概念 | 解释 |
+            |------|------|
+            | 节点 | 说明 |
+        """.trimIndent()
+        val out = MarkdownPreprocessor.prepare(md)
+        assertTrue(out.contains("**核心概念：**\n\n| 概念 | 解释 |"))
+    }
 }

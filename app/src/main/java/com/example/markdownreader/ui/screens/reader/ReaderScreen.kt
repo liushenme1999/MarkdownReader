@@ -226,6 +226,9 @@ fun ReaderScreen(
     var pendingScrollRestoreBookmarkPreview by remember(readerContent) { mutableStateOf<String?>(null) }
     /** PDF 垂直滚动：按页码恢复视口（源码下标与 TextView 内下标不一致）。 */
     var pendingScrollRestorePdfPageIndex by remember(readerContent) { mutableStateOf<Int?>(null) }
+    /** 扩窗/异步 layout 后保留子像素 scroll，避免 snap 到行顶；目录/书签跳转仍为整行对齐。 */
+    var pendingScrollRestoreAnchor by remember(readerContent) { mutableStateOf<TextViewScrollAnchor?>(null) }
+    var pendingScrollRestoreSnapToLine by remember(readerContent) { mutableStateOf(true) }
     val displayedContent = remember(readerContent, displayWindowStartChar, displayWindowEndChar) {
         when {
             readerContent.isEmpty() -> ""
@@ -294,7 +297,7 @@ fun ReaderScreen(
         )
     }
 
-    // 仅打开/换书/切翻页模式时恢复横向页码；勿监听 readingProgress，避免翻页或目录跳转后被二次拉回。
+    // 仅打开/换书/切翻页模式时恢复横向页码；勿监听 readingProgress / currentPosition，避免滚动存盘后被二次拉回。
     LaunchedEffect(
         bookId,
         readerContent,
@@ -302,8 +305,6 @@ fun ReaderScreen(
         readerLoadEpoch,
         pageTurnMode,
         isPdfBook,
-        book?.currentPosition,
-        book?.totalChars,
     ) {
         if (readerContent.isEmpty()) return@LaunchedEffect
         if (pageTurnMode == ReaderPageTurnMode.VerticalScroll || pageSpecs.isEmpty()) return@LaunchedEffect
@@ -355,6 +356,8 @@ fun ReaderScreen(
     }
     var scrollAccumForHideChrome by remember { mutableIntStateOf(0) }
     var lastScrollProgressSaveMs by remember { mutableLongStateOf(0L) }
+    /** 最近一次滚动保存的全书字符锚点；退出时 TextView 不可用则作 fallback。 */
+    var lastScrollTopGlobalChar by remember(readerContent) { mutableIntStateOf(-1) }
     /** 惰性扩窗防抖：连续滑动时合并为一次，避免边滑边整段重排 Markwon。 */
     var expandWindowDownToken by remember { mutableIntStateOf(0) }
     var expandWindowUpToken by remember { mutableIntStateOf(0) }
@@ -374,13 +377,12 @@ fun ReaderScreen(
         showTopBar = false
     }
 
+    // 仅打开/换书/切模式时初始化窗口；勿监听 currentPosition，滚动存盘会误触发整页重排与跳 scroll。
     LaunchedEffect(
         bookId,
         readerContent,
         pageTurnMode,
         readerLoadEpoch,
-        book?.currentPosition,
-        book?.totalChars,
     ) {
         if (readerContent.isEmpty()) {
             displayWindowStartChar = 0
@@ -403,6 +405,9 @@ fun ReaderScreen(
         displayWindowStartChar = start
         displayWindowEndChar = end
         pendingScrollRestoreGlobalChar = targetChar
+        pendingScrollRestoreAnchor = null
+        pendingScrollRestoreSnapToLine = false
+        lastScrollTopGlobalChar = targetChar
     }
 
     // 向下扩窗：与向上扩窗相同，按视口顶部字符锚点恢复，并等待 Markdown 渲染完成。
@@ -433,6 +438,10 @@ fun ReaderScreen(
             return@LaunchedEffect
         }
         val tv = readerTextView.value
+        if (tv != null && tv.layout != null) {
+            pendingScrollRestoreAnchor = captureTextViewScrollAnchor(tv, displayWindowStartChar)
+            pendingScrollRestoreSnapToLine = false
+        }
         val globalChar = globalSourceCharAtTextViewTop(
             sourceContent = readerContent,
             windowStart = displayWindowStartChar,
@@ -472,6 +481,10 @@ fun ReaderScreen(
             return@LaunchedEffect
         }
         val tv = readerTextView.value
+        if (tv != null && tv.layout != null) {
+            pendingScrollRestoreAnchor = captureTextViewScrollAnchor(tv, winStart)
+            pendingScrollRestoreSnapToLine = false
+        }
         val globalChar = globalSourceCharAtTextViewTop(
             sourceContent = readerContent,
             windowStart = winStart,
@@ -498,6 +511,8 @@ fun ReaderScreen(
             pendingScrollRestoreGlobalChar = null
             pendingScrollRestoreBookmarkPreview = null
             pendingScrollRestorePdfPageIndex = null
+            pendingScrollRestoreAnchor = null
+            pendingScrollRestoreSnapToLine = true
             return@LaunchedEffect
         }
         val winStart = displayWindowStartChar
@@ -526,9 +541,15 @@ fun ReaderScreen(
             pendingScrollRestoreGlobalChar = null
             pendingScrollRestoreBookmarkPreview = null
             pendingScrollRestorePdfPageIndex = null
+            pendingScrollRestoreAnchor = null
+            pendingScrollRestoreSnapToLine = true
             windowExpandInFlight = false
             return@LaunchedEffect
         }
+
+        val scrollAnchor = pendingScrollRestoreAnchor
+        val snapToLine = pendingScrollRestoreSnapToLine
+        val bookmarkPreview = pendingScrollRestoreBookmarkPreview
 
         val offset = when {
             isPdfBook && pdfPageIndex != null -> resolvePdfDisplayedCharOffset(
@@ -539,27 +560,61 @@ fun ReaderScreen(
             )
             anchorGlobal != null -> {
                 val safeAnchor = anchorGlobal.coerceIn(0, readerContent.length - 1)
-                val preferredEntry = tocEntries.find { it.sourceOffset == safeAnchor }
-                resolveDisplayedCharOffset(
-                    sourceContent = readerContent,
-                    sourceOffset = safeAnchor,
-                    displayedText = tv.text,
-                    renderPlainText = renderPlainText,
-                    windowStart = winStart,
-                    tocEntries = tocEntries,
-                    preferredEntry = preferredEntry,
-                    preferredText = pendingScrollRestoreBookmarkPreview,
-                )
+                if (pendingScrollRestoreBookmarkPreview != null) {
+                    val preferredEntry = tocEntries.find { it.sourceOffset == safeAnchor }
+                    resolveDisplayedCharOffset(
+                        sourceContent = readerContent,
+                        sourceOffset = safeAnchor,
+                        displayedText = tv.text,
+                        renderPlainText = renderPlainText,
+                        windowStart = winStart,
+                        tocEntries = tocEntries,
+                        preferredEntry = preferredEntry,
+                        preferredText = bookmarkPreview,
+                    )
+                } else {
+                    resolveDisplayedCharOffsetForProgressRestore(
+                        sourceOffset = safeAnchor,
+                        windowStart = winStart,
+                        windowEnd = displayWindowEndChar,
+                        displayedLen = tv.text?.length ?: 0,
+                        renderPlainText = renderPlainText,
+                    )
+                }
             }
             else -> return@LaunchedEffect
         }
         fun applyScroll() {
-            tv.post { scrollTextViewToCharOffset(tv, offset) }
+            tv.post {
+                when {
+                    scrollAnchor != null && !snapToLine -> {
+                        restoreTextViewScrollAfterWindowChange(
+                            tv = tv,
+                            anchor = scrollAnchor,
+                            newWindowStart = winStart,
+                            newWindowEnd = displayWindowEndChar,
+                            renderPlainText = renderPlainText,
+                        )
+                    }
+                    bookmarkPreview != null || snapToLine -> scrollTextViewToCharOffset(tv, offset)
+                    anchorGlobal != null -> scrollTextViewToSourceProgressAnchor(
+                        tv = tv,
+                        sourceContent = readerContent,
+                        sourceOffset = anchorGlobal.coerceIn(0, readerContent.length - 1),
+                        windowStart = winStart,
+                        windowEnd = displayWindowEndChar,
+                        renderPlainText = renderPlainText,
+                    )
+                    else -> scrollTextViewToCharOffset(tv, offset)
+                }
+            }
         }
         applyScroll()
         pendingScrollRestoreGlobalChar = null
         pendingScrollRestoreBookmarkPreview = null
         pendingScrollRestorePdfPageIndex = null
+        pendingScrollRestoreAnchor = null
+        pendingScrollRestoreSnapToLine = true
         windowExpandInFlight = false
     }
 
@@ -573,7 +628,9 @@ fun ReaderScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     ShelfStyleSystemBarsEffect(systemBarChromeColor)
     val persistTopPositionNow by rememberUpdatedState {
-        currentTopGlobalChar()?.let { viewModel.updateReadingProgressAtCharNow(it) }
+        val topChar = currentTopGlobalChar()
+            ?: lastScrollTopGlobalChar.takeIf { it >= 0 }
+        topChar?.let { viewModel.persistReadingPositionBlocking(it) }
     }
 
     DisposableEffect(lifecycleOwner, bookId) {
@@ -709,6 +766,27 @@ fun ReaderScreen(
                                     onTextSelected = {},
                                     onScroll = { _ ->
                                         val readerTv = readerTextView.value as? SafeReaderTextView
+                                        if (readerTv != null &&
+                                            readerTv.allowReaderScrollSideEffects &&
+                                            !readerTv.shouldSuppressReaderScrollSideEffects() &&
+                                            !windowExpandInFlight &&
+                                            pendingScrollRestoreGlobalChar == null
+                                        ) {
+                                            val now = System.currentTimeMillis()
+                                            if (now - lastScrollProgressSaveMs >= 200L) {
+                                                lastScrollProgressSaveMs = now
+                                                val estimated = globalSourceCharAtTextViewTop(
+                                                    sourceContent = readerContent,
+                                                    windowStart = displayWindowStartChar,
+                                                    windowEnd = displayWindowEndChar,
+                                                    textView = readerTv,
+                                                    renderPlainText = renderPlainText,
+                                                    tocEntries = tocEntries,
+                                                )
+                                                lastScrollTopGlobalChar = estimated
+                                                viewModel.updateReadingProgressAtChar(estimated)
+                                            }
+                                        }
                                         if (readerTv?.allowReaderScrollSideEffects != true ||
                                             !readerTv.isUserVerticalScrollDrag() ||
                                             readerTv.shouldSuppressReaderScrollSideEffects() ||
@@ -721,19 +799,6 @@ fun ReaderScreen(
                                         }
                                         val winStart = displayWindowStartChar
                                         val winEnd = displayWindowEndChar
-                                        val now = System.currentTimeMillis()
-                                        if (now - lastScrollProgressSaveMs >= 200L) {
-                                            lastScrollProgressSaveMs = now
-                                            val estimated = globalSourceCharAtTextViewTop(
-                                                sourceContent = readerContent,
-                                                windowStart = winStart,
-                                                windowEnd = winEnd,
-                                                textView = readerTv,
-                                                renderPlainText = renderPlainText,
-                                                tocEntries = tocEntries,
-                                            )
-                                            viewModel.updateReadingProgressAtChar(estimated)
-                                        }
                                         if (winStart > 0 &&
                                             !windowExpandInFlight &&
                                             pendingScrollRestoreGlobalChar == null &&
@@ -1041,6 +1106,8 @@ fun ReaderScreen(
                         )
                     } else {
                         pendingScrollRestoreBookmarkPreview = bookmarkPreview
+                        pendingScrollRestoreAnchor = null
+                        pendingScrollRestoreSnapToLine = true
                         jumpToCharInChunkWindow(
                             contentLen = contentLen,
                             chapterBoundaries = chapterBoundaries,
@@ -1114,6 +1181,8 @@ fun ReaderScreen(
                             onProgress = { viewModel.updateReadingProgressAtChar(charPos) },
                         )
                     } else {
+                        pendingScrollRestoreAnchor = null
+                        pendingScrollRestoreSnapToLine = true
                         jumpToCharInChunkWindow(
                             contentLen = contentLen,
                             chapterBoundaries = chapterBoundaries,

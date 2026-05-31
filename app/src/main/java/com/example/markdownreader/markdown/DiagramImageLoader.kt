@@ -15,8 +15,8 @@ import android.util.LruCache
 import android.widget.TextView
 import com.example.markdownreader.MarkdownReaderApp
 import com.example.markdownreader.ui.screens.reader.SafeReaderTextView
-import com.example.markdownreader.ui.screens.reader.charOffsetAtScrollTop
-import com.example.markdownreader.ui.screens.reader.scrollTextViewToCharOffset
+import com.example.markdownreader.ui.screens.reader.captureTextViewScrollAnchor
+import com.example.markdownreader.ui.screens.reader.scrollTextViewPreservingScrollY
 import io.noties.markwon.image.AsyncDrawable
 import io.noties.markwon.image.AsyncDrawableSpan
 import java.io.File
@@ -297,13 +297,13 @@ internal object DiagramImageLoader {
                     drawable.initWithKnownDimensions(lineWidth, aspect)
                 }
                 drawable.invalidateSelf()
-                val anchorChar = charOffsetAtScrollTop(host)
+                val scrollAnchor = captureTextViewScrollAnchor(host, windowStart = 0)
                 host.invalidate()
                 host.requestLayout()
                 host.post {
                     try {
                         if (host.layout == null) return@post
-                        scrollTextViewToCharOffset(host, anchorChar)
+                        scrollTextViewPreservingScrollY(host, scrollAnchor.scrollY)
                     } finally {
                         if (host is SafeReaderTextView) {
                             host.endAsyncScrollSuppression()
