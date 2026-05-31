@@ -105,7 +105,7 @@ fun NotesScreen(
             )
 
             // 标签页切换
-            TabRow(selectedTabIndex = selectedTab) {
+            PrimaryTabRow(selectedTabIndex = selectedTab) {
                 Tab(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
@@ -669,7 +669,7 @@ private fun NotesScreenPreviewImpl(navController: NavController) {
                     .padding(horizontal = 16.dp, vertical = 8.dp)
             )
 
-            TabRow(selectedTabIndex = selectedTab) {
+            PrimaryTabRow(selectedTabIndex = selectedTab) {
                 Tab(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },

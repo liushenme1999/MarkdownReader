@@ -38,6 +38,8 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Toc
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -154,7 +156,7 @@ internal fun ReaderImmersiveBottomBar(
             val iconTint = theme.textColor
             IconButton(onClick = onToc) {
                 Icon(
-                    imageVector = Icons.Default.Toc,
+                    imageVector = Icons.AutoMirrored.Filled.Toc,
                     contentDescription = "目录",
                     tint = iconTint
                 )
@@ -239,7 +241,7 @@ internal fun ReaderTopAppBar(
         },
         navigationIcon = {
             IconButton(onClick = onNavigateBack) {
-                Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
             }
         }
     )

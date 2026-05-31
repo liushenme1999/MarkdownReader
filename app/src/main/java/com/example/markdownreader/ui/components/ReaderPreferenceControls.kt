@@ -21,7 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.SwapVert
@@ -422,6 +422,6 @@ private fun pageTurnModePresentation(mode: ReaderPageTurnMode): Pair<ImageVector
     when (mode) {
         ReaderPageTurnMode.VerticalScroll -> Icons.Default.SwapVert to "连续滚动，适合长文与 Markdown"
         ReaderPageTurnMode.HorizontalSwipe -> Icons.AutoMirrored.Filled.ViewList to "左右滑动翻页"
-        ReaderPageTurnMode.SimulationPageTurn -> Icons.Filled.MenuBook to "仿真卷曲翻页效果"
+        ReaderPageTurnMode.SimulationPageTurn -> Icons.AutoMirrored.Filled.MenuBook to "仿真卷曲翻页效果"
         ReaderPageTurnMode.CoverPageTurn -> Icons.Default.ViewCarousel to "新页覆盖旧页"
     }

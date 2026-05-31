@@ -1,15 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <lint>
-    <!-- 严格模式 -->
-    <issue id="Enabled" severity="enabled" />
-    <issue id="ExplicitThis" severity="enabled" />
-
     <!-- 安全隐患 -->
     <issue id="HardcodedDebugMode" severity="warning" />
     <issue id="AllowBackup" severity="warning" />
     <issue id="AllowBackupInnerClasses" severity="warning" />
     <issue id="SetJavaScriptEnabled" severity="warning" />
-    <issue id="UnsafeNativeCodeLocation" severity="warning" />
     <issue id="ExportedContentProvider" severity="warning" />
     <issue id="ExportedReceiver" severity="warning" />
     <issue id="ExportedService" severity="warning" />
@@ -46,12 +41,12 @@
 
     <!-- Kotlin 相关 -->
     <issue id="KotlinPropertyAccess" severity="warning" />
-    <issue id="KotlinNullSafe" severity="enabled" />
+    <issue id="UnknownNullness" severity="warning" />
 
     <!-- Compose 相关 -->
-    <issue id="ComposeModifierDefault" severity="enabled" />
-    <issue id="ComposeModifierMissing" severity="enabled" />
-    <issue id="ComposeStableCount" severity="enabled" />
+    <issue id="ComposeModifierMissing" severity="warning" />
+    <issue id="ComposeModifierWithoutDefault" severity="warning" />
+    <issue id="ModifierParameter" severity="warning" />
 
     <!-- 忽略的检查 -->
     <issue id="UnusedResources" severity="ignore" />
@@ -62,6 +57,5 @@
     <issue id="AppCompatCustomView" severity="ignore" />
     <issue id="AppCompatResource" severity="ignore" />
     <issue id="TextFields" severity="ignore" />
-    <issue id=" SpannableString" severity="ignore" />
     <issue id="UnsafeNativeCodeLocation" severity="ignore" />
 </lint>

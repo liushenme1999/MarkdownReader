@@ -20,7 +20,9 @@ object ReaderMarkwonFactory {
 
     fun create(context: Context): Markwon {
         val appContext = context.applicationContext
-        val latexTextSize = 15f * appContext.resources.displayMetrics.scaledDensity
+        val metrics = appContext.resources.displayMetrics
+        val fontScale = appContext.resources.configuration.fontScale
+        val latexTextSize = 15f * metrics.density * fontScale
         return Markwon.builder(appContext)
             .usePlugin(CorePlugin.create())
             .usePlugin(SoftBreakAddsNewLinePlugin.create())

@@ -13,6 +13,8 @@ import android.os.Looper
 import android.util.Log
 import android.view.View
 import android.webkit.JavascriptInterface
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -215,13 +217,17 @@ internal object DiagramWebViewRenderer {
             }
 
             override fun onReceivedError(
-                view: WebView?,
-                errorCode: Int,
-                description: String?,
-                failingUrl: String?,
+                view: WebView,
+                request: WebResourceRequest,
+                error: WebResourceError,
             ) {
-                Log.w(TAG, "WebView error $errorCode: $description ($failingUrl)")
-                complete(null)
+                if (request.isForMainFrame) {
+                    Log.w(
+                        TAG,
+                        "WebView error ${error.errorCode}: ${error.description} (${request.url})",
+                    )
+                    complete(null)
+                }
             }
         }
 
@@ -241,8 +247,11 @@ internal object DiagramWebViewRenderer {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.allowFileAccess = true
-            settings.allowFileAccessFromFileURLs = true
-            settings.allowUniversalAccessFromFileURLs = true
+            @Suppress("DEPRECATION")
+            run {
+                settings.allowFileAccessFromFileURLs = true
+                settings.allowUniversalAccessFromFileURLs = true
+            }
             settings.loadsImagesAutomatically = true
             settings.useWideViewPort = true
             settings.loadWithOverviewMode = false

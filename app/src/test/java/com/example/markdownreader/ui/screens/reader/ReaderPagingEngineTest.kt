@@ -152,4 +152,40 @@ class ReaderPagingEngineTest {
         )
         assertEquals(sourceOffset, offset)
     }
+
+    @Test
+    fun resolveDisplayedCharOffset_markdown_tocJumpPrefersTitleOverProportional() {
+        val section1 = "# 一、标题\n" + "x\n".repeat(40)
+        val latexBlock = "上标：\$x^2\$" + " ".repeat(120) + "\n下标：\$y_1\$" + " ".repeat(120) + "\n"
+        val section2Title = "# 二、基础文本样式"
+        val full = section1 + latexBlock + section2Title + "\n正文"
+        val sourceOffset = full.indexOf(section2Title)
+        val rendered = "一、标题\n" + "x\n".repeat(40) +
+            "上标：x²\n下标：y₁\n" +
+            "二、基础文本样式\n正文"
+        val toc = listOf(
+            MarkdownTocEntry(1, "一、标题", 0),
+            MarkdownTocEntry(1, "二、基础文本样式", sourceOffset),
+        )
+        val expected = rendered.indexOf("二、基础文本样式")
+        val headingOffset = resolveDisplayedCharOffset(
+            sourceContent = full,
+            sourceOffset = sourceOffset,
+            displayedText = rendered,
+            renderPlainText = false,
+            windowStart = 0,
+            windowEnd = full.length,
+            tocEntries = toc,
+            preferredEntry = toc[1],
+        )
+        val proportional = resolveDisplayedCharOffsetForProgressRestore(
+            sourceOffset = sourceOffset,
+            windowStart = 0,
+            windowEnd = full.length,
+            displayedLen = rendered.length,
+            renderPlainText = false,
+        )
+        assertEquals(expected, headingOffset)
+        assertTrue(proportional != expected)
+    }
 }

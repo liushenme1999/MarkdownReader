@@ -20,8 +20,7 @@ internal object RenderedAnchorBinder {
         slug: String,
         sourceIndex: MarkdownAnchorIndex,
     ): Int? {
-        val rendered = textView.getTag(R.id.markdown_anchor_rendered)
-            as? Map<String, Int>
+        val rendered = textView.renderedAnchorOffsets()
         if (rendered != null) {
             val key = MarkdownAnchorIndex.slugify(slug)
             rendered[key]?.let { return it }
@@ -66,4 +65,8 @@ internal object RenderedAnchorBinder {
         }
         return null
     }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun TextView.renderedAnchorOffsets(): Map<String, Int>? =
+        getTag(R.id.markdown_anchor_rendered) as? Map<String, Int>
 }

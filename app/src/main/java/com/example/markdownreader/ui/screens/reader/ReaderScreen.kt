@@ -555,20 +555,31 @@ fun ReaderScreen(
             )
             anchorGlobal != null -> {
                 val safeAnchor = anchorGlobal.coerceIn(0, readerContent.length - 1)
-                if (pendingScrollRestoreBookmarkPreview != null) {
-                    val preferredEntry = tocEntries.find { it.sourceOffset == safeAnchor }
-                    resolveDisplayedCharOffset(
+                val preferredEntry = tocEntries.find { it.sourceOffset == safeAnchor }
+                    ?: tocEntries.getOrNull(tocIndexForSourceOffset(tocEntries, safeAnchor))
+                when {
+                    bookmarkPreview != null -> resolveDisplayedCharOffset(
                         sourceContent = readerContent,
                         sourceOffset = safeAnchor,
                         displayedText = tv.text,
                         renderPlainText = renderPlainText,
                         windowStart = winStart,
+                        windowEnd = displayWindowEndChar,
                         tocEntries = tocEntries,
                         preferredEntry = preferredEntry,
                         preferredText = bookmarkPreview,
                     )
-                } else {
-                    resolveDisplayedCharOffsetForProgressRestore(
+                    snapToLine -> resolveDisplayedCharOffset(
+                        sourceContent = readerContent,
+                        sourceOffset = safeAnchor,
+                        displayedText = tv.text,
+                        renderPlainText = renderPlainText,
+                        windowStart = winStart,
+                        windowEnd = displayWindowEndChar,
+                        tocEntries = tocEntries,
+                        preferredEntry = preferredEntry,
+                    )
+                    else -> resolveDisplayedCharOffsetForProgressRestore(
                         sourceOffset = safeAnchor,
                         windowStart = winStart,
                         windowEnd = displayWindowEndChar,
@@ -658,13 +669,17 @@ fun ReaderScreen(
         }
         val window = activity.window
         val controller = WindowCompat.getInsetsController(window, view)
+        @Suppress("DEPRECATION")
         val prevStatusColor = window.statusBarColor
         val prevLightStatusBars = controller.isAppearanceLightStatusBars
+        @Suppress("DEPRECATION")
         val prevNavColor = window.navigationBarColor
         val prevLightNavBars = controller.isAppearanceLightNavigationBars
         onDispose {
+            @Suppress("DEPRECATION")
             window.statusBarColor = prevStatusColor
             controller.isAppearanceLightStatusBars = prevLightStatusBars
+            @Suppress("DEPRECATION")
             window.navigationBarColor = prevNavColor
             controller.isAppearanceLightNavigationBars = prevLightNavBars
         }

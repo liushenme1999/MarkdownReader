@@ -5,7 +5,6 @@ import android.text.Spanned
 import android.view.Gravity
 import android.view.ViewTreeObserver
 import android.widget.TextView
-import io.noties.markwon.image.AsyncDrawable
 import io.noties.markwon.image.AsyncDrawableSpan
 
 /**
@@ -128,7 +127,6 @@ internal object PdfImageLayoutHelper {
         var changed = false
         for (span in spans) {
             val drawable = span.drawable
-            val async = drawable as? AsyncDrawable
             val intrinsicW = drawable.intrinsicWidth.coerceAtLeast(1)
             val intrinsicH = drawable.intrinsicHeight.coerceAtLeast(1)
             var targetW = contentWidth
@@ -139,7 +137,7 @@ internal object PdfImageLayoutHelper {
             }
             if (drawable.bounds.width() != targetW || drawable.bounds.height() != targetH) {
                 drawable.setBounds(0, 0, targetW, targetH)
-                async?.initWithKnownDimensions(targetW, intrinsicH.toFloat() / intrinsicW)
+                drawable.initWithKnownDimensions(targetW, intrinsicH.toFloat() / intrinsicW)
                 changed = true
             }
             installDrawableRelayoutCallback(textView, drawable)

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -106,7 +107,7 @@ private fun StatisticsOverview(stats: ReadingStatistics) {
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
                 StatItem(
-                    icon = Icons.Default.MenuBook,
+                    icon = Icons.AutoMirrored.Filled.MenuBook,
                     value = "${stats.totalBooks}",
                     label = "书籍总数"
                 )
@@ -620,7 +621,7 @@ private fun BookProgressItem(book: BookEntity, onClick: () -> Unit) {
 
             // 进度条
             LinearProgressIndicator(
-                progress = book.readingProgress,
+                progress = { book.readingProgress },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(4.dp),

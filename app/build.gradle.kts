@@ -1,8 +1,22 @@
+import com.android.build.api.dsl.ApplicationExtension
+import java.io.File
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt.android)
+}
+
+// 与 res/values/strings.xml 中的 app_name 保持一致
+val apkBaseName = "MD阅读器"
+
+val localProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        localPropertiesFile.inputStream().use { load(it) }
+    }
 }
 
 android {
@@ -22,8 +36,20 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            val storeFilePath = localProperties.getProperty("RELEASE_STORE_FILE")
+                ?: "signing/release.keystore"
+            storeFile = rootProject.file(storeFilePath)
+            storePassword = localProperties.getProperty("RELEASE_STORE_PASSWORD") ?: "markdownreader"
+            keyAlias = localProperties.getProperty("RELEASE_KEY_ALIAS") ?: "markdownreader"
+            keyPassword = localProperties.getProperty("RELEASE_KEY_PASSWORD") ?: "markdownreader"
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -41,7 +67,6 @@ android {
     }
     buildFeatures {
         compose = true
-        buildConfig = true
     }
     packaging {
         resources {
@@ -51,6 +76,87 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
+        }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        // Hilt/Dagger 构造函数参数注解（如 @ApplicationContext）需要同时作用于 param 和 property
+        freeCompilerArgs.add("-Xannotation-default-target=param-property")
+    }
+}
+
+val appVersionName = extensions.getByType<ApplicationExtension>()
+    .defaultConfig
+    .versionName
+    ?: "unknown"
+
+listOf("debug", "release").forEach { buildType ->
+    val capitalizedBuildType = buildType.replaceFirstChar { it.titlecase() }
+    val targetApkName = "${apkBaseName}_${buildType}_${appVersionName}.apk"
+    val gradleApkOutputPath = layout.buildDirectory.dir("outputs/apk/$buildType")
+    val studioApkOutputPath = layout.projectDirectory.dir(buildType)
+
+    val renameApk = tasks.register("rename${capitalizedBuildType}Apk") {
+        notCompatibleWithConfigurationCache("Renames APK files on disk after packaging")
+        val targetName = targetApkName
+        val gradleOutputPath = gradleApkOutputPath
+        val studioOutputPath = studioApkOutputPath
+
+        doLast {
+            fun renameInDirectory(directory: File) {
+                if (!directory.isDirectory) return
+
+                val targetApk = directory.resolve(targetName)
+                if (!targetApk.isFile) {
+                    val sourceApk = directory.listFiles()
+                        ?.filter { it.isFile && it.extension.equals("apk", ignoreCase = true) }
+                        ?.maxByOrNull { it.lastModified() }
+                        ?: return
+
+                    if (sourceApk.name != targetName) {
+                        targetApk.delete()
+                        check(sourceApk.renameTo(targetApk)) {
+                            "Failed to rename ${sourceApk.name} to $targetName in ${directory.path}"
+                        }
+                    }
+                }
+
+                directory.listFiles()
+                    ?.filter {
+                        it.isFile &&
+                            it.extension.equals("apk", ignoreCase = true) &&
+                            it.name != targetName
+                    }
+                    ?.forEach { it.delete() }
+            }
+
+            renameInDirectory(gradleOutputPath.get().asFile)
+
+            val studioOutputDir = studioOutputPath.asFile
+            val gradleOutputDir = gradleOutputPath.get().asFile
+            val renamedGradleApk = gradleOutputDir.resolve(targetName)
+
+            if (renamedGradleApk.isFile) {
+                studioOutputDir.mkdirs()
+                renamedGradleApk.copyTo(studioOutputDir.resolve(targetName), overwrite = true)
+                studioOutputDir.listFiles()
+                    ?.filter {
+                        it.isFile &&
+                            it.extension.equals("apk", ignoreCase = true) &&
+                            it.name != targetName
+                    }
+                    ?.forEach { it.delete() }
+            } else {
+                renameInDirectory(studioOutputDir)
+            }
+        }
+    }
+
+    tasks.configureEach {
+        if (name == "assemble$capitalizedBuildType" || name == "package$capitalizedBuildType") {
+            finalizedBy(renameApk)
         }
     }
 }

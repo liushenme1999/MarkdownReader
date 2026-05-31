@@ -4,7 +4,6 @@ import android.content.Context
 import android.text.Spanned
 import android.widget.TextView
 import io.noties.markwon.AbstractMarkwonPlugin
-import io.noties.markwon.image.AsyncDrawable
 import io.noties.markwon.image.AsyncDrawableSpan
 
 /**
@@ -32,9 +31,7 @@ internal class DiagramImagesPlugin(
         val spans = text.getSpans(0, text.length, AsyncDrawableSpan::class.java) ?: return
         for (span in spans) {
             val drawable = span.drawable
-            if (drawable is AsyncDrawable &&
-                drawable.destination?.startsWith("${DiagramSchemeHandler.SCHEME}://") == true
-            ) {
+            if (drawable.destination.startsWith("${DiagramSchemeHandler.SCHEME}://")) {
                 DiagramImageLoader.cancel(drawable)
             }
         }

@@ -20,8 +20,10 @@ object SystemBarAppearance {
         window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
         @Suppress("DEPRECATION")
         window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS)
+        @Suppress("DEPRECATION")
         window.statusBarColor = colorArgb
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            @Suppress("DEPRECATION")
             window.isStatusBarContrastEnforced = false
         }
         WindowInsetsControllerCompat(window, view).apply {
@@ -33,6 +35,7 @@ object SystemBarAppearance {
         val window = activity.window
         @Suppress("DEPRECATION")
         window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+        @Suppress("DEPRECATION")
         window.navigationBarColor = colorArgb
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             window.isNavigationBarContrastEnforced = false
