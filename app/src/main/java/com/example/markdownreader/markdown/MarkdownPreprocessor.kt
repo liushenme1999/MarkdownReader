@@ -126,8 +126,8 @@ object MarkdownPreprocessor {
     private val PICSUM_SIZE_IN_URL = Regex("""picsum\.photos/(\d+)/(\d+)""")
 
     /**
-     * 将含尺寸的 Picsum 等网络图从 `![]()` 转为 `<img width height>`，与 [ImageAssetUtils] 一致，
-     * 避免 Markdown 图加载后二次 layout 产生「与图片同高的空白」。
+     * 将网络图从 `![]()` / `[![](img)](url)` 转为 HTML，与 [ImageAssetUtils] 一致；
+     * 含尺寸的 URL 可预占位，嵌套超链接统一为 `<a><img></a>` 以便 Markwon 正确挂接 LinkSpan。
      */
     internal fun convertNetworkImagesToHtmlImg(markdown: String): String {
         if (!markdown.contains("![")) return markdown
@@ -136,8 +136,12 @@ object MarkdownPreprocessor {
             val imgUrl = m.groupValues[2]
             val linkUrl = m.groupValues[3]
             if (imgUrl.startsWith("diagram://")) return@replace m.value
-            val dims = picsumPixelSize(imgUrl) ?: return@replace m.value
-            val img = ImageAssetUtils.buildImgTag(imgUrl, alt.takeIf { it.isNotBlank() }, dims.first, dims.second)
+            val dims = picsumPixelSize(imgUrl)
+            val img = if (dims != null) {
+                ImageAssetUtils.buildImgTag(imgUrl, alt.takeIf { it.isNotBlank() }, dims.first, dims.second)
+            } else {
+                ImageAssetUtils.buildImgTag(imgUrl, alt.takeIf { it.isNotBlank() })
+            }
             """<a href="$linkUrl">$img</a>"""
         }
         out = MD_IMAGE.replace(out) { m ->

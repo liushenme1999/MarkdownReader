@@ -114,8 +114,15 @@ class ReaderViewModel @Inject constructor(
     private var bookmarkCollectJob: Job? = null
     private var highlightCollectJob: Job? = null
     private var progressPersistJob: Job? = null
+    /** 当前 ViewModel 会话内已成功装载的正文 bookId；WebLink 返回等同书时不重复 load。 */
+    private var loadedBookId: Long? = null
 
     fun loadBook(context: Context, bookId: Long) {
+        if (loadedBookId == bookId && _content.value.isNotEmpty() && _book.value?.id == bookId) {
+            return
+        }
+        loadedBookId = bookId
+
         loadBookJob?.cancel()
         bookmarkCollectJob?.cancel()
         highlightCollectJob?.cancel()
@@ -130,6 +137,7 @@ class ReaderViewModel @Inject constructor(
             _book.value = bookEntity
 
             if (bookEntity == null) {
+                loadedBookId = null
                 _content.value = ""
                 _loadError.value = "找不到该书，可能已被删除。"
                 _readerLoadEpoch.value = _readerLoadEpoch.value + 1L
@@ -200,6 +208,13 @@ class ReaderViewModel @Inject constructor(
         viewModelScope.launch {
             persistReadingProgress(progress, pos)
         }
+    }
+
+    /** 窗口/翻页恢复时优先用会话内视口锚点，避免 [_book.currentPosition] 滞后于内存进度。 */
+    fun readingCharPosForRestore(): Int {
+        val contentLen = _content.value.length
+        if (contentLen <= 0) return 0
+        return lastKnownReadingCharPos.coerceIn(0, contentLen)
     }
 
     /** 退出阅读页时同步落盘，避免 ON_PAUSE 异步写入未完成。 */

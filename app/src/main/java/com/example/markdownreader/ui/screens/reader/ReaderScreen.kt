@@ -88,6 +88,7 @@ import androidx.navigation.NavController
 import com.example.markdownreader.data.local.entity.HighlightEntity
 import com.example.markdownreader.importing.ImportedBookFormat
 import com.example.markdownreader.importing.PdfReaderContent
+import com.example.markdownreader.markdown.MarkdownLinkDispatcher
 import com.example.markdownreader.model.ReaderPageTurnMode
 import com.example.markdownreader.ui.components.ShelfStyleStatusBarBackdrop
 import com.example.markdownreader.ui.components.ShelfStyleSystemBarsEffect
@@ -308,12 +309,9 @@ fun ReaderScreen(
     ) {
         if (readerContent.isEmpty()) return@LaunchedEffect
         if (pageTurnMode == ReaderPageTurnMode.VerticalScroll || pageSpecs.isEmpty()) return@LaunchedEffect
-        val totalC = book?.totalChars?.takeIf { it > 0 } ?: readerContent.length
-        val charPos = resolveStoredCharPos(
-            currentPosition = book?.currentPosition ?: 0,
-            readingProgress = readingProgress,
-            contentLength = readerContent.length,
-            totalChars = totalC,
+        val charPos = viewModel.readingCharPosForRestore().coerceIn(
+            0,
+            (readerContent.length - 1).coerceAtLeast(0),
         )
         val pdfPageIndex = if (isPdfBook) {
             PdfReaderContent.pageIndexForSourceOffset(readerContent, charPos)
@@ -394,12 +392,9 @@ fun ReaderScreen(
             displayWindowEndChar = readerContent.length
             return@LaunchedEffect
         }
-        val totalC = book?.totalChars?.takeIf { it > 0 } ?: readerContent.length
-        val targetChar = resolveStoredCharPos(
-            currentPosition = book?.currentPosition ?: 0,
-            readingProgress = readingProgress,
-            contentLength = readerContent.length,
-            totalChars = totalC,
+        val targetChar = viewModel.readingCharPosForRestore().coerceIn(
+            0,
+            (readerContent.length - 1).coerceAtLeast(0),
         )
         val (start, end) = computeReadingWindow(chapterBoundaries, targetChar, readerContent.length)
         displayWindowStartChar = start
@@ -643,6 +638,16 @@ fun ReaderScreen(
         onDispose {
             persistTopPositionNow()
             lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    DisposableEffect(bookId) {
+        val previous = MarkdownLinkDispatcher.onBeforeOpenWebUrl
+        MarkdownLinkDispatcher.onBeforeOpenWebUrl = {
+            persistTopPositionNow()
+        }
+        onDispose {
+            MarkdownLinkDispatcher.onBeforeOpenWebUrl = previous
         }
     }
 

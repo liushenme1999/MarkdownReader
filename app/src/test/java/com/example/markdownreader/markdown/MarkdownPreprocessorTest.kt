@@ -98,6 +98,16 @@ class MarkdownPreprocessorTest {
     }
 
     @Test
+    fun convertNetworkImagesToHtmlImg_linkedImageWithoutKnownSizeStillUsesHtmlAnchor() {
+        val md = "[![点击跳转官网](https://vcg05.cfp.cn/creative/vcg/nowater800/new/VCG211377589313.jpg)](https://www.example.com)"
+        val out = MarkdownPreprocessor.convertNetworkImagesToHtmlImg(md)
+        assertTrue(out.contains("<a href=\"https://www.example.com\">"))
+        assertTrue(out.contains("src=\"https://vcg05.cfp.cn/creative/vcg/nowater800/new/VCG211377589313.jpg\""))
+        assertTrue(out.contains("alt=\"点击跳转官网\""))
+        assertFalse(out.contains("!["))
+    }
+
+    @Test
     fun enrichHtmlImgTags_addsHeightForPicsumUrl() {
         val md = """<img src="https://picsum.photos/500/250" width="75%" alt="自适应">"""
         val out = MarkdownPreprocessor.enrichHtmlImgTags(md)

@@ -595,7 +595,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     /** DOWN 时命中链接，UP 时优先跳转而非进入 Editor 选词。 */
     private var pendingLinkSpan: ClickableSpan? = null
 
-    private val linkMovement = LinkMovementMethod.getInstance()
+    private val linkMovement = ReaderLinkMovementMethod.getInstance()
     private val selectionMovement = ArrowKeyMovementMethod.getInstance()
 
     private val emptySelectionActionMode = object : ActionMode.Callback {
