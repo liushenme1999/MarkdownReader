@@ -180,8 +180,9 @@ fun ReaderScreen(
         val stored = structuredToc.orEmpty()
         when {
             renderPlainText -> stored.ifEmpty { parsePlainTextToc(readerContent) }
+            readerContent.isNotEmpty() -> parseMarkdownToc(readerContent).ifEmpty { stored }
             stored.isNotEmpty() -> stored
-            else -> parseMarkdownToc(readerContent)
+            else -> emptyList()
         }
     }
     val emptyTocMessage = remember(renderPlainText) {
@@ -602,7 +603,10 @@ fun ReaderScreen(
                             renderPlainText = renderPlainText,
                         )
                     }
-                    bookmarkPreview != null || snapToLine -> scrollTextViewToCharOffset(tv, offset)
+                    bookmarkPreview != null || snapToLine -> {
+                        applyPendingScrollToCharOffset(tv, offset)
+                        schedulePendingScrollReapply(tv)
+                    }
                     anchorGlobal != null -> scrollTextViewToSourceProgressAnchor(
                         tv = tv,
                         sourceContent = readerContent,
@@ -786,6 +790,9 @@ fun ReaderScreen(
                                     onTextSelected = {},
                                     onScroll = { _ ->
                                         val readerTv = readerTextView.value as? SafeReaderTextView
+                                        if (readerTv != null && readerTv.isUserVerticalScrollDrag()) {
+                                            clearPendingScrollCharOffset(readerTv)
+                                        }
                                         if (readerTv != null &&
                                             readerTv.allowReaderScrollSideEffects &&
                                             !readerTv.shouldSuppressReaderScrollSideEffects() &&
@@ -813,7 +820,8 @@ fun ReaderScreen(
                                             readerTv.isGestureOnDiagram() ||
                                             isViewportTopOnDiagramSpan(readerTv) ||
                                             windowExpandInFlight ||
-                                            pendingScrollRestoreGlobalChar != null
+                                            pendingScrollRestoreGlobalChar != null ||
+                                            hasPendingScrollCharOffset(readerTv)
                                         ) {
                                             return@MarkdownReaderView
                                         }

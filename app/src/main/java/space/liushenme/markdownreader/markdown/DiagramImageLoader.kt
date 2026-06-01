@@ -16,6 +16,9 @@ import android.widget.TextView
 import space.liushenme.markdownreader.MarkdownReaderApp
 import space.liushenme.markdownreader.ui.screens.reader.SafeReaderTextView
 import space.liushenme.markdownreader.ui.screens.reader.captureTextViewScrollAnchor
+import space.liushenme.markdownreader.R
+import space.liushenme.markdownreader.ui.screens.reader.reapplyPendingScrollCharOffsetIfAny
+import space.liushenme.markdownreader.ui.screens.reader.schedulePendingScrollReapply
 import space.liushenme.markdownreader.ui.screens.reader.scrollTextViewPreservingScrollY
 import io.noties.markwon.image.AsyncDrawable
 import io.noties.markwon.image.AsyncDrawableSpan
@@ -54,10 +57,11 @@ internal object DiagramImageLoader {
         val bitmap = bitmapCache.get(payloadId)?.takeIf { !it.isRecycled }
             ?: loadDiskBitmap(context, payloadId)?.also { bitmapCache.put(payloadId, it) }
             ?: return null
+        val cropped = DiagramBitmapUtils.cropTrailingWhiteStrip(bitmap)
         val width = contentWidthPx.coerceAtLeast(1)
-        val height = (width * bitmap.height.toFloat() / bitmap.width.coerceAtLeast(1)).toInt()
+        val height = (width * cropped.height.toFloat() / cropped.width.coerceAtLeast(1)).toInt()
             .coerceAtLeast(1)
-        return BitmapDrawable(context.resources, bitmap).apply {
+        return BitmapDrawable(context.resources, cropped).apply {
             setBounds(0, 0, width, height)
         }
     }
@@ -278,42 +282,54 @@ internal object DiagramImageLoader {
                 Log.w(TAG, "bitmap null for ${drawable.destination}")
                 return@post
             }
-            val bmpDrawable = BitmapDrawable(context.resources, bitmap).apply {
-                setBounds(0, 0, bitmap.width, bitmap.height)
-            }
+            val cropped = DiagramBitmapUtils.cropTrailingWhiteStrip(bitmap)
             val host = hostView ?: run {
-                drawable.setResult(bmpDrawable)
-                drawable.invalidateSelf()
+                val width = context.resources.displayMetrics.widthPixels.coerceAtLeast(320)
+                applyScaledDiagramResult(drawable, context, cropped, width, 15f)
                 return@post
             }
             if (host is SafeReaderTextView) {
                 host.beginAsyncScrollSuppression()
             }
-            val applyLayout: () -> Unit = {
-                drawable.setResult(bmpDrawable)
-                val lineWidth = host.width - host.paddingLeft - host.paddingRight
-                if (lineWidth > 0) {
-                    val aspect = bitmap.height.toFloat() / bitmap.width.coerceAtLeast(1)
-                    drawable.initWithKnownDimensions(lineWidth, aspect)
-                }
-                drawable.invalidateSelf()
-                val scrollAnchor = captureTextViewScrollAnchor(host, windowStart = 0)
-                host.invalidate()
-                host.requestLayout()
-                host.post {
-                    try {
-                        if (host.layout == null) return@post
+            val lineWidth = contentWidthForHost(host, context)
+            applyScaledDiagramResult(drawable, context, cropped, lineWidth, host.textSize.coerceAtLeast(1f))
+            val scrollAnchor = captureTextViewScrollAnchor(host, windowStart = 0)
+            host.invalidate()
+            host.requestLayout()
+            host.post {
+                try {
+                    if (host.layout == null) return@post
+                    if (host.getTag(R.id.reader_pending_scroll_char_offset) != null) {
+                        reapplyPendingScrollCharOffsetIfAny(host)
+                        schedulePendingScrollReapply(host)
+                    } else {
                         scrollTextViewPreservingScrollY(host, scrollAnchor.scrollY)
-                    } finally {
-                        if (host is SafeReaderTextView) {
-                            host.endAsyncScrollSuppression()
-                        }
+                    }
+                } finally {
+                    if (host is SafeReaderTextView) {
+                        host.endAsyncScrollSuppression()
                     }
                 }
-                Log.d(TAG, "applied bitmap ${bitmap.width}x${bitmap.height} to ${drawable.destination}")
             }
-            applyLayout()
+            Log.d(TAG, "applied bitmap ${cropped.width}x${cropped.height} to ${drawable.destination}")
         }
+    }
+
+    /** 先设定 canvas 宽度再 setResult，避免 AsyncDrawable 沿用占位符时期的全像素 bounds 撑高行距。 */
+    private fun applyScaledDiagramResult(
+        drawable: AsyncDrawable,
+        context: Context,
+        bitmap: Bitmap,
+        lineWidthPx: Int,
+        textSizePx: Float,
+    ) {
+        val (width, height) = DiagramBitmapUtils.scaledDrawableBounds(bitmap, lineWidthPx)
+        val bmpDrawable = BitmapDrawable(context.resources, bitmap).apply {
+            setBounds(0, 0, width, height)
+        }
+        drawable.initWithKnownDimensions(width, textSizePx)
+        drawable.setResult(bmpDrawable)
+        drawable.invalidateSelf()
     }
 
     fun cancel(drawable: AsyncDrawable) {

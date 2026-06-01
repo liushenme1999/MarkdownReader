@@ -255,6 +255,9 @@ object MarkdownPreprocessor {
 
         val reordered = refOrder.ifEmpty { definitions.keys.toList() }
         val footer = buildString {
+            // 脚注区前必须有空行，否则 `---` 会被 Markwon 解析成 Setext 标题下划线，
+            // 把正文最后一行（如「# 二十、…」下的长段落）误渲染为 HeadingSpan，导致目录 rank 错位。
+            appendLine()
             appendLine()
             appendLine("---")
             appendLine("**脚注**")

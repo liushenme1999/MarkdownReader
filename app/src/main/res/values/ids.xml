@@ -3,4 +3,5 @@
     <item name="markdown_anchor_index" type="id" />
     <item name="markdown_anchor_rendered" type="id" />
     <item name="reader_markdown_render_complete" type="id" />
+    <item name="reader_pending_scroll_char_offset" type="id" />
 </resources>

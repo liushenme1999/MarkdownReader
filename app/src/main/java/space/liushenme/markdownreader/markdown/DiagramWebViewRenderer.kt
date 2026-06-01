@@ -343,28 +343,8 @@ internal object DiagramWebViewRenderer {
     }
 
     /** 裁掉底部多余白边（WebView 偶发比 SVG 高出数像素）。 */
-    private fun cropTrailingWhiteStrip(source: Bitmap): Bitmap {
-        val w = source.width
-        val h = source.height
-        if (w <= 0 || h <= 4) return source
-        var lastContentRow = h - 1
-        scan@ for (y in h - 1 downTo 0) {
-            var nonWhite = false
-            for (x in 0 until w step 8) {
-                if (source.getPixel(x, y) != Color.WHITE) {
-                    nonWhite = true
-                    break
-                }
-            }
-            if (nonWhite) {
-                lastContentRow = y
-                break@scan
-            }
-        }
-        val trimmedH = (lastContentRow + 2).coerceIn(1, h)
-        if (trimmedH >= h - 2) return source
-        return Bitmap.createBitmap(source, 0, 0, w, trimmedH)
-    }
+    internal fun cropTrailingWhiteStrip(source: Bitmap): Bitmap =
+        DiagramBitmapUtils.cropTrailingWhiteStrip(source)
 
     private fun Context.findActivity(): Activity? {
         var ctx: Context? = this

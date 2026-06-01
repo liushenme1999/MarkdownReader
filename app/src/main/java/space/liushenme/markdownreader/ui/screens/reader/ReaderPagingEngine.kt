@@ -266,6 +266,22 @@ internal fun computeReadingWindow(
     return start to end
 }
 
+/**
+ * 目录/书签跳转专用：窗口从目标章节边界起算，不向前回溯 [READER_INITIAL_LOOKBEHIND_CHARS]。
+ * 避免跳转到十八节后仍渲染十七节 Mermaid（尤其 17.4 思维导图）导致滚动被撑高行 clamp 在 17.4。
+ */
+internal fun computeTocJumpReadingWindow(
+    boundaries: IntArray,
+    charPos: Int,
+    contentLen: Int,
+): Pair<Int, Int> = computeReadingWindow(
+    boundaries = boundaries,
+    charPos = charPos,
+    contentLen = contentLen,
+    lookaheadChars = READER_INITIAL_LOOKAHEAD_CHARS,
+    lookbehindChars = 0,
+)
+
 internal fun extractSourceLineAt(source: String, sourceOffset: Int): String {
     if (source.isEmpty()) return ""
     val safe = sourceOffset.coerceIn(0, source.lastIndex.coerceAtLeast(0))
@@ -529,22 +545,22 @@ internal fun resolveDisplayedCharOffset(
     } ?: rankInWindow
 
     val headingStarts = markdownHeadingSpanStarts(displayedText ?: displayed)
+    if (headingStarts.isNotEmpty() && entry != null) {
+        var titleMatchIndex = 0
+        for (start in headingStarts) {
+            if (titleMatchesRenderedLine(lineAt(displayed, start), entry.title)) {
+                if (titleMatchIndex == rankByTitleInWindow) {
+                    return start.coerceIn(0, (len - 1).coerceAtLeast(0))
+                }
+                titleMatchIndex++
+            }
+        }
+    }
     if (headingStarts.isNotEmpty()) {
         if (rankInWindow in headingStarts.indices) {
             val atRank = headingStarts[rankInWindow]
             if (entry == null || titleMatchesRenderedLine(lineAt(displayed, atRank), entry.title)) {
                 return atRank.coerceIn(0, (len - 1).coerceAtLeast(0))
-            }
-        }
-        if (entry != null) {
-            var titleMatchIndex = 0
-            for (start in headingStarts) {
-                if (titleMatchesRenderedLine(lineAt(displayed, start), entry.title)) {
-                    if (titleMatchIndex == rankByTitleInWindow) {
-                        return start.coerceIn(0, (len - 1).coerceAtLeast(0))
-                    }
-                    titleMatchIndex++
-                }
             }
         }
     }
@@ -554,6 +570,18 @@ internal fun resolveDisplayedCharOffset(
     for (candidate in candidates) {
         val idx = findOccurrenceIndex(displayed, candidate, rankByTitleInWindow)
         if (idx >= 0) return idx.coerceIn(0, (len - 1).coerceAtLeast(0))
+    }
+
+    if (entry != null) {
+        val hint = proportionalDisplayedOffset(
+            sourceOffset = sourceOffset,
+            windowStart = windowStart,
+            windowEnd = windowEnd ?: sourceContent.length,
+            displayedLen = len,
+        )
+        findPlainTextChapterOffsetInDisplayed(displayed, entry.title, hint)?.let {
+            return it.coerceIn(0, (len - 1).coerceAtLeast(0))
+        }
     }
 
     return proportionalDisplayedOffset(
@@ -899,6 +927,41 @@ internal fun scrollTextViewToCharOffset(tv: TextView, charOffsetInText: Int) {
     tv.scrollTo(0, lineTop.coerceIn(0, maxScroll))
 }
 
+/** 目录/书签跳转：锁定渲染文本下标，Mermaid/大图异步改行高后仍回到同一标题行。 */
+internal fun applyPendingScrollToCharOffset(tv: TextView, charOffsetInText: Int) {
+    val len = tv.text?.length ?: 0
+    if (len <= 0) return
+    val offset = charOffsetInText.coerceIn(0, (len - 1).coerceAtLeast(0))
+    tv.setTag(R.id.reader_pending_scroll_char_offset, offset)
+    scrollTextViewToCharOffset(tv, offset)
+}
+
+internal fun clearPendingScrollCharOffset(tv: TextView?) {
+    tv?.setTag(R.id.reader_pending_scroll_char_offset, null)
+}
+
+internal fun reapplyPendingScrollCharOffsetIfAny(tv: TextView) {
+    val offset = tv.getTag(R.id.reader_pending_scroll_char_offset) as? Int ?: return
+    scrollTextViewToCharOffset(tv, offset)
+}
+
+/** Mermaid 异步改行高后多次补滚，直到用户手动滑动清除 pending 标记。 */
+internal fun schedulePendingScrollReapply(
+    tv: TextView,
+    delaysMs: LongArray = longArrayOf(80, 200, 480, 960, 1600),
+) {
+    delaysMs.forEach { delay ->
+        tv.postDelayed({
+            if (tv.getTag(R.id.reader_pending_scroll_char_offset) != null) {
+                reapplyPendingScrollCharOffsetIfAny(tv)
+            }
+        }, delay)
+    }
+}
+
+internal fun hasPendingScrollCharOffset(tv: TextView?): Boolean =
+    tv?.getTag(R.id.reader_pending_scroll_char_offset) != null
+
 /** 记录当前 scrollY、视口顶行 lineTop 及窗口起点，供 layout 重排后恢复子像素位置。 */
 internal data class TextViewScrollAnchor(
     val scrollY: Int,
@@ -1016,7 +1079,7 @@ internal fun jumpToCharInChunkWindow(
     onProgress: () -> Unit,
 ) {
     val safeCharPos = charPos.coerceIn(0, (contentLen - 1).coerceAtLeast(0))
-    val (winStart, winEnd) = computeReadingWindow(chapterBoundaries, safeCharPos, contentLen)
+    val (winStart, winEnd) = computeTocJumpReadingWindow(chapterBoundaries, safeCharPos, contentLen)
     setReadingWindow(winStart, winEnd)
     onAnchorGlobalChar(safeCharPos)
     onProgress()

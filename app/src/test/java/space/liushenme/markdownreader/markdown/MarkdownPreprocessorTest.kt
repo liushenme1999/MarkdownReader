@@ -15,6 +15,23 @@ class MarkdownPreprocessorTest {
     }
 
     @Test
+    fun expandFootnotes_insertsBlankLineBeforeRuleSoLastParagraphIsNotSetextHeading() {
+        val md = """
+            # 十二、脚注
+            引用[^note1]
+            [^note1]: 定义
+
+            # 二十、末章
+            最后一行正文
+        """.trimIndent()
+        val out = MarkdownPreprocessor.expandFootnotes(md)
+        assertTrue(
+            "footnote footer must be separated from last paragraph by a blank line",
+            out.contains("最后一行正文\n\n---"),
+        )
+    }
+
+    @Test
     fun expandFootnotes_replacesReferencesAndRemovesDefinitions() {
         val md = """
             Text[^note] here.

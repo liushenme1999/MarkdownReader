@@ -4,7 +4,7 @@ import android.net.Uri
 import android.view.View
 import android.widget.TextView
 import space.liushenme.markdownreader.R
-import space.liushenme.markdownreader.ui.screens.reader.scrollTextViewToCharOffset
+import space.liushenme.markdownreader.ui.screens.reader.applyPendingScrollToCharOffset
 import io.noties.markwon.LinkResolver
 import io.noties.markwon.LinkResolverDef
 
@@ -17,7 +17,7 @@ internal class ReaderLinkResolver : LinkResolver {
             val index = tv.getTag(R.id.markdown_anchor_index) as? MarkdownAnchorIndex ?: return
             val offset = RenderedAnchorBinder.offsetForSlug(tv, slug, index)
             if (offset != null) {
-                scrollTextViewToCharOffset(tv, offset)
+                applyPendingScrollToCharOffset(tv, offset)
             }
             return
         }

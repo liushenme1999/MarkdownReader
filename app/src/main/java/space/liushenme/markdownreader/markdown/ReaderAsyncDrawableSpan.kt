@@ -38,9 +38,7 @@ internal class ReaderAsyncDrawableSpan(
             val save = canvas.save()
             try {
                 val lineW = SpanUtils.width(canvas, text)
-                val intrinsicW = async.intrinsicWidth.coerceAtLeast(1)
-                val aspect = async.intrinsicHeight.toFloat() / intrinsicW
-                async.initWithKnownDimensions(lineW, aspect)
+                async.initWithKnownDimensions(lineW, paint.textSize)
                 val dW = async.bounds.width().toFloat()
                 val dx = if (dW in 1f..lineW.toFloat()) (lineW - dW) / 2f else 0f
                 canvas.translate(x + dx, top.toFloat())
