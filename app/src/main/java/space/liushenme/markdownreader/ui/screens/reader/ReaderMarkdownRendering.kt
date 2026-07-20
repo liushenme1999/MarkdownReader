@@ -93,6 +93,7 @@ import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.markdown.DiagramImageLoader
 import space.liushenme.markdownreader.markdown.NetworkImageCache
 import space.liushenme.markdownreader.markdown.ReaderMarkwonFactory
+import space.liushenme.markdownreader.markdown.ReaderTableSpacing
 import java.io.File
 import io.noties.markwon.Markwon
 import io.noties.markwon.core.spans.HeadingSpan
@@ -279,6 +280,7 @@ internal fun MarkdownReaderView(
                 val padBottomPx = (readerPaddingDp * density).toInt().coerceAtLeast(0)
                 val padTopPx = (readerPaddingTopDp * density).toInt().coerceAtLeast(0)
                 setPadding(padHPx, padTopPx, padHPx, padBottomPx)
+                ReaderTableSpacing.lineSpacingMultiplier = readerLineSpacingMultiplier
                 setLineSpacing(0f, readerLineSpacingMultiplier)
 
                 val sig0 = readerRenderSignature(
@@ -345,6 +347,7 @@ internal fun MarkdownReaderView(
             } else {
                 textView.setPadding(padHPx, padTopPx, padHPx, padBottomPx)
             }
+            ReaderTableSpacing.lineSpacingMultiplier = readerLineSpacingMultiplier
             textView.setLineSpacing(0f, readerLineSpacingMultiplier)
             if (pdfPagedLayout) {
                 PdfImageLayoutHelper.applyPagedPdfTextGravity(textView, centerVertically = true)

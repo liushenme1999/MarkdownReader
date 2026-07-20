@@ -50,6 +50,7 @@ object MarkdownPreprocessor {
         out = unwrapCenteredLatexDivs(out)
         out = expandSingleLineBlockLatex(out)
         out = normalizeBlockLatexSurroundings(out)
+        out = ReaderLatexPreprocessor.preprocessBlockLatexInMarkdown(out)
         out = expandFootnotes(out)
         out = expandDiagramFences(out)
         out = ensureBlankLineBeforeTables(out)

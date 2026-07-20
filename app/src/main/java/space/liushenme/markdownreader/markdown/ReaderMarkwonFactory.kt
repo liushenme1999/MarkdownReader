@@ -6,9 +6,8 @@ import io.noties.markwon.Markwon
 import io.noties.markwon.MarkwonConfiguration
 import io.noties.markwon.SoftBreakAddsNewLinePlugin
 import io.noties.markwon.core.CorePlugin
-import io.noties.markwon.ext.latex.JLatexMathPlugin
+import io.noties.markwon.ext.latex.ReaderLatexPlugins
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
-import io.noties.markwon.ext.tables.TablePlugin
 import io.noties.markwon.ext.tasklist.TaskListPlugin
 import io.noties.markwon.image.ImagesPlugin
 import io.noties.markwon.image.file.FileSchemeHandler
@@ -27,23 +26,20 @@ object ReaderMarkwonFactory {
             .usePlugin(CorePlugin.create())
             .usePlugin(SoftBreakAddsNewLinePlugin.create())
             .usePlugin(MarkwonInlineParserPlugin.create())
-            .usePlugin(
-                JLatexMathPlugin.create(latexTextSize) { builder ->
-                    builder.inlinesEnabled(true)
-                    builder.blocksEnabled(true)
-                    ReaderLatexBlockStyle.configureBlockTheme(
-                        context = appContext,
-                        themeBuilder = builder.theme(),
-                        density = metrics.density,
-                    )
-                },
-            )
+            .apply {
+                ReaderLatexPlugins.create(
+                    context = appContext,
+                    latexTextSize = latexTextSize,
+                    density = metrics.density,
+                ).forEach(::usePlugin)
+            }
+            .usePlugin(ReaderCodeStylePlugin.create(appContext))
             // 在 JLatex 的 `$$...$$` 行内解析之后，补充 `$...$`（勿用预处理转成 $$，否则会块级换行）
             .usePlugin(ReaderSingleDollarLatexPlugin.create())
             .usePlugin(ReaderSpacingPlugin.create(appContext))
             .usePlugin(ReaderHtmlPlugin.create())
             .usePlugin(StrikethroughPlugin.create())
-            .usePlugin(TablePlugin.create(appContext))
+            .usePlugin(ReaderTablePlugin.create(appContext))
             .usePlugin(TaskListPlugin.create(appContext))
             .usePlugin(LinkifyPlugin.create())
             .usePlugin(
