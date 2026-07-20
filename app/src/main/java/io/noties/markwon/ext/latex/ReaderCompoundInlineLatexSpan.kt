@@ -68,20 +68,20 @@ internal class ReaderCompoundInlineLatexSpan(
         private val text = symbol.toString()
         override val width: Int
         override val height: Int
-        private val paint = TextPaint()
+        private val symbolPaint = TextPaint()
 
         init {
-            paint.typeface = ReaderMathSymbolFont.typeface(context)
-            paint.textSize = textSizePx
-            val fm = paint.fontMetricsInt
-            width = paint.measureText(text).toInt().coerceAtLeast(1)
+            symbolPaint.typeface = ReaderMathSymbolFont.typeface(context)
+            symbolPaint.textSize = textSizePx
+            val fm = symbolPaint.fontMetricsInt
+            width = symbolPaint.measureText(text).toInt().coerceAtLeast(1)
             height = (fm.descent - fm.ascent).coerceAtLeast(1)
         }
 
-        override fun draw(canvas: Canvas, x: Float, centerY: Float, base: Paint) {
-            paint.color = if (colorArgb != 0) colorArgb else base.color
-            paint.bgColor = Color.TRANSPARENT
-            canvas.drawText(text, x, centerY - (paint.descent() + paint.ascent()) / 2f, paint)
+        override fun draw(canvas: Canvas, x: Float, centerY: Float, paint: Paint) {
+            symbolPaint.color = if (colorArgb != 0) colorArgb else paint.color
+            symbolPaint.bgColor = Color.TRANSPARENT
+            canvas.drawText(text, x, centerY - (symbolPaint.descent() + symbolPaint.ascent()) / 2f, symbolPaint)
         }
     }
 
