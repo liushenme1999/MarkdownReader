@@ -1,102 +1,134 @@
-# Markdown Reader - 微信读书风格的 Markdown 阅读器
+# MD 阅读器 (Markdown Reader)
 
-一款类似微信读书的 Android Markdown 阅读应用，支持书架管理、阅读划线、书签、阅读统计等功能。
+一款类似微信读书的 Android Markdown 阅读应用，支持书架管理、PDF/文本导入、丰富 Markdown 渲染、划线书签与阅读统计。
 
-**应用 ID**：`space.liushenme.markdownreader`
+| 项目 | 说明 |
+|------|------|
+| **应用 ID** | `space.liushenme.markdownreader` |
+| **包名** | `space.liushenme.markdownreader` |
+| **最低系统** | Android 7.0 (API 24) |
+| **目标 SDK** | 35 |
+| **当前版本** | 1.0 (versionCode 1) |
+| **仓库** | [github.com/liukejun1999/MarkdownReader](https://github.com/liukejun1999/MarkdownReader) |
 
 ## 功能特性
 
 ### 书架管理
-- 卡片式书籍展示，类似微信读书
-- 从文件管理器导入 Markdown / TXT / PDF
-- 支持通过「用其他应用打开」或分享导入
-- 显示阅读进度百分比
-- 收藏、分组与删除
+
+- 卡片式书籍展示
+- 导入 **Markdown**（`.md` / `.markdown` 等）、**纯文本**（`.txt`）、**PDF**
+- 支持系统文档选择器、URL 下载、「用其他应用打开」与分享导入
+- 阅读进度百分比、收藏、分组、置顶与删除
 
 ### 阅读器
-- 5 种阅读主题：纸质书、纯净白、护眼绿、复古棕、夜间模式
-- 字体大小调节
-- Markdown 渲染（含表格、任务列表、LaTeX、Mermaid/ECharts 图表等）
-- 阅读进度保存
 
-### 划线与笔记
-- 文本选择划线
-- 多种高亮颜色（黄、绿、青、粉、橙）
-- 添加书签笔记
-- 笔记管理页面
+- **5 种阅读主题**：纸质书、纯净白、护眼绿、复古棕、夜间模式
+- **4 种翻页方式**：上下滚动、左右滑动、仿真翻页、覆盖翻页
+- 字体大小、页边距、行距调节（DataStore 持久化）
+- 目录（TOC）跳转；导入时优先使用结构化目录
+- 书签、多色高亮、文本选择与笔记
+- 阅读进度（字符坐标）自动保存
+- 内链锚点跳转；外链可在应用内 WebView 打开
 
-### 书签功能
-- 快速添加书签
-- 书签列表查看
-- 跳转到书签位置
-- 书签笔记
+### Markdown 渲染
 
-### 阅读统计
-- 书籍总数、已读完数量
-- 阅读时长统计
-- 阅读字数统计
-- 书签和划线数量
-- 近 7 天阅读趋势图
-- 最近阅读书籍列表
+基于 [Markwon](https://github.com/noties/Markwon) 4.6.2，并针对阅读场景做了大量扩展：
 
-### 数据导出
-- 导出为 Markdown 格式
-- 导出为 JSON 格式
+| 类别 | 支持内容 |
+|------|----------|
+| **GFM** | 表格、任务列表、删除线、脚注、高亮 `==text==` |
+| **LaTeX** | 块级 `$$…$$`、行内 `$…$`；JLatexMath 渲染 |
+| **化学式** | mhchem 风格 `\ce{…}`（预处理为 JLatex 可解析形式） |
+| **高级公式** | `\oiint` / `\oiiint`、`\cancel`、`\stackrel`、`\xleftarrow` 等（部分经预处理器改写） |
+| **图表** | 围栏代码块 `mermaid` / `echarts` / `chart`（WebView 异步渲染） |
+| **代码** | 围栏代码块语法高亮；行内 `` `code` `` 圆角底色 |
+| **图片** | 网络图片缓存与占位；HTML `<img>` 布局优化 |
+| **其他** | HTML 片段、自动链接、PDF 栅格化页面 |
+
+> LaTeX 由 JLaTeXMath 驱动，并非完整 TeX 环境。不支持的命令会在解析前尝试预处理；仍无法渲染的公式会在 Logcat 输出 `JLatexMathPlugin` 错误。
+
+### 划线、书签与笔记
+
+- 文本选择后高亮（黄 / 绿 / 青 / 粉 / 橙）
+- 书签与笔记管理（搜索、跳转、删除）
+- 导出为 Markdown 或 JSON
+
+### 阅读统计与个人中心
+
+- 书籍总数、阅读时长、字数、书签/划线数量
+- 近 7 天阅读趋势图（Vico）
+- 应用主题（亮色 / 暗色 / 跟随系统）、缓存清理
 
 ## 技术栈
 
-- **语言**: Kotlin
-- **UI**: Jetpack Compose
-- **架构**: MVVM + Repository 模式
-- **依赖注入**: Hilt
-- **数据库**: Room（显式 Migration，不使用破坏性回退）
-- **Markdown 渲染**: Markwon
+| 层级 | 技术 |
+|------|------|
+| 语言 | Kotlin 17 |
+| UI | Jetpack Compose + Material 3 |
+| 架构 | MVVM + Repository |
+| 依赖注入 | Hilt + KSP |
+| 本地数据 | Room（显式 Migration，schema v5）+ DataStore |
+| Markdown | Markwon + 自研插件（LaTeX / 图表 / 预处理 / 样式） |
+| 异步 | Kotlin Coroutines + Flow |
+| 测试 | JUnit 4、Robolectric、MockK |
+| CI | GitHub Actions（Lint / 构建 / 单元测试 / Release） |
 
 ## 项目结构
 
 ```
-app/src/main/java/space/liushenme/markdownreader/
-├── data/
-│   ├── local/
-│   │   ├── entity/          # 数据库实体
-│   │   ├── dao/             # 数据访问对象
-│   │   ├── AppDatabase.kt   # 数据库
-│   │   └── Converters.kt    # 类型转换器
-│   └── repository/          # 数据仓库
-├── di/
-│   └── AppModule.kt         # 依赖注入模块
-├── ui/
-│   ├── screens/
-│   │   ├── bookshelf/       # 书架页面
-│   │   ├── reader/          # 阅读器页面
-│   │   ├── notes/           # 笔记管理页面
-│   │   └── statistics/      # 统计页面
-│   └── theme/               # 主题配置
-└── MainActivity.kt
+app/src/main/java/
+├── space/liushenme/markdownreader/
+│   ├── data/              # Room 实体/DAO、DataStore、Repository
+│   ├── di/                # Hilt 模块
+│   ├── importing/         # 书籍导入、PDF 提取、TOC 解析
+│   ├── intent/            # 外部 Intent 打开文件
+│   ├── markdown/          # Markwon 工厂、预处理、LaTeX/图表/代码样式
+│   ├── model/             # 主题、翻页模式等枚举
+│   ├── navigation/        # 路由
+│   ├── platform/          # 平台工具
+│   └── ui/
+│       ├── components/    # 通用 Compose 组件
+│       ├── screens/       # bookshelf / reader / profile / notes / statistics / weblink
+│       ├── system/        # 系统栏
+│       └── theme/         # 应用与阅读主题
+└── io/noties/markwon/ext/latex/   # 行内 LaTeX 对齐、复合公式 Span 等定制
 ```
+
+主要 Markdown 扩展代码位于 `markdown/` 包，例如：
+
+- `ReaderMarkwonFactory.kt` — Markwon 组装入口
+- `MarkdownPreprocessor.kt` — 脚注、图表围栏、块级公式展开等
+- `ReaderLatexPreprocessor.kt` — `\ce`、`\cancel`、`\oiint` 等 JLatex 兼容改写
+- `CeLatexConverter.kt` — mhchem 化学式子集转换
+- `DiagramImagesPlugin.kt` — Mermaid / ECharts 图表
 
 ## 使用方法
 
 1. 打开应用，点击「导入书籍」
 2. 从文件管理器选择 Markdown / TXT / PDF，或通过分享 /「打开方式」导入
-3. 书籍会显示在书架上
-4. 点击书籍开始阅读
-5. 长按文本选择内容，可以划线或添加书签
-6. 在阅读设置中可以切换主题和字体大小
+3. 在书架点击书籍开始阅读
+4. 长按文本可选择内容并划线或添加书签
+5. 在阅读界面或「我的 → 阅读设置」中调整主题、字号、翻页方式等
 
-## 构建说明
+## 构建与测试
 
-### 日常开发（Debug）
+### 环境要求
 
-1. 使用 Android Studio 打开项目
-2. 同步 Gradle 文件
-3. 运行 `assembleDebug` 或直接在设备/模拟器上 Run
+- Android Studio Hedgehog (2023.1.1) 或更高
+- JDK 17
+- Android SDK API 35
+
+### Debug 构建
+
+```bash
+./gradlew assembleDebug
+```
 
 Debug 构建**不需要** Release 签名配置。
 
 ### Release 构建
 
-Release 包必须在 `local.properties`（本机，勿提交 Git）或 CI 环境变量中配置签名，**未配置时 `assembleRelease` 会直接失败**：
+在 `local.properties`（本机，勿提交 Git）或 CI 环境变量中配置签名，**未配置时 `assembleRelease` 会失败**：
 
 ```properties
 RELEASE_STORE_FILE=/绝对路径/你的/release.keystore
@@ -105,7 +137,7 @@ RELEASE_KEY_ALIAS=你的别名
 RELEASE_KEY_PASSWORD=你的密钥密码
 ```
 
-也可使用同名环境变量（适用于 GitHub Actions 等 CI）。
+也可使用同名环境变量（适用于 GitHub Actions）。
 
 ```bash
 ./gradlew assembleRelease
@@ -113,14 +145,33 @@ RELEASE_KEY_PASSWORD=你的密钥密码
 
 > 请勿将 keystore 或密码写入仓库。`signing/` 与 `*.keystore` 已在 `.gitignore` 中忽略。
 
+### 运行测试
+
+```bash
+# 全部单元测试
+./gradlew testDebugUnitTest
+
+# Lint（CI 中为 continue-on-error）
+./gradlew lintDebug
+```
+
+单元测试以 Robolectric 为主，覆盖 Markdown 预处理、LaTeX 渲染、分页引擎、TOC 跳转等场景（见 `app/src/test/`）。
+
 ## 权限说明
 
-应用仅声明 **`INTERNET`**（用于从网址导入书籍、加载 Markdown 中的网络图片等）。
+应用仅声明 **`INTERNET`**（用于 URL 导入书籍、加载 Markdown 中的网络图片等）。
 
 - **不**使用 `READ_EXTERNAL_STORAGE` / `WRITE_EXTERNAL_STORAGE`
-- 本地文件通过系统文档选择器（SAF）以 `content://` URI 读取，无需存储权限
+- 本地文件通过系统文档选择器（SAF）以 `content://` URI 读取
 - 导出笔记由用户通过系统「另存为」选择保存位置
+
+## 相关文档
+
+- [CHANGELOG.md](CHANGELOG.md) — 版本变更记录
+- [CONTRIBUTING.md](CONTRIBUTING.md) — 贡献指南
+- [SECURITY.md](SECURITY.md) — 安全政策
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — 行为准则
 
 ## 开源协议
 
-MIT License
+[MIT License](LICENSE)
