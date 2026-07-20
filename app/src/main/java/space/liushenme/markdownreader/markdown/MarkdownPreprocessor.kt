@@ -28,9 +28,28 @@ object MarkdownPreprocessor {
     /** GFM 表格分隔行，如 `| --- | :---: |` */
     private val TABLE_SEPARATOR = Regex("""^\|(?:\s*:?-+:?\s*\|)+\s*$""")
 
+    /**
+     * 导出文档常见 `<div align="center">$$...$$</div>`；
+     * [io.noties.markwon.html.HtmlPlugin] 不会对其中的 `$$` 再走 LaTeX 解析。
+     */
+    private val CENTERED_LATEX_DIV = Regex(
+        """<div\s+align\s*=\s*["']center["'][^>]*>\s*(\$\$[\s\S]*?\$\$)\s*</div>""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val LATEX_ONLY_DIV = Regex(
+        """<div[^>]*>\s*(\$\$[\s\S]*?\$\$)\s*</div>""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val BLOCK_LATEX_LINE = Regex("""^\s*\$\$[\s\S]*\$\$\s*$""")
+    /** 单行 `$$…$$`：Markwon 块解析器要求 `$$` 独占一行，否则走 InlineProcessor。 */
+    private val SINGLE_LINE_BLOCK_LATEX = Regex("""^\s*\$\$(.+)\$\$\s*$""")
+
     fun prepare(markdown: String): String {
         if (markdown.isEmpty()) return markdown
         var out = expandHighlight(markdown)
+        out = unwrapCenteredLatexDivs(out)
+        out = expandSingleLineBlockLatex(out)
+        out = normalizeBlockLatexSurroundings(out)
         out = expandFootnotes(out)
         out = expandDiagramFences(out)
         out = ensureBlankLineBeforeTables(out)
@@ -181,6 +200,132 @@ object MarkdownPreprocessor {
     private fun extractAttr(pattern: Regex, attrs: String): String? {
         val m = pattern.find(attrs) ?: return null
         return m.groupValues.drop(2).firstOrNull { it.isNotEmpty() }
+    }
+
+    /** 将 HTML 包裹的块级 `$$...$$` 还原为独立公式块（去掉 div/center 与行首缩进）。 */
+    internal fun unwrapCenteredLatexDivs(markdown: String): String {
+        if (!markdown.contains("$$")) return markdown
+        if (!markdown.contains("<div", ignoreCase = true) &&
+            !markdown.contains("<center", ignoreCase = true)
+        ) {
+            return markdown
+        }
+        var out = CENTERED_LATEX_DIV.replace(markdown) { unwrapLatexBlockReplacement(it.groupValues[1]) }
+        out = LATEX_ONLY_DIV.replace(out) { unwrapLatexBlockReplacement(it.groupValues[1]) }
+        if (markdown.contains("<center", ignoreCase = true)) {
+            out = Regex(
+                """<center>\s*(\$\$[\s\S]*?\$\$)\s*</center>""",
+                RegexOption.IGNORE_CASE,
+            ).replace(out) { unwrapLatexBlockReplacement(it.groupValues[1]) }
+        }
+        return out
+    }
+
+    /**
+     * 将单行 `$$…$$` 展开为 Markwon 可识别的块级格式（开/闭 `$$` 各占一行）。
+     * 否则 [io.noties.markwon.ext.latex.JLatexMathInlineProcessor] 会将其当作行内公式，
+     * 块级主题的居中与边框不会生效。
+     */
+    internal fun expandSingleLineBlockLatex(markdown: String): String {
+        if (!markdown.contains("$$")) return markdown
+        val lines = markdown.split('\n')
+        return buildString {
+            lines.forEachIndexed { index, line ->
+                if (index > 0) append('\n')
+                val expanded = expandSingleLineBlockLatexLine(line)
+                expanded.forEachIndexed { expandedIndex, expandedLine ->
+                    if (expandedIndex > 0) append('\n')
+                    append(expandedLine)
+                }
+            }
+        }
+    }
+
+    private fun expandSingleLineBlockLatexLine(line: String): List<String> {
+        val match = SINGLE_LINE_BLOCK_LATEX.matchEntire(line.trim()) ?: return listOf(line)
+        val body = match.groupValues[1].trim()
+        if (body.isEmpty()) return listOf("$$", "$$")
+        return listOf("$$", body, "$$")
+    }
+
+    private fun unwrapLatexBlockReplacement(body: String): String {
+        val latex = body.trim()
+        if (!latex.startsWith("$$") || !latex.endsWith("$$")) return body
+        return "\n$latex\n"
+    }
+
+    /**
+     * 块级 `$$` 被提到行首后会结束当前列表/缩进块；若前文原本有缩进，则把后续仍缩进的正文还原到行首，
+     * 否则 CommonMark 会把 `    4. …` / `        段落` 判成代码块。
+     */
+    internal fun normalizeBlockLatexSurroundings(markdown: String): String {
+        if (!markdown.contains("$$")) return markdown
+        val lines = markdown.split('\n')
+        val out = ArrayList<String>(lines.size + 8)
+        var repairIndentedTail = false
+        var inBlockLatex = false
+        for (index in lines.indices) {
+            val line = lines[index]
+            val trimmed = line.trim()
+            if (line.isBlank()) {
+                if (repairIndentedTail) continue
+                if (inBlockLatex) {
+                    out.add("")
+                    continue
+                }
+                if (out.lastOrNull()?.trim() == "$$") continue
+                if (out.lastOrNull()?.isBlank() == true) continue
+                out.add("")
+                continue
+            }
+            if (trimmed == "$$") {
+                if (inBlockLatex) {
+                    out.add("$$")
+                    inBlockLatex = false
+                    repairIndentedTail = hasIndentedFollowingLine(lines, index)
+                } else {
+                    out.add("$$")
+                    inBlockLatex = true
+                }
+                continue
+            }
+            if (inBlockLatex) {
+                out.add(line)
+                continue
+            }
+            if (BLOCK_LATEX_LINE.matches(line)) {
+                out.addAll(expandSingleLineBlockLatexLine(line))
+                repairIndentedTail = hasIndentedFollowingLine(lines, index)
+                continue
+            }
+            if (repairIndentedTail) {
+                if (shouldStopRepairAfterBlockLatex(trimmed, line)) {
+                    repairIndentedTail = false
+                    out.add(line)
+                    continue
+                }
+                out.add(line.trimStart())
+                continue
+            }
+            out.add(line)
+        }
+        return out.joinToString("\n")
+    }
+
+    private fun hasIndentedFollowingLine(lines: List<String>, blockLatexIndex: Int): Boolean {
+        for (i in blockLatexIndex + 1 until lines.size) {
+            val next = lines[i]
+            if (next.isBlank()) continue
+            return next.startsWith(" ") || next.startsWith("\t")
+        }
+        return false
+    }
+
+    private fun shouldStopRepairAfterBlockLatex(trimmed: String, raw: String): Boolean {
+        if (trimmed.startsWith("#")) return true
+        if (trimmed.startsWith("```")) return true
+        if (trimmed.startsWith("|") && trimmed.lastIndexOf('|') > 0) return true
+        return !raw.startsWith(" ") && !raw.startsWith("\t")
     }
 
     /** `==高亮==` → `<mark>`（由 [ReaderHtmlPlugin] 渲染）。 */

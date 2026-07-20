@@ -78,6 +78,7 @@ import androidx.navigation.NavController
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
+import space.liushenme.markdownreader.ui.components.MarkdownInlineHtmlText
 import space.liushenme.markdownreader.ui.components.iconTintForDeleteStrip
 import space.liushenme.markdownreader.ui.theme.MarkdownReaderTheme
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
@@ -115,7 +116,7 @@ internal fun ReaderImmersiveChapterTitleBar(
                 .fillMaxWidth()
                 .windowInsetsTopHeight(WindowInsets.statusBars)
         )
-        Text(
+        MarkdownInlineHtmlText(
             text = title,
             style = MaterialTheme.typography.labelMedium,
             color = theme.textColor.copy(alpha = 0.7f),
@@ -229,7 +230,7 @@ internal fun ReaderTopAppBar(
                     overflow = TextOverflow.Ellipsis
                 )
                 if (chapterTitle != null) {
-                    Text(
+                    MarkdownInlineHtmlText(
                         text = chapterTitle,
                         style = MaterialTheme.typography.bodySmall,
                         color = theme.secondaryTextColor,

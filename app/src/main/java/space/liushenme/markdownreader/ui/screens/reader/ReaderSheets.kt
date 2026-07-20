@@ -80,6 +80,7 @@ import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
 import space.liushenme.markdownreader.ui.components.ReadingThemeCardOption
 import space.liushenme.markdownreader.ui.components.ReaderWideSliderRow
+import space.liushenme.markdownreader.ui.components.MarkdownInlineHtmlText
 import space.liushenme.markdownreader.ui.components.iconTintForDeleteStrip
 import space.liushenme.markdownreader.ui.theme.MarkdownReaderTheme
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
@@ -350,8 +351,8 @@ internal fun TocSheet(
                                 ),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = entry.title,
+                            MarkdownInlineHtmlText(
+                                text = entry.rawTitle,
                                 style = MaterialTheme.typography.bodyLarge,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
@@ -486,7 +487,7 @@ internal fun BookmarkItem(
             }
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(
+                MarkdownInlineHtmlText(
                     text = bookmark.previewText,
                     style = MaterialTheme.typography.bodyMedium,
                     maxLines = 3,

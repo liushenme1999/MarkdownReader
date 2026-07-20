@@ -2,6 +2,7 @@ package space.liushenme.markdownreader.importing
 
 import android.content.Context
 import space.liushenme.markdownreader.markdown.DiagramPayloadStore
+import space.liushenme.markdownreader.markdown.MarkdownInlineHtml
 import space.liushenme.markdownreader.markdown.MarkdownPreprocessor
 import org.json.JSONArray
 import org.json.JSONObject
@@ -162,10 +163,15 @@ object ParsedBookStorage {
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
             val level = o.optInt("level", 1)
-            val title = o.optString("title", "").trim()
+            val rawTitle = o.optString("title", "").trim()
             val off = o.optInt("sourceOffset", -1)
-            if (title.isNotEmpty() && off >= 0) {
-                out += ImportedTocEntry(level = level, title = title, sourceOffset = off)
+            if (rawTitle.isNotEmpty() && off >= 0) {
+                out += ImportedTocEntry(
+                    level = level,
+                    title = MarkdownInlineHtml.stripTags(rawTitle),
+                    sourceOffset = off,
+                    rawTitle = rawTitle,
+                )
             }
         }
         return out

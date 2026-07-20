@@ -5,8 +5,11 @@ package space.liushenme.markdownreader.importing
  */
 data class ImportedTocEntry(
     val level: Int,
+    /** 去掉 inline HTML 后的纯文本，用于匹配与搜索。 */
     val title: String,
-    val sourceOffset: Int
+    val sourceOffset: Int,
+    /** 标题行原文（可含 `<strong>` 等），用于目录/顶栏样式展示。 */
+    val rawTitle: String = title,
 )
 
 data class ExtractedBookText(

@@ -31,6 +31,11 @@ object ReaderMarkwonFactory {
                 JLatexMathPlugin.create(latexTextSize) { builder ->
                     builder.inlinesEnabled(true)
                     builder.blocksEnabled(true)
+                    ReaderLatexBlockStyle.configureBlockTheme(
+                        context = appContext,
+                        themeBuilder = builder.theme(),
+                        density = metrics.density,
+                    )
                 },
             )
             // 在 JLatex 的 `$$...$$` 行内解析之后，补充 `$...$`（勿用预处理转成 $$，否则会块级换行）

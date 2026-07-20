@@ -17,6 +17,7 @@ import space.liushenme.markdownreader.importing.ExtractedBookText
 import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.importing.ParsedBookStorage
 import space.liushenme.markdownreader.importing.UrlBookDownloader
+import space.liushenme.markdownreader.markdown.MarkdownInlineHtml
 import space.liushenme.markdownreader.markdown.MarkdownPreprocessor
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
@@ -150,7 +151,14 @@ class ReaderViewModel @Inject constructor(
             val text = MarkdownPreprocessor.stripLocalRelativeImages(extracted.body)
             _content.value = text
             _structuredToc.value = extracted.toc
-                .map { MarkdownTocEntry(it.level, it.title, it.sourceOffset) }
+                .map {
+                    MarkdownTocEntry(
+                        level = it.level,
+                        title = it.title,
+                        sourceOffset = it.sourceOffset,
+                        rawTitle = it.rawTitle,
+                    )
+                }
                 .takeIf { it.isNotEmpty() }
             _readingProgress.value = bookEntity.readingProgress
             lastKnownReadingCharPos = resolveStoredCharPos(
@@ -267,7 +275,7 @@ class ReaderViewModel @Inject constructor(
                 val bookmark = BookmarkEntity(
                     bookId = book.id,
                     position = (readingProgress.value * book.totalChars).toInt(),
-                    previewText = previewText.take(100),
+                    previewText = MarkdownInlineHtml.stripTags(previewText).take(100),
                     note = note,
                     createTime = Date()
                 )
@@ -311,14 +319,16 @@ class ReaderViewModel @Inject constructor(
                 ?.replace('\n', ' ')
                 ?.trim()
                 ?.takeIf { it.isNotEmpty() }
+                ?.let { MarkdownInlineHtml.stripTags(it) }
                 ?: run {
                     val from = (pos - 60).coerceAtLeast(0)
                     val to = (pos + 80).coerceAtMost(raw.length)
-                    raw.substring(from, to)
-                        .replace('\n', ' ')
-                        .trim()
-                        .ifEmpty { "书签" }
-                        .take(100)
+                    MarkdownInlineHtml.stripTags(
+                        raw.substring(from, to)
+                            .replace('\n', ' ')
+                            .trim()
+                            .ifEmpty { "书签" },
+                    ).take(100)
                 }
             bookmarkRepository.addBookmark(
                 BookmarkEntity(

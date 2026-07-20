@@ -10,17 +10,21 @@ import space.liushenme.markdownreader.importing.PlainTextTocParser
  */
 data class MarkdownTocEntry(
     val level: Int,
+    /** 纯文本标题（无 HTML），用于跳转匹配与搜索。 */
     val title: String,
-    val sourceOffset: Int
+    val sourceOffset: Int,
+    /** 标题行原文，用于目录/顶栏 inline HTML 样式。 */
+    val rawTitle: String = title,
 )
 
-/**
- * 从 Markdown 源码解析目录（仅 ATX 风格 `#` … `######`）。
- * 实现与导入侧 [AtxMarkdownTocParser] 一致。
- */
 fun parseMarkdownToc(markdown: String): List<MarkdownTocEntry> =
     AtxMarkdownTocParser.parse(markdown).map { e ->
-        MarkdownTocEntry(level = e.level, title = e.title, sourceOffset = e.sourceOffset)
+        MarkdownTocEntry(
+            level = e.level,
+            title = e.title,
+            sourceOffset = e.sourceOffset,
+            rawTitle = e.rawTitle,
+        )
     }
 
 /**
@@ -28,8 +32,23 @@ fun parseMarkdownToc(markdown: String): List<MarkdownTocEntry> =
  */
 fun parsePlainTextToc(text: String): List<MarkdownTocEntry> =
     PlainTextTocParser.parse(text).map { e ->
-        MarkdownTocEntry(level = e.level, title = e.title, sourceOffset = e.sourceOffset)
+        MarkdownTocEntry(
+            level = e.level,
+            title = e.title,
+            sourceOffset = e.sourceOffset,
+            rawTitle = e.rawTitle,
+        )
     }
+
+fun currentChapterEntryForProgress(
+    tocEntries: List<MarkdownTocEntry>,
+    progress: Float,
+    totalChars: Int,
+): MarkdownTocEntry? {
+    if (tocEntries.isEmpty() || totalChars <= 0) return null
+    val pos = (progress * totalChars).toInt().coerceIn(0, totalChars)
+    return tocEntries.lastOrNull { it.sourceOffset <= pos }
+}
 
 /**
  * 根据阅读进度（0～1）与全书字符数，取当前所处章节标题（最后一个 [sourceOffset] 不大于当前位置的目录项）。
@@ -38,8 +57,4 @@ fun currentChapterTitleForProgress(
     tocEntries: List<MarkdownTocEntry>,
     progress: Float,
     totalChars: Int
-): String? {
-    if (tocEntries.isEmpty() || totalChars <= 0) return null
-    val pos = (progress * totalChars).toInt().coerceIn(0, totalChars)
-    return tocEntries.lastOrNull { it.sourceOffset <= pos }?.title
-}
+): String? = currentChapterEntryForProgress(tocEntries, progress, totalChars)?.title

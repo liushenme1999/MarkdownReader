@@ -1,5 +1,7 @@
 package space.liushenme.markdownreader.importing
 
+import space.liushenme.markdownreader.markdown.MarkdownInlineHtml
+
 /**
  * 从 Markdown 源码解析 ATX 标题目录（`#` … `######`）。
  * 与阅读页 [space.liushenme.markdownreader.ui.screens.reader.parseMarkdownToc] 共用，
@@ -30,8 +32,9 @@ object AtxMarkdownTocParser {
                     if (rawTitle.isNotEmpty()) {
                         out += ImportedTocEntry(
                             level = hashes.length,
-                            title = rawTitle,
-                            sourceOffset = lineStart
+                            title = MarkdownInlineHtml.stripTags(rawTitle),
+                            sourceOffset = lineStart,
+                            rawTitle = rawTitle,
                         )
                     }
                 }

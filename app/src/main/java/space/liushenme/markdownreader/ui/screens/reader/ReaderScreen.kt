@@ -174,7 +174,7 @@ fun ReaderScreen(
     val tocEntries = remember(readerContent, renderPlainText, structuredToc, isPdfBook) {
         if (isPdfBook) {
             return@remember PdfReaderContent.tocEntriesFromBody(readerContent).map {
-                MarkdownTocEntry(level = it.level, title = it.title, sourceOffset = it.sourceOffset)
+                MarkdownTocEntry(level = it.level, title = it.title, sourceOffset = it.sourceOffset, rawTitle = it.rawTitle)
             }
         }
         val stored = structuredToc.orEmpty()
@@ -193,9 +193,11 @@ fun ReaderScreen(
         }
     }
     val totalChars = book?.totalChars?.takeIf { it > 0 } ?: content.length.coerceAtLeast(1)
-    val chapterTitle = remember(tocEntries, readingProgress, totalChars) {
-        currentChapterTitleForProgress(tocEntries, readingProgress, totalChars)
+    val chapterEntry = remember(tocEntries, readingProgress, totalChars) {
+        currentChapterEntryForProgress(tocEntries, readingProgress, totalChars)
     }
+    val chapterTitle = chapterEntry?.title
+    val chapterTitleRaw = chapterEntry?.rawTitle ?: chapterTitle
 
     val pageSpecs = remember(
         readerContent,
@@ -701,7 +703,7 @@ fun ReaderScreen(
             if (!immersiveReading && !readerTextSelectionActive) {
                 ReaderTopAppBar(
                     title = book?.title ?: "阅读中",
-                    chapterTitle = chapterTitle,
+                    chapterTitle = chapterTitleRaw,
                     onNavigateBack = { navController.navigateUp() },
                     theme = currentTheme
                 )
@@ -766,7 +768,7 @@ fun ReaderScreen(
                             }
                         }
                         // 沉浸模式章节小标题常驻，不随大顶栏/底栏显隐改变布局（避免点击唤出工具栏时正文跳动）
-                        val immersiveChapterTitle = chapterTitle.takeIf { immersiveReading && !isPdfBook }
+                        val immersiveChapterTitle = chapterTitleRaw.takeIf { immersiveReading && !isPdfBook }
                         val readerPaddingTopDp = if (immersiveChapterTitle != null) {
                             minOf(ReaderChapterStripBodyTopPaddingDp, readerPaddingDp)
                         } else {
@@ -999,7 +1001,7 @@ fun ReaderScreen(
                         )
                         ReaderTopAppBar(
                             title = book?.title ?: "阅读中",
-                            chapterTitle = chapterTitle,
+                            chapterTitle = chapterTitleRaw,
                             onNavigateBack = { navController.navigateUp() },
                             theme = currentTheme,
                             modifier = Modifier.fillMaxWidth()

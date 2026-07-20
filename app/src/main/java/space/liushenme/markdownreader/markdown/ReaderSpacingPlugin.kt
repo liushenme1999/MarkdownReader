@@ -4,6 +4,7 @@ import android.content.Context
 import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.MarkwonPlugin
 import io.noties.markwon.MarkwonVisitor
+import io.noties.markwon.ext.latex.JLatexMathBlock
 import io.noties.markwon.core.MarkwonTheme
 import org.commonmark.node.Heading
 import org.commonmark.node.HtmlBlock
@@ -45,8 +46,19 @@ private class ReaderBlockHandler : MarkwonVisitor.BlockHandler {
             visitor.ensureNewLine()
             return
         }
+        if (shouldTightenLatexBlockSpacing(node)) {
+            visitor.ensureNewLine()
+            return
+        }
         visitor.ensureNewLine()
         visitor.forceNewLine()
+    }
+
+    /** 块级公式前后不再 [MarkwonVisitor.forceNewLine]，避免多出一整行空白。 */
+    private fun shouldTightenLatexBlockSpacing(node: Node): Boolean {
+        if (node is JLatexMathBlock) return true
+        if (node.next is JLatexMathBlock) return true
+        return false
     }
 
     private fun headingFollowedByImage(heading: Heading): Boolean {

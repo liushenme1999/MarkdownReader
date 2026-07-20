@@ -133,6 +133,97 @@ class MarkdownPreprocessorTest {
     }
 
     @Test
+    fun unwrapCenteredLatexDivs_repairsIndentedTailWithoutCenterTag() {
+        val d = "$"
+        val md = """
+            3. item
+            <div align="center">
+            ${d}${d}a${d}${d}
+            </div>
+                4. next item
+        """.trimIndent()
+        val out = MarkdownPreprocessor.prepare(md)
+        assertFalse(out.contains("<div", ignoreCase = true))
+        assertTrue(out.contains("\n4. next item"))
+        assertFalse(out.contains("\n    4. next item"))
+    }
+
+    @Test
+    fun prepare_expandsCenteredDivBlockLatexToMultiline() {
+        val d = "$"
+        val md = """
+            text
+            <div align="center">
+            ${d}${d}\\text{Score}(Q_i, K_j) = Q_i \\cdot K_j${d}${d}
+            </div>
+        """.trimIndent()
+        val out = MarkdownPreprocessor.prepare(md)
+        assertFalse(out.contains("<div", ignoreCase = true))
+        assertFalse("single-line block should be expanded: $out", out.contains("${d}${d}\\text{Score}"))
+        val lines = out.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        assertEquals("text", lines[0])
+        assertEquals("${d}${d}", lines[1])
+        assertTrue(lines[2].contains("text{Score}"))
+        assertEquals("${d}${d}", lines[3])
+    }
+
+    @Test
+    fun expandSingleLineBlockLatex_splitsDelimitersOntoOwnLines() {
+        val d = "$"
+        val md = "${d}${d}\\frac{a}{b}${d}${d}"
+        val out = MarkdownPreprocessor.expandSingleLineBlockLatex(md)
+        assertEquals(
+            """
+            ${d}${d}
+            \frac{a}{b}
+            ${d}${d}
+            """.trimIndent(),
+            out,
+        )
+    }
+
+    @Test
+    fun normalizeBlockLatexSurroundings_dedentsIndentedParagraphAfterFormula() {
+        val d = "$"
+        val md = """
+            3. item
+            ${d}${d}a${d}${d}
+                后续说明段落，不应显示为代码块。
+        """.trimIndent()
+        val out = MarkdownPreprocessor.normalizeBlockLatexSurroundings(md)
+        assertTrue(out.contains("\n后续说明段落"))
+        assertFalse(out.contains("\n    后续说明"))
+    }
+
+    @Test
+    fun normalizeBlockLatexSurroundings_dedentsOrderedListAfterFormula() {
+        val d = "$"
+        val md = """
+            3. item
+            ${d}${d}a${d}${d}
+                4. next
+                5. more
+        """.trimIndent()
+        val out = MarkdownPreprocessor.normalizeBlockLatexSurroundings(md)
+        assertTrue(out.contains("\n4. next"))
+        assertFalse(out.contains("\n    4. next"))
+    }
+
+    @Test
+    fun unwrapCenteredLatexDivs_extractsBlockFormula() {
+        val d = "$"
+        val md = """
+            说明文字
+            <div align="center">
+            ${d}${d}\frac{a}{b}${d}${d}
+            </div>
+        """.trimIndent()
+        val out = MarkdownPreprocessor.unwrapCenteredLatexDivs(md)
+        assertFalse(out.contains("<div", ignoreCase = true))
+        assertTrue(out.contains("${d}${d}\\frac{a}{b}${d}${d}"))
+    }
+
+    @Test
     fun prepare_keepsInlineLatexSingleDollar() {
         val d = "$"
         val input = "上标：${d}x^2${d}\n下标：${d}y_1${d}"
