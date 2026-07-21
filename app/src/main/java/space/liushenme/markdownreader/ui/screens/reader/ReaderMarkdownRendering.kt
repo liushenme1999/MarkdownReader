@@ -168,7 +168,9 @@ internal fun applyReaderTextContent(
         refreshStashedExpandAnchorBeforeContentSwap(textView)
         textView.setText(sp, TextView.BufferType.SPANNABLE)
         if (!applyReaderScrollToTopIfAny(textView, clearAfter = true)) {
-            applyStashedSourceScrollRestoreIfAny(textView, renderPlainText = true)
+            if (!applyStashedSavedPositionSnapIfAny(textView)) {
+                applyStashedSourceScrollRestoreIfAny(textView, renderPlainText = true)
+            }
         }
         applyHighlightsToRenderedText(textView, highlights, highlightColorArgb)
         return
@@ -181,7 +183,9 @@ internal fun applyReaderTextContent(
             refreshStashedExpandAnchorBeforeContentSwap(textView)
             TextViewCompat.setPrecomputedText(textView, pre)
             if (!applyReaderScrollToTopIfAny(textView, clearAfter = true)) {
-                applyStashedSourceScrollRestoreIfAny(textView, renderPlainText = true)
+                if (!applyStashedSavedPositionSnapIfAny(textView)) {
+                    applyStashedSourceScrollRestoreIfAny(textView, renderPlainText = true)
+                }
             }
             applyHighlightsToRenderedText(textView, highlights, highlightColorArgb)
         }
@@ -286,6 +290,7 @@ internal fun MarkdownReaderView(
         factory = { ctx ->
             SafeReaderTextView(ctx).apply {
                 this.allowVerticalScroll = allowVerticalScroll
+                this.renderPlainTextBody = renderPlainText
                 if (pdfPagedLayout) {
                     PdfImageLayoutHelper.applyPagedPdfTextGravity(this, centerVertically = true)
                     includeFontPadding = false
@@ -340,6 +345,7 @@ internal fun MarkdownReaderView(
         },
         update = { textView ->
             textView.allowVerticalScroll = allowVerticalScroll
+            (textView as? SafeReaderTextView)?.renderPlainTextBody = renderPlainText
             textView.onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange
             textView.setTextColor(theme.textColor.toArgb())
             textView.setBackgroundColor(theme.backgroundColor.toArgb())
@@ -616,6 +622,8 @@ internal fun previewPlainTextFromTextViewTop(tv: TextView): String {
  */
 internal class SafeReaderTextView(context: Context) : TextView(context) {
     var allowVerticalScroll: Boolean = true
+    /** 正文是否按纯文本渲染；扩窗 stash 恢复时需与写入内容一致。 */
+    var renderPlainTextBody: Boolean = false
     var onReaderTextSelectionActiveChange: ((Boolean) -> Unit)? = null
 
     /** 引用计数：多个并发异步渲染各自递增，仅全部完成后才解除抑制。 */
@@ -1000,7 +1008,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             return
         }
         if (hasExpandStash) {
-            applyStashedSourceScrollRestoreIfAny(this, renderPlainText = false)
+            applyStashedSourceScrollRestoreIfAny(this, renderPlainText = renderPlainTextBody)
             return
         }
         maintainViewportCharAnchorAfterLayout(snapTextLen, snapChar, snapInLineOffset)

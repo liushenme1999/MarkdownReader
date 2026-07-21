@@ -375,11 +375,17 @@ fun ReaderScreen(
             sourceContent = readerContent,
             renderPlainText = renderPlainText,
             tocEntries = tocEntries,
+            bookmarkPreviewText = if (isPdfBook) null else viewModel.readingPreviewForRestore(),
             pageSpecs = pageSpecs,
             pagerState = pagerState,
             pageTextViews = pageTextViews,
             assignActiveTextView = { readerTextView.value = it },
-            onProgress = { viewModel.updateReadingProgressAtChar(charPos) },
+            onProgress = {
+                viewModel.updateReadingProgressAtChar(
+                    charPos,
+                    if (isPdfBook) null else viewModel.readingPreviewForRestore(),
+                )
+            },
             pdfJumpByPageIndex = isPdfBook,
             pdfPageIndex = pdfPageIndex,
         )
@@ -443,6 +449,7 @@ fun ReaderScreen(
         readerContent,
         pageTurnMode,
         readerLoadEpoch,
+        isPdfBook,
     ) {
         if (readerContent.isEmpty()) {
             displayWindowStartChar = 0
@@ -461,22 +468,28 @@ fun ReaderScreen(
         val (start, end) = computeReadingWindow(chapterBoundaries, targetChar, readerContent.length)
         displayWindowStartChar = start
         displayWindowEndChar = end
-        // 与书签跳转一致：position + preview，走同一套 SavedPosition 定位。
-        pendingScrollRestoreBookmarkPreview = viewModel.readingPreviewForRestore()
-        pendingScrollRestorePdfPageIndex = null
         pendingScrollRestoreAnchor = null
-        // 打开/换书恢复：精确定位到上次阅读位置（与书签跳转同一路径）。
-        // 不能用 snapToLine=false 的 progress-anchor 分支——那条路依赖扩窗 stash，
-        // 打开场景没有 stash 会直接跳过滚动，导致停在窗口起点（看起来像跳回开头）。
         pendingScrollRestoreSnapToLine = true
-        stashSavedPositionSnapForPendingRestore(
-            sourceOffset = targetChar,
-            windowStart = start,
-            windowEnd = end,
-            preview = pendingScrollRestoreBookmarkPreview,
-        )
         coverUntilPositionRestore = true
-        queueScrollRestore(targetChar)
+        clearPendingSavedPositionSnap(readerTextView.value)
+        if (isPdfBook) {
+            // PDF 与书签跳转一致：按页码恢复，不用 Markdown SavedPosition 文本启发式。
+            pendingScrollRestoreBookmarkPreview = null
+            pendingScrollRestorePdfPageIndex =
+                PdfReaderContent.pageIndexForSourceOffset(readerContent, targetChar)
+            queueScrollRestore(targetChar)
+        } else {
+            // Markdown / TXT：position + preview，首帧前 stash snap。
+            pendingScrollRestorePdfPageIndex = null
+            pendingScrollRestoreBookmarkPreview = viewModel.readingPreviewForRestore()
+            stashSavedPositionSnapForPendingRestore(
+                sourceOffset = targetChar,
+                windowStart = start,
+                windowEnd = end,
+                preview = pendingScrollRestoreBookmarkPreview,
+            )
+            queueScrollRestore(targetChar)
+        }
         lastScrollTopGlobalChar = targetChar
     }
 
@@ -524,7 +537,7 @@ fun ReaderScreen(
             null
         }
         pendingScrollRestoreAnchor = scrollAnchor
-        val globalChar = globalSourceCharAtTextViewTop(
+        val globalChar = currentTopGlobalChar() ?: globalSourceCharAtTextViewTop(
             sourceContent = readerContent,
             windowStart = displayWindowStartChar,
             windowEnd = winEnd,
@@ -588,7 +601,7 @@ fun ReaderScreen(
             null
         }
         pendingScrollRestoreAnchor = scrollAnchor
-        val globalChar = globalSourceCharAtTextViewTop(
+        val globalChar = currentTopGlobalChar() ?: globalSourceCharAtTextViewTop(
             sourceContent = readerContent,
             windowStart = winStart,
             windowEnd = displayWindowEndChar,
@@ -714,7 +727,12 @@ fun ReaderScreen(
         val snapToLine = pendingScrollRestoreSnapToLine
         val bookmarkPreview = pendingScrollRestoreBookmarkPreview
         // 渲染完成前写入 TextView stash：finishMarkdownRender/onLayout 首帧即可定位。
-        if (anchorGlobal != null && (snapToLine || bookmarkPreview != null) && pdfPageIndex == null) {
+        // PDF 走页码通道，不要写入 SavedPosition（文本启发式会滚错）。
+        if (anchorGlobal != null &&
+            !isPdfBook &&
+            (snapToLine || bookmarkPreview != null) &&
+            pdfPageIndex == null
+        ) {
             stashSavedPositionSnapForPendingRestore(
                 sourceOffset = anchorGlobal,
                 windowStart = winStart,
@@ -877,7 +895,11 @@ fun ReaderScreen(
     ShelfStyleSystemBarsEffect(systemBarChromeColor)
     val persistTopPositionNow by rememberUpdatedState {
         val tv = readerTextView.value
-        val preview = tv?.let { previewPlainTextFromTextViewTop(it) }
+        val preview = if (isPdfBook) {
+            null
+        } else {
+            tv?.let { previewPlainTextFromTextViewTop(it) }
+        }
         val topChar = currentTopGlobalChar()
             ?: lastScrollTopGlobalChar.takeIf { it >= 0 }
         topChar?.let { viewModel.persistReadingPositionBlocking(it, preview) }
@@ -1068,14 +1090,8 @@ fun ReaderScreen(
                                             val now = System.currentTimeMillis()
                                             if (now - lastScrollProgressSaveMs >= 200L) {
                                                 lastScrollProgressSaveMs = now
-                                                val estimated = globalSourceCharAtTextViewTop(
-                                                    sourceContent = readerContent,
-                                                    windowStart = displayWindowStartChar,
-                                                    windowEnd = displayWindowEndChar,
-                                                    textView = readerTv,
-                                                    renderPlainText = renderPlainText,
-                                                    tocEntries = tocEntries,
-                                                )
+                                                // PDF 必须走页码反查；TXT/MD 用 currentTopGlobalChar 统一入口。
+                                                val estimated = currentTopGlobalChar() ?: return@MarkdownReaderView
                                                 lastScrollTopGlobalChar = estimated
                                                 android.util.Log.d(
                                                     "ReaderCoordDbg",
@@ -1083,10 +1099,12 @@ fun ReaderScreen(
                                                         "winStart=$displayWindowStartChar winEnd=$displayWindowEndChar " +
                                                         "contentLen=${readerContent.length}",
                                                 )
-                                                viewModel.updateReadingProgressAtChar(
-                                                    estimated,
-                                                    previewPlainTextFromTextViewTop(readerTv),
-                                                )
+                                                val preview = if (isPdfBook) {
+                                                    null
+                                                } else {
+                                                    previewPlainTextFromTextViewTop(readerTv)
+                                                }
+                                                viewModel.updateReadingProgressAtChar(estimated, preview)
                                             }
                                         }
                                         if (readerTv?.allowReaderScrollSideEffects != true ||
@@ -1405,6 +1423,11 @@ fun ReaderScreen(
                     } else if (isPdfBook && pdfPageIndex != null) {
                         pendingScrollRestoreGlobalChar = null
                         pendingScrollRestoreBookmarkPreview = null
+                        pendingScrollRestoreAnchor = null
+                        pendingScrollRestoreSnapToLine = true
+                        clearPendingSavedPositionSnap(readerTextView.value)
+                        coverUntilPositionRestore = true
+                        bumpScrollRestoreGeneration()
                         jumpToPdfPageVertically(
                             contentLen = contentLen,
                             chapterBoundaries = chapterBoundaries,
@@ -1416,7 +1439,7 @@ fun ReaderScreen(
                             },
                             onPendingPdfPageIndex = { pendingScrollRestorePdfPageIndex = it },
                             onProgress = {
-                                viewModel.updateReadingProgressAtChar(charPos, bookmarkPreview)
+                                viewModel.updateReadingProgressAtChar(charPos, null)
                             },
                         )
                     } else {
@@ -1493,6 +1516,12 @@ fun ReaderScreen(
                         )
                     } else if (isPdfBook && pdfPageIndex != null) {
                         pendingScrollRestoreGlobalChar = null
+                        pendingScrollRestoreBookmarkPreview = null
+                        pendingScrollRestoreAnchor = null
+                        pendingScrollRestoreSnapToLine = true
+                        clearPendingSavedPositionSnap(readerTextView.value)
+                        coverUntilPositionRestore = true
+                        bumpScrollRestoreGeneration()
                         jumpToPdfPageVertically(
                             contentLen = contentLen,
                             chapterBoundaries = chapterBoundaries,
