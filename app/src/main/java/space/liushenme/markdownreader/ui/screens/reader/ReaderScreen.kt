@@ -907,13 +907,22 @@ fun ReaderScreen(
 
     DisposableEffect(lifecycleOwner, bookId) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE) {
-                persistTopPositionNow()
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> viewModel.onReadingResumed()
+                Lifecycle.Event.ON_PAUSE -> {
+                    persistTopPositionNow()
+                    viewModel.onReadingPaused()
+                }
+                else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            viewModel.onReadingResumed()
+        }
         onDispose {
             persistTopPositionNow()
+            viewModel.onReadingPaused()
             lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
@@ -922,6 +931,7 @@ fun ReaderScreen(
         val previous = MarkdownLinkDispatcher.onBeforeOpenWebUrl
         MarkdownLinkDispatcher.onBeforeOpenWebUrl = {
             persistTopPositionNow()
+            viewModel.onReadingPaused()
         }
         onDispose {
             MarkdownLinkDispatcher.onBeforeOpenWebUrl = previous

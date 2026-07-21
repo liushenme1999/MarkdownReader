@@ -11,17 +11,15 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import space.liushenme.markdownreader.markdown.ReaderMarkwonFactory
-import java.io.File
+import space.liushenme.markdownreader.testutil.TestFixtures
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class TocJumpStuckAt174Test {
 
-    private val samplePath = "/Users/liukejun/Downloads/全格式示例markdown.md"
-
     @Test
     fun tocJumpWindow_startsAtTargetChapter_notEarlierMermaidSection() {
-        val markdown = File(samplePath).readText()
+        val markdown = TestFixtures.fullFormatSampleMarkdown()
         val toc = parseMarkdownToc(markdown)
         val sec18 = toc.first { it.title == "十八、转义字符测试" }
         val sec174 = toc.first { it.title == "17.4 思维导图" }
@@ -44,7 +42,7 @@ class TocJumpStuckAt174Test {
 
     @Test
     fun windowFromSec17_includesHeadingsThroughSection20() {
-        val markdown = File(samplePath).readText()
+        val markdown = TestFixtures.fullFormatSampleMarkdown()
         val toc = parseMarkdownToc(markdown)
         val sec18 = toc.first { it.title == "十八、转义字符测试" }
         val boundaries = computeChapterBoundaries(markdown, toc)
@@ -86,7 +84,7 @@ class TocJumpStuckAt174Test {
 
     @Test
     fun tocJump_scrollsPast174MindmapLine_withRealTextView() {
-        val markdown = File(samplePath).readText()
+        val markdown = TestFixtures.fullFormatSampleMarkdown()
         val toc = parseMarkdownToc(markdown)
         val sec18 = toc.first { it.title == "十八、转义字符测试" }
         val boundaries = computeChapterBoundaries(markdown, toc)

@@ -131,8 +131,6 @@ class SafeReaderTextViewSelectionTest {
         assertTrue(textView.hasVisibleTextSelection())
 
         textView.simulateSystemActionModeDestroyForTest()
-        // onDestroy 里 post 了 dismiss，推进主线程队列
-        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
 
         assertFalse(textView.hasVisibleTextSelection())
         assertFalse(textView.isInTextSelection())

@@ -45,15 +45,13 @@ fun ProfileScreen(
     val context = LocalContext.current
     val shelfBg = shelfStylePageBackground()
     val profile by viewModel.profile.collectAsState()
+    val todayReadingMinutes by viewModel.todayReadingMinutes.collectAsState()
+    val totalReadingDays by viewModel.totalReadingDays.collectAsState()
+    val continuousReadingDays by viewModel.continuousReadingDays.collectAsState()
 
     // 对话框状态
     var showAboutDialog by remember { mutableStateOf(false) }
     var showClearCacheDialog by remember { mutableStateOf(false) }
-
-    // 阅读数据（预留数据接口，暂时硬编码）
-    val todayReadingMinutes = 0
-    val totalReadingDays = 0
-    val continuousReadingDays = 0
 
     // 关于应用对话框
     if (showAboutDialog) {
@@ -184,7 +182,7 @@ fun ProfileScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // ========== 阅读数据概览卡片 ==========
+            // ========== 阅读数据概览卡片（点击进入阅读统计）==========
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -193,7 +191,8 @@ fun ProfileScreen(
                         shape = RoundedCornerShape(16.dp),
                         ambientColor = Color.Black.copy(alpha = 0.06f),
                         spotColor = Color.Black.copy(alpha = 0.08f)
-                    ),
+                    )
+                    .clickable { navController.navigate(AppRoutes.STATISTICS) },
                 shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.surface,
                 tonalElevation = 2.dp
@@ -271,18 +270,6 @@ fun ProfileScreen(
                 tonalElevation = 1.dp
             ) {
                 Column {
-                    // 阅读统计
-                    ProfileMenuItem(
-                        icon = Icons.Default.BarChart,
-                        title = "阅读统计",
-                        subtitle = "查看阅读数据与趋势",
-                        onClick = { navController.navigate(AppRoutes.STATISTICS) }
-                    )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(start = 56.dp, end = 16.dp),
-                        thickness = 0.5.dp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
-                    )
                     // 笔记管理
                     ProfileMenuItem(
                         icon = Icons.Default.EditNote,

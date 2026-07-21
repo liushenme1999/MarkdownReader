@@ -823,6 +823,9 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     /**
      * 单元测试：模拟系统结束划词 ActionMode（句柄消失），验证选区阴影会同步清除。
+     *
+     * 生产路径在 [onDestroyActionMode] 里 `post { dismissSelection() }`；测试里改为同步执行，
+     * 避免 Robolectric 推进 looper 时被划词句柄动画以 0 delay 反复入队而挂死。
      */
     internal fun simulateSystemActionModeDestroyForTest() {
         val mode = object : ActionMode() {
@@ -842,6 +845,9 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         }
         readerSelectionActionMode = mode
         emptySelectionActionMode.onDestroyActionMode(mode)
+        if (!clearingSelectionUi && selectionActive && readerSelectionActionMode == null) {
+            dismissSelection()
+        }
     }
 
     private fun setSelectionActive(active: Boolean) {

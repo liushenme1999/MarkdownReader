@@ -7,8 +7,8 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import space.liushenme.markdownreader.testutil.TestFixtures
 import space.liushenme.markdownreader.ui.screens.reader.markdownHeadingSpanStarts
-import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
@@ -16,8 +16,7 @@ class FootnoteFooterSetextHeadingTest {
 
     @Test
     fun footnoteFooter_separatorMustNotTurnLastParagraphIntoSetextHeading() {
-        val longBody = File("/Users/liukejun/Downloads/全格式示例markdown.md")
-            .readText()
+        val longBody = TestFixtures.fullFormatSampleMarkdown()
             .substringAfter("# 二十、长文本滚动测试\n")
             .trimEnd()
         val md = """

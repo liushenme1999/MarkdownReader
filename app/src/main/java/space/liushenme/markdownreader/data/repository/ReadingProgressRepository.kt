@@ -13,10 +13,10 @@ import javax.inject.Singleton
 class ReadingProgressRepository @Inject constructor(
     private val progressDao: ReadingProgressDao
 ) {
-    fun getProgressByBookId(bookId: Long): Flow<List<ReadingProgressEntity>> = 
+    fun getProgressByBookId(bookId: Long): Flow<List<ReadingProgressEntity>> =
         progressDao.getProgressByBookId(bookId)
 
-    fun getProgressByDateRange(startDate: Date, endDate: Date): Flow<List<ReadingProgressEntity>> = 
+    fun getProgressByDateRange(startDate: Date, endDate: Date): Flow<List<ReadingProgressEntity>> =
         progressDao.getProgressByDateRange(startDate, endDate)
 
     suspend fun getTotalReadCharsLast7Days(): Int {
@@ -35,6 +35,21 @@ class ReadingProgressRepository @Inject constructor(
 
     fun observeTotalReadChars(): Flow<Int> = progressDao.observeTotalReadChars()
 
+    fun observeTodayReadMinutes(): Flow<Int> =
+        progressDao.observeTodayReadMinutes(ReadingSessionStats.startOfToday())
+
+    fun observeTotalReadingDays(): Flow<Int> =
+        progressDao.observeActiveReadingDates().map { it.size }
+
+    fun observeContinuousReadingDays(): Flow<Int> =
+        progressDao.observeActiveReadingDates().map { dates ->
+            ReadingSessionStats.continuousReadingDays(
+                activeDayStartMillis = dates.map { ReadingTrendAggregator.startOfDayMillis(it) },
+                todayStartMillis = ReadingSessionStats.startOfToday().time,
+            )
+        }
+
+    /** 本自然周（周一至周日）每日阅读趋势。 */
     fun observeLast7DaysTrend(): Flow<List<DailyReadingTrendDay>> {
         val (startDate, endDate) = ReadingTrendAggregator.last7DaysRange()
         return progressDao.getProgressByDateRange(startDate, endDate).map { records ->
@@ -43,29 +58,11 @@ class ReadingProgressRepository @Inject constructor(
     }
 
     suspend fun recordReading(bookId: Long, charsRead: Int, minutesRead: Int) {
-        val today = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }.time
+        val chars = charsRead.coerceAtLeast(0)
+        val minutes = minutesRead.coerceAtLeast(0)
+        if (chars == 0 && minutes == 0) return
 
-        val existing = progressDao.getProgressByBookAndDate(bookId, today)
-        if (existing != null) {
-            val updated = existing.copy(
-                readChars = existing.readChars + charsRead,
-                readTimeMinutes = existing.readTimeMinutes + minutesRead
-            )
-            progressDao.insertProgress(updated)
-        } else {
-            progressDao.insertProgress(
-                ReadingProgressEntity(
-                    bookId = bookId,
-                    date = today,
-                    readChars = charsRead,
-                    readTimeMinutes = minutesRead
-                )
-            )
-        }
+        val today = ReadingSessionStats.startOfToday()
+        progressDao.upsertAddProgress(bookId, today, chars, minutes)
     }
 }

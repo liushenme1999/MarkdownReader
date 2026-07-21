@@ -20,7 +20,9 @@ import org.commonmark.parser.Parser
 
 /**
  * 表格渲染基于 Markwon [TablePlugin]（保留其 TextView 生命周期），
- * 行 span 改用 [ReaderTableRowSpan] 以抵消阅读行距倍数造成的“假空行”。
+ * 行 span 改用 [ReaderTableRowSpan] + [ReaderTableRowLineHeightSpan]：
+ * - 行间 `\n` 覆盖 [ReaderTableRowBreakSpan]，避免 MIUI 满宽挤出的空行占高度
+ * - 抵消行距倍数；给表头/偶数行补浅底
  */
 internal object ReaderTablePlugin {
 
@@ -54,6 +56,7 @@ internal object ReaderTablePlugin {
 
         override fun afterSetText(textView: TextView) {
             delegate.afterSetText(textView)
+            ReaderTableDebug.scheduleDump(textView, reason = "afterSetText")
         }
     }
 
@@ -63,21 +66,25 @@ internal object ReaderTablePlugin {
         private var pendingTableRow: MutableList<TableRowSpan.Cell>? = null
         private var tableRowIsHeader = false
         private var tableRows = 0
+        private var lastWasTableRow = false
 
         fun clear() {
             pendingTableRow = null
             tableRowIsHeader = false
             tableRows = 0
+            lastWasTableRow = false
         }
 
         fun configure(builder: MarkwonVisitor.Builder) {
             builder
                 .on(TableBlock::class.java) { visitor, tableBlock ->
+                    lastWasTableRow = false
                     visitor.blockStart(tableBlock)
                     val length = visitor.length()
                     visitor.visitChildren(tableBlock)
                     visitor.setSpans(length, TableSpan())
                     visitor.blockEnd(tableBlock)
+                    lastWasTableRow = false
                 }
                 .on(TableBody::class.java) { visitor, tableBody ->
                     visitor.visitChildren(tableBody)
@@ -106,25 +113,30 @@ internal object ReaderTablePlugin {
         }
 
         private fun visitRow(visitor: MarkwonVisitor, node: Node) {
-            val length = visitor.length()
             visitor.visitChildren(node)
             val row = pendingTableRow ?: return
             val builder: SpannableBuilder = visitor.builder()
-            val addNewLine = builder.length > 0 && builder.lastChar() != '\n'
-            if (addNewLine) {
+            if (lastWasTableRow) {
+                // 行间换行必须保留（让下一行 NBSP 另起一行），但用零高度 span 吃掉 MIUI 挤出的空行。
+                val breakStart = visitor.length()
+                builder.append('\n')
+                visitor.setSpans(breakStart, ReaderTableRowBreakSpan())
+            } else if (builder.length > 0 && builder.lastChar() != '\n') {
                 visitor.forceNewLine()
             }
+            val spanStart = visitor.length()
             builder.append('\u00a0')
-            val spanStart = if (addNewLine) length + 1 else length
             val span = ReaderTableRowSpan(
                 theme = tableTheme,
                 cells = row,
-                header = tableRowIsHeader,
-                odd = tableRows % 2 == 1,
+                rowHeader = tableRowIsHeader,
+                rowOdd = tableRows % 2 == 1,
             )
             tableRows = if (tableRowIsHeader) 0 else tableRows + 1
             visitor.setSpans(spanStart, span)
+            visitor.setSpans(spanStart, ReaderTableRowLineHeightSpan())
             pendingTableRow = null
+            lastWasTableRow = true
         }
 
         private fun tableCellAlignment(alignment: TableCell.Alignment?): Int {

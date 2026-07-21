@@ -23,7 +23,7 @@ import space.liushenme.markdownreader.data.local.entity.ReadingProgressEntity
         HighlightEntity::class,
         ReadingProgressEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -73,6 +73,40 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** 合并同书同日重复行，并加上 UNIQUE(bookId, date) 以支撑原子累加。 */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `reading_progress_new` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `bookId` INTEGER NOT NULL,
+                        `date` INTEGER NOT NULL,
+                        `readChars` INTEGER NOT NULL,
+                        `readTimeMinutes` INTEGER NOT NULL,
+                        FOREIGN KEY(`bookId`) REFERENCES `books`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `reading_progress_new` (`bookId`, `date`, `readChars`, `readTimeMinutes`)
+                    SELECT `bookId`, `date`, SUM(`readChars`), SUM(`readTimeMinutes`)
+                    FROM `reading_progress`
+                    GROUP BY `bookId`, `date`
+                    """.trimIndent(),
+                )
+                db.execSQL("DROP TABLE `reading_progress`")
+                db.execSQL("ALTER TABLE `reading_progress_new` RENAME TO `reading_progress`")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_reading_progress_bookId` ON `reading_progress` (`bookId`)",
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_reading_progress_bookId_date` ON `reading_progress` (`bookId`, `date`)",
+                )
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -86,6 +120,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_3_4,
                         MIGRATION_4_5,
                         MIGRATION_5_6,
+                        MIGRATION_6_7,
                     )
                     .build()
                 INSTANCE = instance

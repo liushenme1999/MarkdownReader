@@ -8,7 +8,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import space.liushenme.markdownreader.markdown.ReaderMarkwonFactory
-import java.io.File
+import space.liushenme.markdownreader.testutil.TestFixtures
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
@@ -16,8 +16,7 @@ class TocJumpSection20ExtraHeadingTest {
 
     @Test
     fun section20LongParagraph_mustNotBecomeHeadingSpan() {
-        val body = File("/Users/liukejun/Downloads/全格式示例markdown.md")
-            .readText()
+        val body = TestFixtures.fullFormatSampleMarkdown()
             .substringAfter("# 二十、长文本滚动测试\n")
             .trimEnd()
         val md = "# 二十、长文本滚动测试\n$body"
@@ -38,7 +37,7 @@ class TocJumpSection20ExtraHeadingTest {
 
     @Test
     fun section19And20_together_reproducesExtraHeadingSpan() {
-        val full = File("/Users/liukejun/Downloads/全格式示例markdown.md").readText()
+        val full = TestFixtures.fullFormatSampleMarkdown()
         val start = full.indexOf("# 十九、混合嵌套排版")
         val md = full.substring(start)
         val context: Context = RuntimeEnvironment.getApplication()

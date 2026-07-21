@@ -16,7 +16,10 @@ import java.util.Date
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index("bookId")]
+    indices = [
+        Index("bookId"),
+        Index(value = ["bookId", "date"], unique = true),
+    ]
 )
 data class ReadingProgressEntity(
     @PrimaryKey(autoGenerate = true)

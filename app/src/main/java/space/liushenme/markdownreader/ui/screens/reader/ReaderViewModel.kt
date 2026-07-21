@@ -11,6 +11,7 @@ import space.liushenme.markdownreader.data.repository.BookRepository
 import space.liushenme.markdownreader.data.repository.BookmarkRepository
 import space.liushenme.markdownreader.data.repository.HighlightRepository
 import space.liushenme.markdownreader.data.repository.ReadingProgressRepository
+import space.liushenme.markdownreader.data.repository.ReadingSessionStats
 import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
 import space.liushenme.markdownreader.importing.BookContentLoader
 import space.liushenme.markdownreader.importing.ExtractedBookText
@@ -106,8 +107,12 @@ class ReaderViewModel @Inject constructor(
     val bookmarks = MutableStateFlow<List<BookmarkEntity>>(emptyList())
     val highlights = MutableStateFlow<List<HighlightEntity>>(emptyList())
 
-    private var readingStartTime: Long = 0
-    private var startPosition: Int = 0
+    /** 当前前台计时片段起点；0 表示未在计时（已暂停或未开始）。 */
+    private var sessionSegmentStartMs: Long = 0L
+    /** 当前计时片段开始时的字符位置，用于估算本片段前进字数。 */
+    private var sessionSegmentStartCharPos: Int = 0
+    /** 阅读页是否处于前台（ON_RESUME～ON_PAUSE）。 */
+    private var readingForeground: Boolean = false
     /** 最近一次按视口顶部更新的全书字符下标，退出时优先落盘，避免 float 反算偏差。 */
     private var lastKnownReadingCharPos: Int = 0
     /** 与书签 previewText 同格式的视口顶预览，打开书时与书签跳转共用定位。 */
@@ -182,8 +187,7 @@ class ReaderViewModel @Inject constructor(
                     "无法读取正文（文件权限失效或路径无效）。请返回书架删除该书后，使用「导入」重新选择文件。"
             }
 
-            readingStartTime = System.currentTimeMillis()
-            startPosition = lastKnownReadingCharPos
+            beginSessionSegmentIfNeeded()
 
             bookmarkCollectJob = viewModelScope.launch {
                 bookmarkRepository.getBookmarksByBookId(bookId)
@@ -192,6 +196,49 @@ class ReaderViewModel @Inject constructor(
             highlightCollectJob = viewModelScope.launch {
                 highlightRepository.getHighlightsByBookId(bookId)
                     .collect { highlights.value = it }
+            }
+        }
+    }
+
+    /** 阅读页进入前台：开始（或继续）本段阅读计时。 */
+    fun onReadingResumed() {
+        readingForeground = true
+        beginSessionSegmentIfNeeded()
+    }
+
+    /**
+     * 阅读页进入后台 / 打开外链等：落盘本段时长与字数，并暂停计时，避免后台时间灌水。
+     * 与进度落盘一并在 ON_PAUSE 调用，进程被杀前尽量保住统计。
+     */
+    fun onReadingPaused() {
+        readingForeground = false
+        flushSessionSegmentBlocking()
+    }
+
+    private fun beginSessionSegmentIfNeeded() {
+        if (!readingForeground) return
+        if (_book.value == null || _content.value.isEmpty()) return
+        if (sessionSegmentStartMs > 0L) return
+        sessionSegmentStartMs = System.currentTimeMillis()
+        sessionSegmentStartCharPos = lastKnownReadingCharPos
+    }
+
+    private fun flushSessionSegmentBlocking() {
+        val book = _book.value ?: return
+        val segmentStart = sessionSegmentStartMs
+        if (segmentStart <= 0L) return
+        sessionSegmentStartMs = 0L
+
+        val elapsed = (System.currentTimeMillis() - segmentStart).coerceAtLeast(0L)
+        val minutesRead = ReadingSessionStats.elapsedMillisToMinutes(elapsed)
+        val contentLen = _content.value.length.coerceAtLeast(1)
+        val endPosition = lastKnownReadingCharPos.coerceIn(0, contentLen)
+        val charsRead = (endPosition - sessionSegmentStartCharPos).coerceAtLeast(0)
+        sessionSegmentStartCharPos = endPosition
+
+        if (minutesRead > 0 || charsRead > 0) {
+            runBlocking {
+                readingProgressRepository.recordReading(book.id, charsRead, minutesRead)
             }
         }
     }
@@ -442,20 +489,12 @@ class ReaderViewModel @Inject constructor(
     }
 
     override fun onCleared() {
-        val book = _book.value
-        if (book != null) {
-            // onCleared 调用时 viewModelScope 已被取消，必须用 runBlocking 同步落盘，
-            // 否则在此处 launch 出来的协程会被立即取消，进度与阅读时长会丢失。
-            val endTime = System.currentTimeMillis()
-            val minutesRead = ((endTime - readingStartTime) / 60_000).toInt()
-            val contentLen = _content.value.length.coerceAtLeast(1)
-            val endPosition = lastKnownReadingCharPos.coerceIn(0, contentLen)
-            val charsRead = (endPosition - startPosition).coerceAtLeast(0)
+        // onCleared 时 viewModelScope 已取消；进度与未 flush 的会话片段需同步落盘。
+        // 正常路径 ON_PAUSE 已写过统计，此处仅兜底（例如未走到 Pause 的销毁）。
+        if (_book.value != null) {
+            flushSessionSegmentBlocking()
             runBlocking {
                 flushReadingProgressNow()
-                if (minutesRead > 0 || charsRead > 0) {
-                    readingProgressRepository.recordReading(book.id, charsRead, minutesRead)
-                }
             }
         }
         super.onCleared()

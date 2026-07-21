@@ -33,6 +33,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import androidx.navigation.compose.rememberNavController
 import space.liushenme.markdownreader.data.local.entity.BookEntity
+import space.liushenme.markdownreader.data.repository.ReadingSessionStats
 import space.liushenme.markdownreader.data.repository.ReadingTrendAggregator
 import space.liushenme.markdownreader.ui.components.ShelfStyleTopBarBackground
 import space.liushenme.markdownreader.ui.components.ShelfStyleTopAppBar
@@ -118,7 +119,7 @@ private fun StatisticsOverview(stats: ReadingStatistics) {
                 )
                 StatItem(
                     icon = Icons.Default.Schedule,
-                    value = "${stats.totalReadTime}小时",
+                    value = ReadingSessionStats.formatReadDuration(stats.totalReadMinutes),
                     label = "阅读时长"
                 )
             }
@@ -658,7 +659,8 @@ private fun formatNumber(number: Int): String {
 data class ReadingStatistics(
     val totalBooks: Int = 0,
     val finishedBooks: Int = 0,
-    val totalReadTime: Int = 0, // 小时
+    /** 累计阅读分钟数（优先来自 reading_progress，否则按进度估算）。 */
+    val totalReadMinutes: Int = 0,
     val totalReadChars: Int = 0,
     val totalBookmarks: Int = 0,
     val totalHighlights: Int = 0
@@ -672,7 +674,7 @@ data class DailyReading(
 private fun statisticsPreviewStats(): ReadingStatistics = ReadingStatistics(
     totalBooks = 12,
     finishedBooks = 4,
-    totalReadTime = 36,
+    totalReadMinutes = 36 * 60,
     totalReadChars = 1_250_000,
     totalBookmarks = 28,
     totalHighlights = 56

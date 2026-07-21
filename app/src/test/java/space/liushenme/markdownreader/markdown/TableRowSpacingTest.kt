@@ -1,6 +1,9 @@
 package space.liushenme.markdownreader.markdown
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
 import android.text.Spanned
 import android.widget.TextView
 import org.junit.Assert.assertTrue
@@ -32,6 +35,8 @@ class TableRowSpacingTest {
         val rendered = markwon.toMarkdown(prepared.text) as Spanned
         val rowSpans = rendered.getSpans(0, rendered.length, ReaderTableRowSpan::class.java)
         assertTrue("expected ReaderTableRowSpan, got ${rowSpans.size}", rowSpans.size >= 5)
+        val lineSpans = rendered.getSpans(0, rendered.length, ReaderTableRowLineHeightSpan::class.java)
+        assertTrue("expected ReaderTableRowLineHeightSpan, got ${lineSpans.size}", lineSpans.size >= 5)
     }
 
     @Test
@@ -49,6 +54,64 @@ class TableRowSpacingTest {
             | 7 | 8 | 9 |
         """.trimIndent()
         assertTableRowsHaveNoLargeGap(compactTable, widthPx = 1400, lineSpacing = 1.5f)
+        assertTableRowsHaveNoLargeGap(compactTable, widthPx = 1400, lineSpacing = 1.0f)
+    }
+
+    @Test
+    fun table_interRowBreak_usesZeroHeightSpan() {
+        val compactTable = """
+            | X | Y |
+            | --- | --- |
+            | a | b |
+            | c | d |
+        """.trimIndent()
+        val context: Context = RuntimeEnvironment.getApplication()
+        val markwon = ReaderMarkwonFactory.create(context)
+        val prepared = ReaderMarkwonFactory.prepareMarkdown(compactTable)
+        val rendered = markwon.toMarkdown(prepared.text) as Spanned
+        val rows = rendered.getSpans(0, rendered.length, ReaderTableRowSpan::class.java)
+            .sortedBy { rendered.getSpanStart(it) }
+        require(rows.size >= 3)
+        for (i in 0 until rows.size - 1) {
+            val e = rendered.getSpanEnd(rows[i])
+            val s2 = rendered.getSpanStart(rows[i + 1])
+            val between = rendered.subSequence(e, s2).toString()
+            assertTrue("expected single \\n between rows, got '$between'", between == "\n")
+            val breaks = rendered.getSpans(e, s2, ReaderTableRowBreakSpan::class.java)
+            assertTrue("expected ReaderTableRowBreakSpan on inter-row \\n", breaks.isNotEmpty())
+        }
+    }
+
+    @Test
+    fun table_noEmptyLineBetweenRows_evenWhenSpanNearlyFullWidth() {
+        val compactTable = """
+            | X | Y |
+            | --- | --- |
+            | a | b |
+            | c | d |
+        """.trimIndent()
+        val gap = measureMaxTableRowGap(compactTable, widthPx = 1400, lineSpacing = 1.5f)
+        assertTrue("max gap should be ~0 after zero-height break, was $gap", gap <= 1)
+    }
+
+    @Test
+    fun table_rowHeights_consistent_despiteTrailingNewline() {
+        val compactTable = """
+            | X | Y |
+            | --- | --- |
+            | a | b |
+            | c | d |
+            | e | f |
+        """.trimIndent()
+        val measured = measureTable(compactTable, widthPx = 1400, lineSpacing = 1.0f)
+        val (rendered, rows, layout) = measured
+        val heights = rows.map { row ->
+            val line = layout.getLineForOffset(rendered.getSpanStart(row))
+            layout.getLineBottom(line) - layout.getLineTop(line)
+        }
+        val maxH = heights.maxOrNull() ?: 0
+        val minH = heights.minOrNull() ?: 0
+        assertTrue("row heights diverge too much: $heights", maxH - minH <= 2)
     }
 
     @Test
@@ -71,11 +134,43 @@ class TableRowSpacingTest {
     }
 
     private fun measureMaxTableRowGap(markdown: String, widthPx: Int, lineSpacing: Float): Int {
+        val (rendered, rows, layout) = measureTable(markdown, widthPx, lineSpacing)
+        var maxGap = 0
+        for (i in 0 until rows.size - 1) {
+            val l1 = layout.getLineForOffset(rendered.getSpanStart(rows[i]))
+            val l2 = layout.getLineForOffset(rendered.getSpanStart(rows[i + 1]))
+            val gap = layout.getLineTop(l2) - layout.getLineBottom(l1)
+            maxGap = maxOf(maxGap, gap)
+        }
+        return maxGap
+    }
+
+    private data class MeasuredTable(
+        val rendered: Spanned,
+        val rows: List<ReaderTableRowSpan>,
+        val layout: android.text.Layout,
+    )
+
+    private fun measureTable(markdown: String, widthPx: Int, lineSpacing: Float): MeasuredTable {
         val context: Context = RuntimeEnvironment.getApplication()
         ReaderTableSpacing.lineSpacingMultiplier = lineSpacing
         val markwon = ReaderMarkwonFactory.create(context)
         val prepared = ReaderMarkwonFactory.prepareMarkdown(markdown)
         val rendered = markwon.toMarkdown(prepared.text) as Spanned
+        val rows = rendered.getSpans(0, rendered.length, ReaderTableRowSpan::class.java)
+            .sortedBy { rendered.getSpanStart(it) }
+        require(rows.size >= 2) { "need 2+ rows" }
+
+        // Warm internal cell layouts so getSize reports real row metrics (like first draw).
+        val bmp = Bitmap.createBitmap(widthPx, 64, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        val paint = Paint().apply { textSize = 18f * context.resources.displayMetrics.density }
+        for (row in rows) {
+            val s = rendered.getSpanStart(row)
+            val e = rendered.getSpanEnd(row)
+            row.draw(canvas, rendered, s, e, 0f, 0, 0, 40, paint)
+        }
+
         val tv = TextView(context).apply {
             includeFontPadding = false
             textSize = 18f
@@ -86,16 +181,6 @@ class TableRowSpacingTest {
                 android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED),
             )
         }
-        val layout = requireNotNull(tv.layout)
-        val rows = rendered.getSpans(0, rendered.length, ReaderTableRowSpan::class.java)
-            .sortedBy { rendered.getSpanStart(it) }
-        require(rows.size >= 2) { "need 2+ rows" }
-        val lineIndices = rows.map { row -> layout.getLineForOffset(rendered.getSpanStart(row)) }
-        var maxGap = 0
-        for (i in 0 until lineIndices.size - 1) {
-            val gap = layout.getLineTop(lineIndices[i + 1]) - layout.getLineBottom(lineIndices[i])
-            maxGap = maxOf(maxGap, gap)
-        }
-        return maxGap
+        return MeasuredTable(rendered, rows, requireNotNull(tv.layout))
     }
 }

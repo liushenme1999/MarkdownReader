@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import space.liushenme.markdownreader.data.repository.AppCacheRepository
+import space.liushenme.markdownreader.data.repository.ReadingProgressRepository
 import space.liushenme.markdownreader.data.repository.UserProfile
 import space.liushenme.markdownreader.data.repository.UserProfileRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -16,6 +17,7 @@ import kotlinx.coroutines.launch
 class ProfileViewModel @Inject constructor(
     private val userProfileRepository: UserProfileRepository,
     private val appCacheRepository: AppCacheRepository,
+    readingProgressRepository: ReadingProgressRepository,
 ) : ViewModel() {
 
     val profile = userProfileRepository.profile.stateIn(
@@ -26,6 +28,24 @@ class ProfileViewModel @Inject constructor(
             signature = UserProfileRepository.DEFAULT_SIGNATURE,
             avatarPath = null,
         ),
+    )
+
+    val todayReadingMinutes = readingProgressRepository.observeTodayReadMinutes().stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = 0,
+    )
+
+    val totalReadingDays = readingProgressRepository.observeTotalReadingDays().stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = 0,
+    )
+
+    val continuousReadingDays = readingProgressRepository.observeContinuousReadingDays().stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = 0,
     )
 
     fun setNickname(nickname: String) {

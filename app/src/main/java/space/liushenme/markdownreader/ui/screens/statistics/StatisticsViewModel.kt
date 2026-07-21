@@ -52,16 +52,16 @@ class StatisticsViewModel @Inject constructor(
                 val finishedBooks = books.count { it.readingProgress >= 0.95f }
                 val charsFromBooks = books.sumOf { (it.readingProgress * it.totalChars).toInt() }
                 val totalReadChars = if (totalCharsFromDb > 0) totalCharsFromDb else charsFromBooks
-                val totalReadTimeHours = if (totalMinutesFromDb > 0) {
-                    totalMinutesFromDb / 60
+                val totalReadMinutes = if (totalMinutesFromDb > 0) {
+                    totalMinutesFromDb
                 } else {
-                    calculateTotalReadTimeHoursFromBooks(books)
+                    estimateTotalReadMinutesFromBooks(books)
                 }
 
                 ReadingStatistics(
                     totalBooks = books.size,
                     finishedBooks = finishedBooks,
-                    totalReadTime = totalReadTimeHours,
+                    totalReadMinutes = totalReadMinutes,
                     totalReadChars = totalReadChars,
                     totalBookmarks = bookmarks.size,
                     totalHighlights = highlights.size,
@@ -92,8 +92,8 @@ class StatisticsViewModel @Inject constructor(
         }
     }
 
-    private fun calculateTotalReadTimeHoursFromBooks(books: List<BookEntity>): Int {
+    private fun estimateTotalReadMinutesFromBooks(books: List<BookEntity>): Int {
         val totalChars = books.sumOf { (it.readingProgress * it.totalChars).toInt() }
-        return (totalChars / ReadingTrendAggregator.CHARS_PER_HOUR).coerceAtLeast(0)
+        return ReadingTrendAggregator.estimateMinutesFromChars(totalChars)
     }
 }

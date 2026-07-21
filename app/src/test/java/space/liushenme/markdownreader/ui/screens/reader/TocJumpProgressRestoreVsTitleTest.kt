@@ -9,17 +9,15 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import space.liushenme.markdownreader.markdown.ReaderMarkwonFactory
-import java.io.File
+import space.liushenme.markdownreader.testutil.TestFixtures
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class TocJumpProgressRestoreVsTitleTest {
 
-    private val samplePath = "/Users/liukejun/Downloads/全格式示例markdown.md"
-
     @Test
     fun progressRestore_mapsSection18Near174_notTitle() {
-        val markdown = File(samplePath).readText()
+        val markdown = TestFixtures.fullFormatSampleMarkdown()
         val toc = parseMarkdownToc(markdown)
         val sec18 = toc.first { it.title == "十八、转义字符测试" }
         val boundaries = computeChapterBoundaries(markdown, toc)
