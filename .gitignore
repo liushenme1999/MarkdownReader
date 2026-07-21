@@ -4,6 +4,9 @@
 *.aab
 *.dex
 
+# Allow release APKs in-repo for README download links
+!app/release/*.apk
+
 # Files for the ART/Dalvik VM
 *.dex
 
@@ -14,8 +17,9 @@
 bin/
 gen/
 out/
-release/
-app/release/
+# Other artifacts under app/release/ (APKs are re-included above)
+app/release/baselineProfiles/
+app/release/output-metadata.json
 
 # Gradle files
 .gradle/

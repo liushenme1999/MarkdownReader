@@ -11,6 +11,22 @@
 | **当前版本** | 1.0 (versionCode 1) |
 | **仓库** | [github.com/liukejun1999/MarkdownReader](https://github.com/liukejun1999/MarkdownReader) |
 
+## 安装包下载
+
+无需自行编译，可直接下载已签名的正式版（Release）APK 安装使用：
+
+| 版本 | 下载 | 大小约 |
+|------|------|--------|
+| **1.0** | [MD阅读器_release_1.0.apk](app/release/MD阅读器_release_1.0.apk) | 13 MB |
+
+安装说明：
+
+1. 点击上方链接，进入仓库中的 APK 文件页，再点击 **Download** / **下载** 保存到手机
+2. 在系统设置中允许本应用（或文件管理器）「安装未知应用」
+3. 打开已下载的 APK 完成安装
+
+> Debug 包与中间产物仍不纳入版本库；仅 `app/release/*.apk` 正式包会随仓库发布，便于用户下载。
+
 ## 功能特性
 
 ### 书架管理
