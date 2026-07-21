@@ -110,6 +110,8 @@ class ReaderViewModel @Inject constructor(
     private var startPosition: Int = 0
     /** 最近一次按视口顶部更新的全书字符下标，退出时优先落盘，避免 float 反算偏差。 */
     private var lastKnownReadingCharPos: Int = 0
+    /** 与书签 previewText 同格式的视口顶预览，打开书时与书签跳转共用定位。 */
+    private var lastKnownProgressPreview: String = ""
 
     private var loadBookJob: Job? = null
     private var bookmarkCollectJob: Job? = null
@@ -167,6 +169,7 @@ class ReaderViewModel @Inject constructor(
                 contentLength = text.length,
                 totalChars = bookEntity.totalChars.coerceAtLeast(text.length.coerceAtLeast(1)),
             )
+            lastKnownProgressPreview = bookEntity.progressPreviewText.trim()
             if (text.isNotEmpty() && text.length != bookEntity.totalChars) {
                 val synced = bookEntity.copy(totalChars = text.length)
                 bookRepository.updateBook(synced)
@@ -193,28 +196,30 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    /** 按全书源码字符下标更新进度（与书签/目录跳转坐标一致）。 */
-    fun updateReadingProgressAtChar(globalChar: Int) {
+    /** 按全书源码字符下标更新进度（与书签记录字段一致：position + preview）。 */
+    fun updateReadingProgressAtChar(globalChar: Int, previewText: String? = null) {
         val contentLen = _content.value.length
         if (contentLen <= 0) return
         val pos = globalChar.coerceIn(0, contentLen)
         lastKnownReadingCharPos = pos
+        previewText?.let { lastKnownProgressPreview = normalizeReadingPreviewText(it) }
         val progress = pos.toFloat() / contentLen
         _readingProgress.value = progress
-        scheduleProgressPersist(progress, pos)
+        scheduleProgressPersist(progress, pos, lastKnownProgressPreview)
     }
 
-    fun updateReadingProgressAtCharNow(globalChar: Int) {
+    fun updateReadingProgressAtCharNow(globalChar: Int, previewText: String? = null) {
         val contentLen = _content.value.length
         if (contentLen <= 0) return
         val pos = globalChar.coerceIn(0, contentLen)
         lastKnownReadingCharPos = pos
+        previewText?.let { lastKnownProgressPreview = normalizeReadingPreviewText(it) }
         val progress = pos.toFloat() / contentLen
         _readingProgress.value = progress
         progressPersistJob?.cancel()
         progressPersistJob = null
         viewModelScope.launch {
-            persistReadingProgress(progress, pos)
+            persistReadingProgress(progress, pos, lastKnownProgressPreview)
         }
     }
 
@@ -225,18 +230,23 @@ class ReaderViewModel @Inject constructor(
         return lastKnownReadingCharPos.coerceIn(0, contentLen)
     }
 
+    /** 打开书恢复用的视口顶预览（与书签 previewText 同格式）。 */
+    fun readingPreviewForRestore(): String? =
+        lastKnownProgressPreview.takeIf { it.isNotBlank() }
+
     /** 退出阅读页时同步落盘，避免 ON_PAUSE 异步写入未完成。 */
-    fun persistReadingPositionBlocking(globalChar: Int) {
+    fun persistReadingPositionBlocking(globalChar: Int, previewText: String? = null) {
         val contentLen = _content.value.length
         if (contentLen <= 0) return
         val pos = globalChar.coerceIn(0, contentLen)
         lastKnownReadingCharPos = pos
+        previewText?.let { lastKnownProgressPreview = normalizeReadingPreviewText(it) }
         val progress = pos.toFloat() / contentLen
         _readingProgress.value = progress
         progressPersistJob?.cancel()
         progressPersistJob = null
         runBlocking {
-            persistReadingProgress(progress, pos)
+            persistReadingProgress(progress, pos, lastKnownProgressPreview)
         }
     }
 
@@ -245,17 +255,21 @@ class ReaderViewModel @Inject constructor(
         updateReadingProgressAtChar((progress * contentLen).toInt())
     }
 
-    private fun scheduleProgressPersist(progress: Float, position: Int) {
+    private fun scheduleProgressPersist(progress: Float, position: Int, previewText: String) {
         progressPersistJob?.cancel()
         progressPersistJob = viewModelScope.launch {
             delay(300)
-            persistReadingProgress(progress, position)
+            persistReadingProgress(progress, position, previewText)
         }
     }
 
-    private suspend fun persistReadingProgress(progress: Float, position: Int) {
+    private suspend fun persistReadingProgress(
+        progress: Float,
+        position: Int,
+        previewText: String,
+    ) {
         val book = _book.value ?: return
-        bookRepository.updateReadingProgress(book.id, progress, position)
+        bookRepository.updateReadingProgress(book.id, progress, position, previewText)
         // 勿同步更新 _book.currentPosition：ReaderScreen 监听该字段会重算窗口并触发滚动恢复，导致阅读中跳动。
     }
 
@@ -266,16 +280,19 @@ class ReaderViewModel @Inject constructor(
         val pos = lastKnownReadingCharPos.coerceIn(0, contentLen)
         val progress = readingProgressForCharPos(pos, contentLen)
         _readingProgress.value = progress
-        persistReadingProgress(progress, pos)
+        persistReadingProgress(progress, pos, lastKnownProgressPreview)
     }
 
     fun addBookmark(previewText: String, note: String? = null) {
         viewModelScope.launch {
             _book.value?.let { book ->
+                val contentLen = _content.value.length.coerceAtLeast(1)
+                val pos = lastKnownReadingCharPos.coerceIn(0, contentLen)
                 val bookmark = BookmarkEntity(
                     bookId = book.id,
-                    position = (readingProgress.value * book.totalChars).toInt(),
-                    previewText = MarkdownInlineHtml.stripTags(previewText).take(100),
+                    position = pos,
+                    previewText = normalizeReadingPreviewText(previewText)
+                        .ifEmpty { "书签" },
                     note = note,
                     createTime = Date()
                 )
@@ -304,10 +321,19 @@ class ReaderViewModel @Inject constructor(
         val raw = _content.value
         if (raw.isEmpty()) return null
 
-        val pos = (positionForAdd ?: (readingProgress.value * total).toInt()).coerceIn(0, raw.length)
+        val pos = (positionForAdd ?: lastKnownReadingCharPos).coerceIn(0, raw.length)
+        val preview = normalizeReadingPreviewText(previewForAdd).ifEmpty {
+            val from = (pos - 60).coerceAtLeast(0)
+            val to = (pos + 80).coerceAtMost(raw.length)
+            normalizeReadingPreviewText(
+                raw.substring(from, to).ifEmpty { "书签" },
+            ).ifEmpty { "书签" }
+        }
+        lastKnownReadingCharPos = pos
+        lastKnownProgressPreview = preview
         val progress = pos.toFloat() / raw.length.coerceAtLeast(1)
         _readingProgress.value = progress
-        scheduleProgressPersist(progress, pos)
+        scheduleProgressPersist(progress, pos, preview)
         val window = (total / 40).coerceIn(300, 1500)
         val near = bookmarks.value.find { abs(it.position - pos) <= window }
 
@@ -315,21 +341,6 @@ class ReaderViewModel @Inject constructor(
             bookmarkRepository.deleteBookmark(near)
             false
         } else {
-            val preview = previewForAdd
-                ?.replace('\n', ' ')
-                ?.trim()
-                ?.takeIf { it.isNotEmpty() }
-                ?.let { MarkdownInlineHtml.stripTags(it) }
-                ?: run {
-                    val from = (pos - 60).coerceAtLeast(0)
-                    val to = (pos + 80).coerceAtMost(raw.length)
-                    MarkdownInlineHtml.stripTags(
-                        raw.substring(from, to)
-                            .replace('\n', ' ')
-                            .trim()
-                            .ifEmpty { "书签" },
-                    ).take(100)
-                }
             bookmarkRepository.addBookmark(
                 BookmarkEntity(
                     bookId = book.id,
@@ -450,3 +461,14 @@ class ReaderViewModel @Inject constructor(
         super.onCleared()
     }
 }
+
+/** 书签 / 阅读进度共用的预览文案规范化。 */
+internal fun normalizeReadingPreviewText(raw: String?): String =
+    raw
+        ?.replace('\n', ' ')
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+        ?.let { MarkdownInlineHtml.stripTags(it) }
+        ?.take(100)
+        .orEmpty()
+

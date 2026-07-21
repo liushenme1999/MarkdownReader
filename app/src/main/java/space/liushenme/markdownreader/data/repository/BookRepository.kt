@@ -28,8 +28,13 @@ class BookRepository @Inject constructor(
         bookDao.deleteBook(book)
     }
 
-    suspend fun updateReadingProgress(bookId: Long, progress: Float, position: Int) {
-        bookDao.updateReadingProgress(bookId, progress, position, Date().time)
+    suspend fun updateReadingProgress(
+        bookId: Long,
+        progress: Float,
+        position: Int,
+        previewText: String = "",
+    ) {
+        bookDao.updateReadingProgress(bookId, progress, position, previewText, Date().time)
     }
 
     suspend fun toggleFavorite(bookId: Long, isFavorite: Boolean) {

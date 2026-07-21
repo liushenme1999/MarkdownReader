@@ -104,6 +104,12 @@ internal fun readingChromeShade(readingBackground: Color): Color =
 /** [TextView] 上用于判断是否需要重新执行 Markwon 渲染的 tag key */
 internal const val TAG_READER_RENDER_SIG = 0x4d445f52 // "MD_R"
 
+/** 记录上次应用的行距倍数，行距变化时触发 TextView 重排以更新表格 span 补偿 */
+internal const val TAG_READER_LINE_SPACING = 0x4d445f4c // "MD_L"
+
+/** 滚动恢复代数：防止已取消的 LaunchedEffect 在 tv.post 中仍执行旧的 snap 滚动 */
+internal const val TAG_READER_SCROLL_RESTORE_GEN = 0x4d445f47 // "MD_G"
+
 /** 顶栏/底栏显示时，累计垂直滚动超过该像素后再收起（避免轻微抖动误触） */
 internal val ReaderHideChromeScrollThreshold = 56.dp
 

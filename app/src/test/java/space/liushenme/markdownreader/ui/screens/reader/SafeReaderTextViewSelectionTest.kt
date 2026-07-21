@@ -104,6 +104,41 @@ class SafeReaderTextViewSelectionTest {
     }
 
     @Test
+    fun outsideDrag_afterEditorClearedRange_doesNotRestoreOrphanHighlight() {
+        // 区外按下后手指移动超出 slop，shouldDismiss 不成立；若系统已清 range，
+        // 旧逻辑会 restoreSavedSelectionRange → 只剩选区阴影、无首尾句柄。
+        activateSelection()
+        val text = textView.text as SpannableString
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 12f, 580f, 0)
+        val up = MotionEvent.obtain(0, 50, MotionEvent.ACTION_UP, 12f, 400f, 0)
+        try {
+            textView.onTouchEvent(down)
+            Selection.removeSelection(text)
+            textView.onTouchEvent(up)
+        } finally {
+            down.recycle()
+            up.recycle()
+        }
+        assertFalse(textView.hasVisibleTextSelection())
+        assertFalse(textView.isInTextSelection())
+        assertTrue(Selection.getSelectionStart(text) == Selection.getSelectionEnd(text))
+    }
+
+    @Test
+    fun actionModeDestroyedBySystem_clearsSelectionHighlightWithHandles() {
+        activateSelection()
+        assertTrue(textView.isInTextSelection())
+        assertTrue(textView.hasVisibleTextSelection())
+
+        textView.simulateSystemActionModeDestroyForTest()
+        // onDestroy 里 post 了 dismiss，推进主线程队列
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        assertFalse(textView.hasVisibleTextSelection())
+        assertFalse(textView.isInTextSelection())
+    }
+
+    @Test
     fun touchInsideSelectionText_doesNotDismissOnUp() {
         activateSelection()
         val text = textView.text as SpannableString

@@ -16,9 +16,7 @@ import android.widget.TextView
 import space.liushenme.markdownreader.MarkdownReaderApp
 import space.liushenme.markdownreader.ui.screens.reader.SafeReaderTextView
 import space.liushenme.markdownreader.ui.screens.reader.captureTextViewScrollAnchor
-import space.liushenme.markdownreader.R
-import space.liushenme.markdownreader.ui.screens.reader.reapplyPendingScrollCharOffsetIfAny
-import space.liushenme.markdownreader.ui.screens.reader.schedulePendingScrollReapply
+import space.liushenme.markdownreader.ui.screens.reader.charOffsetAtScrollTop
 import space.liushenme.markdownreader.ui.screens.reader.scrollTextViewPreservingScrollY
 import io.noties.markwon.image.AsyncDrawable
 import io.noties.markwon.image.AsyncDrawableSpan
@@ -292,19 +290,24 @@ internal object DiagramImageLoader {
                 host.beginAsyncScrollSuppression()
             }
             val lineWidth = contentWidthForHost(host, context)
-            applyScaledDiagramResult(drawable, context, cropped, lineWidth, host.textSize.coerceAtLeast(1f))
+            // 按视口顶部「字符行」锚定而非固定 scrollY 像素：图表若在视口上方，
+            // 占位符→实际高度会改变上方总高，固定 scrollY 会让下方内容（含跳转目标标题）整体位移抖动；
+            // 记录顶行字符与行内偏移，重排后按同一字符行重新定位即可补偿上方高度变化、视觉不动。
+            // 锚点必须在 setResult 之前抓：Markwon 的 AsyncDrawableScheduler 可能在 setResult 内
+            // 同步重排文本，之后再取视口顶字符已是位移后的内容，补偿反而把错误位置固化。
+            val topChar = charOffsetAtScrollTop(host)
             val scrollAnchor = captureTextViewScrollAnchor(host, windowStart = 0)
+            val inLineOffset = (scrollAnchor.scrollY - scrollAnchor.lineTop).coerceAtLeast(0)
+            applyScaledDiagramResult(drawable, context, cropped, lineWidth, host.textSize.coerceAtLeast(1f))
             host.invalidate()
             host.requestLayout()
             host.post {
                 try {
-                    if (host.layout == null) return@post
-                    if (host.getTag(R.id.reader_pending_scroll_char_offset) != null) {
-                        reapplyPendingScrollCharOffsetIfAny(host)
-                        schedulePendingScrollReapply(host)
-                    } else {
-                        scrollTextViewPreservingScrollY(host, scrollAnchor.scrollY)
-                    }
+                    val layout = host.layout ?: return@post
+                    val safeTopChar = topChar.coerceIn(0, (host.text?.length ?: 1).minus(1).coerceAtLeast(0))
+                    val line = layout.getLineForOffset(safeTopChar)
+                        .coerceIn(0, (layout.lineCount - 1).coerceAtLeast(0))
+                    scrollTextViewPreservingScrollY(host, layout.getLineTop(line) + inLineOffset)
                 } finally {
                     if (host is SafeReaderTextView) {
                         host.endAsyncScrollSuppression()

@@ -194,7 +194,15 @@ fun ReaderScreen(
     }
     val totalChars = book?.totalChars?.takeIf { it > 0 } ?: content.length.coerceAtLeast(1)
     val chapterEntry = remember(tocEntries, readingProgress, totalChars) {
-        currentChapterEntryForProgress(tocEntries, readingProgress, totalChars)
+        val e = currentChapterEntryForProgress(tocEntries, readingProgress, totalChars)
+        android.util.Log.d(
+            "ReaderCoordDbg",
+            "title progress=$readingProgress totalChars=$totalChars contentLen=${content.length} " +
+                "pos=${(readingProgress * totalChars).toInt()} entrySrc=${e?.sourceOffset} title=${e?.title} " +
+                "tocSize=${tocEntries.size} firstToc=${tocEntries.firstOrNull()?.sourceOffset} " +
+                "lastToc=${tocEntries.lastOrNull()?.sourceOffset}",
+        )
+        e
     }
     val chapterTitle = chapterEntry?.title
     val chapterTitleRaw = chapterEntry?.rawTitle ?: chapterTitle
@@ -233,6 +241,45 @@ fun ReaderScreen(
     /** 扩窗/异步 layout 后保留子像素 scroll，避免 snap 到行顶；目录/书签跳转仍为整行对齐。 */
     var pendingScrollRestoreAnchor by remember(readerContent) { mutableStateOf<TextViewScrollAnchor?>(null) }
     var pendingScrollRestoreSnapToLine by remember(readerContent) { mutableStateOf(true) }
+    /**
+     * 打开书/书签 snap 完成前用主题色遮住正文，避免异步渲染期间以 scrollY=0 露出窗口开头（更早章节）。
+     * 独立于 [pendingScrollRestoreGlobalChar]：滚动前须先清 pending，否则 onScroll 会误取消 restore。
+     */
+    var coverUntilPositionRestore by remember(readerContent, readerLoadEpoch) { mutableStateOf(false) }
+    /** 每次请求滚动恢复时递增，避免已取消的 LaunchedEffect 在 tv.post 中仍 snap 到旧锚点。 */
+    var scrollRestoreGeneration by remember(readerContent) { mutableIntStateOf(0) }
+    /** 与 [scrollRestoreGeneration] 同步，供 tv.post 读取（避免旧 restore 覆盖 tag 后误执行 snap）。 */
+    val scrollRestoreGenRef = remember(readerContent) { intArrayOf(0) }
+    fun bumpScrollRestoreGeneration() {
+        scrollRestoreGeneration++
+        scrollRestoreGenRef[0] = scrollRestoreGeneration
+    }
+    fun queueScrollRestore(globalChar: Int?) {
+        bumpScrollRestoreGeneration()
+        pendingScrollRestoreGlobalChar = globalChar
+    }
+
+    /** 打开书/书签：把 snap 意图写到 TextView，渲染完成同帧定位，避免先画窗口开头。 */
+    fun stashSavedPositionSnapForPendingRestore(
+        sourceOffset: Int,
+        windowStart: Int,
+        windowEnd: Int,
+        preview: String?,
+    ) {
+        stashPendingSavedPositionSnap(
+            readerTextView.value,
+            PendingSavedPositionSnap(
+                sourceContent = readerContent,
+                sourceOffset = sourceOffset,
+                windowStart = windowStart,
+                windowEnd = windowEnd,
+                preview = preview,
+                renderPlainText = renderPlainText,
+                tocEntries = tocEntries,
+            ),
+        )
+    }
+
     val displayedContent = remember(readerContent, displayWindowStartChar, displayWindowEndChar) {
         when {
             readerContent.isEmpty() -> ""
@@ -362,8 +409,20 @@ fun ReaderScreen(
     /** 惰性扩窗防抖：连续滑动时合并为一次，避免边滑边整段重排 Markwon。 */
     var expandWindowDownToken by remember { mutableIntStateOf(0) }
     var expandWindowUpToken by remember { mutableIntStateOf(0) }
+    /**
+     * 跳转后台预扩窗目标：目录跳转用 single_top 窗口（上方零缓冲），下滑看前文必然撞硬顶+等异步整窗重渲染。
+     * 跳转渲染完成后自动向上扩一次并把目标章节精确保持在顶部（视觉不动），使前文提前就绪、下滑即丝滑。
+     * -1 表示无待预取。
+     */
+    var prefetchUpTargetChar by remember(readerContent) { mutableIntStateOf(-1) }
     /** 扩窗或锚点恢复完成前不再触发新扩窗，避免 token 风暴导致 LaunchedEffect 永不执行。 */
     var windowExpandInFlight by remember(readerContent) { mutableStateOf(false) }
+    /**
+     * 同步守卫（非 Compose state）：扩窗触发后到恢复完成前禁止取消 pending restore。
+     * 同一下滑手势会在正文替换后继续派发 onScroll；若用 Compose state 判断会有一帧延迟，
+     * 误取消恢复后 scrollY 停在 0，表现为跳回开头。
+     */
+    val expandRestoreGuard = remember(readerContent) { booleanArrayOf(false) }
 
     LaunchedEffect(showTopBar) {
         scrollAccumForHideChrome = 0
@@ -402,44 +461,69 @@ fun ReaderScreen(
         val (start, end) = computeReadingWindow(chapterBoundaries, targetChar, readerContent.length)
         displayWindowStartChar = start
         displayWindowEndChar = end
-        pendingScrollRestoreGlobalChar = targetChar
+        // 与书签跳转一致：position + preview，走同一套 SavedPosition 定位。
+        pendingScrollRestoreBookmarkPreview = viewModel.readingPreviewForRestore()
+        pendingScrollRestorePdfPageIndex = null
         pendingScrollRestoreAnchor = null
-        pendingScrollRestoreSnapToLine = false
+        // 打开/换书恢复：精确定位到上次阅读位置（与书签跳转同一路径）。
+        // 不能用 snapToLine=false 的 progress-anchor 分支——那条路依赖扩窗 stash，
+        // 打开场景没有 stash 会直接跳过滚动，导致停在窗口起点（看起来像跳回开头）。
+        pendingScrollRestoreSnapToLine = true
+        stashSavedPositionSnapForPendingRestore(
+            sourceOffset = targetChar,
+            windowStart = start,
+            windowEnd = end,
+            preview = pendingScrollRestoreBookmarkPreview,
+        )
+        coverUntilPositionRestore = true
+        queueScrollRestore(targetChar)
         lastScrollTopGlobalChar = targetChar
     }
 
     // 向下扩窗：与向上扩窗相同，按视口顶部字符锚点恢复，并等待 Markdown 渲染完成。
+    // 注意：debounce 后不再要求手指仍按下——边缘拖动常在 180ms 内抬手，否则永远扩不成窗。
     LaunchedEffect(expandWindowDownToken, readerContent, chapterBoundaries) {
         if (expandWindowDownToken == 0) return@LaunchedEffect
         delay(180)
         val readerTv = readerTextView.value as? SafeReaderTextView
-        if (readerTv?.allowReaderScrollSideEffects != true ||
+        if (readerTv == null ||
             readerTv.shouldSuppressReaderScrollSideEffects() ||
-            !readerTv.isUserVerticalScrollDrag() ||
             readerTv.isGestureOnDiagram() ||
             isViewportTopOnDiagramSpan(readerTv)
         ) {
+            expandRestoreGuard[0] = false
             windowExpandInFlight = false
             return@LaunchedEffect
         }
         if (pageTurnMode != ReaderPageTurnMode.VerticalScroll) {
+            expandRestoreGuard[0] = false
             windowExpandInFlight = false
             return@LaunchedEffect
         }
         if (pendingScrollRestoreGlobalChar != null) {
+            expandRestoreGuard[0] = false
             windowExpandInFlight = false
             return@LaunchedEffect
         }
         val winEnd = displayWindowEndChar
         if (winEnd >= readerContent.length) {
+            expandRestoreGuard[0] = false
             windowExpandInFlight = false
             return@LaunchedEffect
         }
-        val tv = readerTextView.value
-        if (tv != null && tv.layout != null) {
-            pendingScrollRestoreAnchor = captureTextViewScrollAnchor(tv, displayWindowStartChar)
-            pendingScrollRestoreSnapToLine = false
+        if (!shouldTriggerReaderExpandDown(readerTv)) {
+            expandRestoreGuard[0] = false
+            windowExpandInFlight = false
+            return@LaunchedEffect
         }
+        clearPendingScrollCharOffset(readerTv)
+        val tv = readerTextView.value
+        val scrollAnchor = if (tv != null && tv.layout != null) {
+            captureTextViewScrollAnchor(tv, displayWindowStartChar)
+        } else {
+            null
+        }
+        pendingScrollRestoreAnchor = scrollAnchor
         val globalChar = globalSourceCharAtTextViewTop(
             sourceContent = readerContent,
             windowStart = displayWindowStartChar,
@@ -448,41 +532,62 @@ fun ReaderScreen(
             renderPlainText = renderPlainText,
             tocEntries = tocEntries,
         )
-        pendingScrollRestoreGlobalChar = globalChar
-        displayWindowEndChar = nextWindowEnd(chapterBoundaries, winEnd, readerContent.length)
+        val newEnd = nextWindowEnd(chapterBoundaries, winEnd, readerContent.length)
+        stashPendingSourceScrollRestore(
+            tv = tv,
+            sourceOffset = globalChar,
+            windowStart = displayWindowStartChar,
+            windowEnd = newEnd,
+            anchor = scrollAnchor,
+        )
+        expandRestoreGuard[0] = true
+        pendingScrollRestoreSnapToLine = false
+        queueScrollRestore(globalChar)
+        displayWindowEndChar = newEnd
     }
 
     LaunchedEffect(expandWindowUpToken, readerContent, chapterBoundaries) {
         if (expandWindowUpToken == 0) return@LaunchedEffect
         delay(180)
         val readerTvUp = readerTextView.value as? SafeReaderTextView
-        if (readerTvUp?.allowReaderScrollSideEffects != true ||
+        if (readerTvUp == null ||
             readerTvUp.shouldSuppressReaderScrollSideEffects() ||
-            !readerTvUp.isUserVerticalScrollDrag() ||
             readerTvUp.isGestureOnDiagram() ||
             isViewportTopOnDiagramSpan(readerTvUp)
         ) {
+            expandRestoreGuard[0] = false
             windowExpandInFlight = false
             return@LaunchedEffect
         }
         if (pageTurnMode != ReaderPageTurnMode.VerticalScroll) {
+            expandRestoreGuard[0] = false
             windowExpandInFlight = false
             return@LaunchedEffect
         }
         if (pendingScrollRestoreGlobalChar != null) {
+            expandRestoreGuard[0] = false
             windowExpandInFlight = false
             return@LaunchedEffect
         }
         val winStart = displayWindowStartChar
         if (winStart <= 0) {
+            expandRestoreGuard[0] = false
             windowExpandInFlight = false
             return@LaunchedEffect
         }
-        val tv = readerTextView.value
-        if (tv != null && tv.layout != null) {
-            pendingScrollRestoreAnchor = captureTextViewScrollAnchor(tv, winStart)
-            pendingScrollRestoreSnapToLine = false
+        if (!shouldTriggerReaderExpandUp(readerTvUp)) {
+            expandRestoreGuard[0] = false
+            windowExpandInFlight = false
+            return@LaunchedEffect
         }
+        clearPendingScrollCharOffset(readerTvUp)
+        val tv = readerTextView.value
+        val scrollAnchor = if (tv != null && tv.layout != null) {
+            captureTextViewScrollAnchor(tv, winStart)
+        } else {
+            null
+        }
+        pendingScrollRestoreAnchor = scrollAnchor
         val globalChar = globalSourceCharAtTextViewTop(
             sourceContent = readerContent,
             windowStart = winStart,
@@ -491,8 +596,91 @@ fun ReaderScreen(
             renderPlainText = renderPlainText,
             tocEntries = tocEntries,
         )
-        pendingScrollRestoreGlobalChar = globalChar
-        displayWindowStartChar = previousWindowStart(chapterBoundaries, winStart, 0)
+        val newStart = previousWindowStart(chapterBoundaries, winStart, 0)
+        stashPendingSourceScrollRestore(
+            tv = tv,
+            sourceOffset = globalChar,
+            windowStart = newStart,
+            windowEnd = displayWindowEndChar,
+            anchor = scrollAnchor,
+        )
+        expandRestoreGuard[0] = true
+        pendingScrollRestoreSnapToLine = false
+        queueScrollRestore(globalChar)
+        displayWindowStartChar = newStart
+    }
+
+    // 跳转后台预扩上文：目标章节渲染+置顶完成后，在更宽窗口里用跳转同款精确 resolver
+    // 把目标章节重新定位到顶部（视觉不动、前文已就绪），使下滑看前文时无撞硬顶+异步重渲染的停顿。
+    // 不走 length-diff 扩窗恢复：大窗口下其「后缀渲染长度不变」假设不成立，会偏移几千字导致乱跳。
+    LaunchedEffect(prefetchUpTargetChar, displayWindowStartChar, displayedRenderSig) {
+        val target = prefetchUpTargetChar
+        if (target <= 0) return@LaunchedEffect
+        if (pageTurnMode != ReaderPageTurnMode.VerticalScroll) {
+            prefetchUpTargetChar = -1
+            return@LaunchedEffect
+        }
+        // 仅当窗口仍停在刚跳转的章节起点（未被后续扩窗/跳转改变）时才预取。
+        if (displayWindowStartChar != target) {
+            prefetchUpTargetChar = -1
+            return@LaunchedEffect
+        }
+        val newStart = previousWindowStart(chapterBoundaries, target, 0)
+        if (newStart >= target) {
+            // 上方已无可预取内容。
+            prefetchUpTargetChar = -1
+            return@LaunchedEffect
+        }
+        val tv = awaitReaderMarkdownRenderReady(
+            tvProvider = { readerTextView.value },
+            expectedRenderSig = displayedRenderSig,
+        ) ?: return@LaunchedEffect
+        // 目标窗口若已改变（用户又跳转/扩窗）则放弃。
+        if (displayWindowStartChar != target || prefetchUpTargetChar != target) return@LaunchedEffect
+        // 用户已开始交互或有在途恢复则放弃，避免与手势/恢复相争。
+        val safeTv = tv as? SafeReaderTextView
+        if (windowExpandInFlight ||
+            pendingScrollRestoreGlobalChar != null ||
+            tv.scrollY > 8 ||
+            safeTv?.isUserVerticalScrollDrag() == true ||
+            safeTv?.shouldSuppressReaderScrollSideEffects() == true
+        ) {
+            prefetchUpTargetChar = -1
+            return@LaunchedEffect
+        }
+        android.util.Log.d(
+            "ReaderRestoreDbg2",
+            "prefetchUp trigger target=$target newStart=$newStart scrollY=${tv.scrollY}",
+        )
+        prefetchUpTargetChar = -1
+        windowExpandInFlight = true
+        expandRestoreGuard[0] = true
+        clearPendingScrollCharOffset(tv)
+        clearReaderScrollToTop(tv)
+        // 预扩窗是纯前置插入：后缀 [target,winEnd] 文本不变、字符数可加，
+        // boundaryOffset = 新显示长度 - 旧显示长度 即前置段字符数，是字符级精确的。
+        // 抓当前锚点（target 在顶部、scrollY≈0），onLayout 首帧走 length-diff 分支即可绘制前精确置顶、不闪。
+        val prefetchAnchor = captureTextViewScrollAnchor(tv, displayWindowStartChar)
+        android.util.Log.d(
+            "ReaderRestoreDbg2",
+            "prefetch stash anchor scrollY=${prefetchAnchor.scrollY} lineTop=${prefetchAnchor.lineTop} " +
+                "winStart=${prefetchAnchor.windowStart} tvLen=${tv.text?.length}",
+        )
+        stashPendingSourceScrollRestore(
+            tv = tv,
+            sourceOffset = target,
+            windowStart = newStart,
+            windowEnd = displayWindowEndChar,
+            anchor = prefetchAnchor,
+        )
+        // 恢复 effect 也走 stash（snapToLine=false + 带 anchor），与 onLayout 同一套 length-diff 逻辑，
+        // 不再叠加 snapToLine 的比例映射（两者落点不一致会造成二次滚动抖动）；该分支结束会复位 windowExpandInFlight。
+        pendingScrollRestoreBookmarkPreview = null
+        pendingScrollRestorePdfPageIndex = null
+        pendingScrollRestoreAnchor = prefetchAnchor
+        pendingScrollRestoreSnapToLine = false
+        displayWindowStartChar = newStart
+        queueScrollRestore(target)
     }
 
     // 目录/书签跳转、向上扩窗：等新窗口正文写入 TextView 后再按锚点滚动。
@@ -502,6 +690,7 @@ fun ReaderScreen(
         displayedRenderSig,
         pendingScrollRestoreGlobalChar,
         pendingScrollRestorePdfPageIndex,
+        scrollRestoreGeneration,
         renderPlainText,
         isPdfBook,
     ) {
@@ -511,17 +700,54 @@ fun ReaderScreen(
             pendingScrollRestorePdfPageIndex = null
             pendingScrollRestoreAnchor = null
             pendingScrollRestoreSnapToLine = true
+            coverUntilPositionRestore = false
             return@LaunchedEffect
         }
+        // 必须在 await 前捕获：等待期间用户滑动会递增 generation，完成后应中止而非沿用新 gen 执行旧 snap。
+        val restoreGen = scrollRestoreGeneration
         val winStart = displayWindowStartChar
+        val winEnd = displayWindowEndChar
         val pdfPageIndex = pendingScrollRestorePdfPageIndex
         val anchorGlobal = pendingScrollRestoreGlobalChar
         if (pdfPageIndex == null && anchorGlobal == null) return@LaunchedEffect
+        val scrollAnchor = pendingScrollRestoreAnchor
+        val snapToLine = pendingScrollRestoreSnapToLine
+        val bookmarkPreview = pendingScrollRestoreBookmarkPreview
+        // 渲染完成前写入 TextView stash：finishMarkdownRender/onLayout 首帧即可定位。
+        if (anchorGlobal != null && (snapToLine || bookmarkPreview != null) && pdfPageIndex == null) {
+            stashSavedPositionSnapForPendingRestore(
+                sourceOffset = anchorGlobal,
+                windowStart = winStart,
+                windowEnd = winEnd,
+                preview = bookmarkPreview,
+            )
+        }
+
+        fun abortRestoreCleanup() {
+            if (scrollRestoreGeneration != restoreGen) return
+            pendingScrollRestoreGlobalChar = null
+            pendingScrollRestoreBookmarkPreview = null
+            pendingScrollRestorePdfPageIndex = null
+            pendingScrollRestoreAnchor = null
+            pendingScrollRestoreSnapToLine = true
+            coverUntilPositionRestore = false
+            windowExpandInFlight = false
+            expandRestoreGuard[0] = false
+            readerTextView.value?.let {
+                clearPendingSavedPositionSnap(it)
+                applyStashedSourceScrollRestoreIfAny(it, renderPlainText)
+            }
+        }
+
+        fun isRestoreStillCurrent(): Boolean =
+            scrollRestoreGeneration == restoreGen &&
+                pendingScrollRestoreGlobalChar == anchorGlobal &&
+                pendingScrollRestorePdfPageIndex == pdfPageIndex
 
         val tv = when {
             renderPlainText || isPdfBook -> {
                 val expectedLen = if (renderPlainText && pdfPageIndex == null) {
-                    (displayWindowEndChar - winStart).coerceAtLeast(0)
+                    (winEnd - winStart).coerceAtLeast(0)
                 } else {
                     null
                 }
@@ -536,18 +762,17 @@ fun ReaderScreen(
                 expectedRenderSig = displayedRenderSig,
             )
         } ?: run {
-            pendingScrollRestoreGlobalChar = null
-            pendingScrollRestoreBookmarkPreview = null
-            pendingScrollRestorePdfPageIndex = null
-            pendingScrollRestoreAnchor = null
-            pendingScrollRestoreSnapToLine = true
-            windowExpandInFlight = false
+            abortRestoreCleanup()
             return@LaunchedEffect
         }
 
-        val scrollAnchor = pendingScrollRestoreAnchor
-        val snapToLine = pendingScrollRestoreSnapToLine
-        val bookmarkPreview = pendingScrollRestoreBookmarkPreview
+        if (!isRestoreStillCurrent()) {
+            // 扩窗 stash 仍应尽量恢复，避免停在 scrollY=0 的开头。
+            if (expandRestoreGuard[0] || !snapToLine) {
+                applyStashedSourceScrollRestoreIfAny(tv, renderPlainText)
+            }
+            return@LaunchedEffect
+        }
 
         val offset = when {
             isPdfBook && pdfPageIndex != null -> resolvePdfDisplayedCharOffset(
@@ -558,34 +783,22 @@ fun ReaderScreen(
             )
             anchorGlobal != null -> {
                 val safeAnchor = anchorGlobal.coerceIn(0, readerContent.length - 1)
-                val preferredEntry = tocEntries.find { it.sourceOffset == safeAnchor }
-                    ?: tocEntries.getOrNull(tocIndexForSourceOffset(tocEntries, safeAnchor))
                 when {
-                    bookmarkPreview != null -> resolveDisplayedCharOffset(
+                    // 打开书 / 书签：同一套「源码位置 + 预览」定位（不吸附章节标题）。
+                    bookmarkPreview != null || snapToLine -> resolveDisplayedCharOffsetForSavedPosition(
                         sourceContent = readerContent,
                         sourceOffset = safeAnchor,
                         displayedText = tv.text,
                         renderPlainText = renderPlainText,
                         windowStart = winStart,
-                        windowEnd = displayWindowEndChar,
+                        windowEnd = winEnd,
                         tocEntries = tocEntries,
-                        preferredEntry = preferredEntry,
                         preferredText = bookmarkPreview,
-                    )
-                    snapToLine -> resolveDisplayedCharOffset(
-                        sourceContent = readerContent,
-                        sourceOffset = safeAnchor,
-                        displayedText = tv.text,
-                        renderPlainText = renderPlainText,
-                        windowStart = winStart,
-                        windowEnd = displayWindowEndChar,
-                        tocEntries = tocEntries,
-                        preferredEntry = preferredEntry,
                     )
                     else -> resolveDisplayedCharOffsetForProgressRestore(
                         sourceOffset = safeAnchor,
                         windowStart = winStart,
-                        windowEnd = displayWindowEndChar,
+                        windowEnd = winEnd,
                         displayedLen = tv.text?.length ?: 0,
                         renderPlainText = renderPlainText,
                     )
@@ -593,41 +806,64 @@ fun ReaderScreen(
             }
             else -> return@LaunchedEffect
         }
-        fun applyScroll() {
-            tv.post {
-                when {
-                    scrollAnchor != null && !snapToLine -> {
+        if (scrollRestoreGenRef[0] != restoreGen) return@LaunchedEffect
+        tv.post {
+            if (scrollRestoreGenRef[0] != restoreGen) return@post
+            // 先释放 pending，避免 scrollTextViewToCharOffset 触发的 onScroll 误判为用户滑动并 bump gen。
+            // 遮罩用 coverUntilPositionRestore，滚完后再揭开。
+            if (scrollRestoreGenRef[0] == restoreGen) {
+                pendingScrollRestoreGlobalChar = null
+                pendingScrollRestoreBookmarkPreview = null
+                pendingScrollRestorePdfPageIndex = null
+                pendingScrollRestoreAnchor = null
+                pendingScrollRestoreSnapToLine = true
+            }
+            when {
+                // 扩窗：优先视觉锚点（onLayout/stash 可能已恢复；再补一次保持一致）
+                !snapToLine && bookmarkPreview == null && scrollAnchor != null -> {
+                    if (!applyStashedSourceScrollRestoreIfAny(tv, renderPlainText) &&
+                        hasPendingSourceScrollRestore(tv)
+                    ) {
                         restoreTextViewScrollAfterWindowChange(
                             tv = tv,
                             anchor = scrollAnchor,
                             newWindowStart = winStart,
-                            newWindowEnd = displayWindowEndChar,
+                            newWindowEnd = winEnd,
                             renderPlainText = renderPlainText,
                         )
                     }
-                    bookmarkPreview != null || snapToLine -> {
-                        applyPendingScrollToCharOffset(tv, offset)
-                        schedulePendingScrollReapply(tv)
-                    }
-                    anchorGlobal != null -> scrollTextViewToSourceProgressAnchor(
-                        tv = tv,
-                        sourceContent = readerContent,
-                        sourceOffset = anchorGlobal.coerceIn(0, readerContent.length - 1),
-                        windowStart = winStart,
-                        windowEnd = displayWindowEndChar,
-                        renderPlainText = renderPlainText,
-                    )
-                    else -> scrollTextViewToCharOffset(tv, offset)
+                    clearPendingSourceScrollRestore(tv)
                 }
+                !snapToLine && bookmarkPreview == null && anchorGlobal != null -> {
+                    if (!applyStashedSourceScrollRestoreIfAny(tv, renderPlainText) &&
+                        hasPendingSourceScrollRestore(tv)
+                    ) {
+                        scrollTextViewToSourceProgressAnchor(
+                            tv = tv,
+                            sourceContent = readerContent,
+                            sourceOffset = anchorGlobal.coerceIn(0, readerContent.length - 1),
+                            windowStart = winStart,
+                            windowEnd = winEnd,
+                            renderPlainText = renderPlainText,
+                        )
+                    }
+                    clearPendingSourceScrollRestore(tv)
+                }
+                bookmarkPreview != null || snapToLine -> {
+                    // stash 可能已在 finishMarkdownRender/onLayout 首帧定位；此处兜底再滚一次。
+                    if (!applyStashedSavedPositionSnapIfAny(tv)) {
+                        applyPendingScrollToCharOffset(tv, offset)
+                    }
+                }
+                else -> scrollTextViewToCharOffset(tv, offset)
+            }
+            if (scrollRestoreGenRef[0] == restoreGen) {
+                clearPendingSavedPositionSnap(tv)
+                coverUntilPositionRestore = false
+                windowExpandInFlight = false
+                expandRestoreGuard[0] = false
             }
         }
-        applyScroll()
-        pendingScrollRestoreGlobalChar = null
-        pendingScrollRestoreBookmarkPreview = null
-        pendingScrollRestorePdfPageIndex = null
-        pendingScrollRestoreAnchor = null
-        pendingScrollRestoreSnapToLine = true
-        windowExpandInFlight = false
     }
 
     val systemBarChromeColor = if (isPdfBook) {
@@ -640,9 +876,11 @@ fun ReaderScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     ShelfStyleSystemBarsEffect(systemBarChromeColor)
     val persistTopPositionNow by rememberUpdatedState {
+        val tv = readerTextView.value
+        val preview = tv?.let { previewPlainTextFromTextViewTop(it) }
         val topChar = currentTopGlobalChar()
             ?: lastScrollTopGlobalChar.takeIf { it >= 0 }
-        topChar?.let { viewModel.persistReadingPositionBlocking(it) }
+        topChar?.let { viewModel.persistReadingPositionBlocking(it, preview) }
     }
 
     DisposableEffect(lifecycleOwner, bookId) {
@@ -753,7 +991,7 @@ fun ReaderScreen(
                                 val preview = tv?.let { previewPlainTextFromTextViewTop(it) }
                                 val topChar = currentTopGlobalChar()
                                 if (topChar != null) {
-                                    viewModel.updateReadingProgressAtCharNow(topChar)
+                                    viewModel.updateReadingProgressAtCharNow(topChar, preview)
                                 }
                                 when (
                                     viewModel.toggleBookmarkAtSwipe(
@@ -777,6 +1015,7 @@ fun ReaderScreen(
 
                         @Composable
                         fun ReaderHost(modifier: Modifier) {
+                            Box(modifier = modifier) {
                             if (pageTurnMode == ReaderPageTurnMode.VerticalScroll) {
                                 MarkdownReaderView(
                                     content = displayedContent,
@@ -788,18 +1027,43 @@ fun ReaderScreen(
                                     readerPaddingTopDp = readerPaddingTopDp,
                                     readerLineSpacingMultiplier = readerBodyLineSpacing,
                                     highlights = displayedHighlights,
-                                    modifier = modifier,
+                                    modifier = Modifier.fillMaxSize(),
                                     onTextSelected = {},
                                     onScroll = { _ ->
                                         val readerTv = readerTextView.value as? SafeReaderTextView
-                                        if (readerTv != null && readerTv.isUserVerticalScrollDrag()) {
+                                        // Compose state 写入同帧不可读：用局部标志避免「已取消 restore 仍挡住扩窗」。
+                                        var restoreCanceledThisScroll = false
+                                        if (readerTv != null) {
+                                            // 任意滚动都解除标题 snap 锁定（含惯性滑动）；扩窗 restore 不受此 tag 影响。
                                             clearPendingScrollCharOffset(readerTv)
                                         }
+                                        // 任意滚动（含惯性）都取消目录/书签 snap 的 Compose restore；
+                                        // 仅手指拖动时取消会漏掉「渲染完成前已松手惯性滑动」，导致晚到的 tv.post 把视口拉回标题上方。
+                                        val cancelSnapRestore = !expandRestoreGuard[0] &&
+                                            pendingScrollRestoreSnapToLine &&
+                                            !windowExpandInFlight &&
+                                            (pendingScrollRestoreGlobalChar != null ||
+                                                pendingScrollRestorePdfPageIndex != null ||
+                                                pendingScrollRestoreBookmarkPreview != null)
+                                        if (cancelSnapRestore) {
+                                            restoreCanceledThisScroll = true
+                                            bumpScrollRestoreGeneration()
+                                            pendingScrollRestoreGlobalChar = null
+                                            pendingScrollRestoreBookmarkPreview = null
+                                            pendingScrollRestorePdfPageIndex = null
+                                            pendingScrollRestoreAnchor = null
+                                            pendingScrollRestoreSnapToLine = true
+                                            coverUntilPositionRestore = false
+                                            clearPendingSavedPositionSnap(readerTv)
+                                        }
+                                        val restoreBlocking = !restoreCanceledThisScroll &&
+                                            (pendingScrollRestoreGlobalChar != null ||
+                                                pendingScrollRestorePdfPageIndex != null)
                                         if (readerTv != null &&
                                             readerTv.allowReaderScrollSideEffects &&
                                             !readerTv.shouldSuppressReaderScrollSideEffects() &&
                                             !windowExpandInFlight &&
-                                            pendingScrollRestoreGlobalChar == null
+                                            !restoreBlocking
                                         ) {
                                             val now = System.currentTimeMillis()
                                             if (now - lastScrollProgressSaveMs >= 200L) {
@@ -813,7 +1077,16 @@ fun ReaderScreen(
                                                     tocEntries = tocEntries,
                                                 )
                                                 lastScrollTopGlobalChar = estimated
-                                                viewModel.updateReadingProgressAtChar(estimated)
+                                                android.util.Log.d(
+                                                    "ReaderCoordDbg",
+                                                    "scrollTop estimated=$estimated scrollY=${readerTv.scrollY} " +
+                                                        "winStart=$displayWindowStartChar winEnd=$displayWindowEndChar " +
+                                                        "contentLen=${readerContent.length}",
+                                                )
+                                                viewModel.updateReadingProgressAtChar(
+                                                    estimated,
+                                                    previewPlainTextFromTextViewTop(readerTv),
+                                                )
                                             }
                                         }
                                         if (readerTv?.allowReaderScrollSideEffects != true ||
@@ -822,24 +1095,23 @@ fun ReaderScreen(
                                             readerTv.isGestureOnDiagram() ||
                                             isViewportTopOnDiagramSpan(readerTv) ||
                                             windowExpandInFlight ||
-                                            pendingScrollRestoreGlobalChar != null ||
-                                            hasPendingScrollCharOffset(readerTv)
+                                            restoreBlocking
                                         ) {
                                             return@MarkdownReaderView
                                         }
                                         val winStart = displayWindowStartChar
                                         val winEnd = displayWindowEndChar
+                                        // 方向门控：目录置顶后 scrollY=0 且 winStart>0，若无方向判断，向下滑第一帧
+                                        // 也会因 shouldTriggerReaderExpandUp(scrollY<=0) 误触发向上扩窗 → 向上乱跳。
                                         if (winStart > 0 &&
-                                            !windowExpandInFlight &&
-                                            pendingScrollRestoreGlobalChar == null &&
+                                            readerTv.isDragTowardPrevious() &&
                                             shouldTriggerReaderExpandUp(readerTv) &&
                                             readerTv.consumeWindowExpandThisGesture()
                                         ) {
                                             windowExpandInFlight = true
                                             expandWindowUpToken++
                                         } else if (winEnd < readerContent.length &&
-                                            !windowExpandInFlight &&
-                                            pendingScrollRestoreGlobalChar == null &&
+                                            readerTv.isDragTowardNext() &&
                                             shouldTriggerReaderExpandDown(readerTv) &&
                                             readerTv.consumeWindowExpandThisGesture()
                                         ) {
@@ -875,7 +1147,7 @@ fun ReaderScreen(
                                     highlights = highlights,
                                     pageTextViews = pageTextViews,
                                     renderPlainText = renderPlainText,
-                                    modifier = modifier,
+                                    modifier = Modifier.fillMaxSize(),
                                     onTextSelected = {},
                                     onReadingVerticalScroll = onReaderVerticalScroll,
                                     onSwipeDownBookmark = onReaderSwipeBookmark,
@@ -894,6 +1166,15 @@ fun ReaderScreen(
                                     },
                                     pdfFullWidthImages = isPdfBook,
                                 )
+                            }
+                            // 打开书/书签定位完成前遮住正文，避免先露出窗口开头（更早章节）再跳回。
+                            if (coverUntilPositionRestore) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(currentTheme.backgroundColor),
+                                )
+                            }
                             }
                         }
 
@@ -1115,7 +1396,9 @@ fun ReaderScreen(
                             pagerState = pagerState,
                             pageTextViews = pageTextViews,
                             assignActiveTextView = { readerTextView.value = it },
-                            onProgress = { viewModel.updateReadingProgressAtChar(charPos) },
+                            onProgress = {
+                                viewModel.updateReadingProgressAtChar(charPos, bookmarkPreview)
+                            },
                             pdfJumpByPageIndex = isPdfBook,
                             pdfPageIndex = pdfPageIndex,
                         )
@@ -1132,12 +1415,16 @@ fun ReaderScreen(
                                 displayWindowEndChar = end
                             },
                             onPendingPdfPageIndex = { pendingScrollRestorePdfPageIndex = it },
-                            onProgress = { viewModel.updateReadingProgressAtChar(charPos) },
+                            onProgress = {
+                                viewModel.updateReadingProgressAtChar(charPos, bookmarkPreview)
+                            },
                         )
                     } else {
+                        clearPendingScrollCharOffset(readerTextView.value)
                         pendingScrollRestoreBookmarkPreview = bookmarkPreview
                         pendingScrollRestoreAnchor = null
                         pendingScrollRestoreSnapToLine = true
+                        coverUntilPositionRestore = true
                         jumpToCharInChunkWindow(
                             contentLen = contentLen,
                             chapterBoundaries = chapterBoundaries,
@@ -1145,9 +1432,17 @@ fun ReaderScreen(
                             setReadingWindow = { start, end ->
                                 displayWindowStartChar = start
                                 displayWindowEndChar = end
+                                stashSavedPositionSnapForPendingRestore(
+                                    sourceOffset = charPos,
+                                    windowStart = start,
+                                    windowEnd = end,
+                                    preview = bookmarkPreview,
+                                )
                             },
-                            onAnchorGlobalChar = { pendingScrollRestoreGlobalChar = it },
-                            onProgress = { viewModel.updateReadingProgressAtChar(charPos) },
+                            onAnchorGlobalChar = { queueScrollRestore(it) },
+                            onProgress = {
+                                viewModel.updateReadingProgressAtChar(charPos, bookmarkPreview)
+                            },
                         )
                     }
                 }
@@ -1211,19 +1506,29 @@ fun ReaderScreen(
                             onProgress = { viewModel.updateReadingProgressAtChar(charPos) },
                         )
                     } else {
+                        // 目录跳转：目标章节严格置顶，走独立置顶通道，不与 offset/anchor 恢复竞争。
+                        clearPendingScrollCharOffset(readerTextView.value)
+                        pendingScrollRestoreGlobalChar = null
+                        pendingScrollRestoreBookmarkPreview = null
+                        pendingScrollRestorePdfPageIndex = null
                         pendingScrollRestoreAnchor = null
                         pendingScrollRestoreSnapToLine = true
-                        jumpToCharInChunkWindow(
-                            contentLen = contentLen,
-                            chapterBoundaries = chapterBoundaries,
-                            charPos = charPos,
-                            setReadingWindow = { start, end ->
-                                displayWindowStartChar = start
-                                displayWindowEndChar = end
-                            },
-                            onAnchorGlobalChar = { pendingScrollRestoreGlobalChar = it },
-                            onProgress = { viewModel.updateReadingProgressAtChar(charPos) },
+                        // 使任何在途的 offset 恢复 LaunchedEffect 失效。
+                        bumpScrollRestoreGeneration()
+                        windowExpandInFlight = false
+                        expandRestoreGuard[0] = false
+                        val (_, winEnd) = computeTocJumpReadingWindow(
+                            chapterBoundaries,
+                            charPos,
+                            contentLen,
                         )
+                        val winStart = charPos
+                        requestReaderScrollToTop(readerTextView.value)
+                        displayWindowStartChar = winStart
+                        displayWindowEndChar = winEnd.coerceAtLeast((winStart + 1).coerceAtMost(contentLen))
+                        viewModel.updateReadingProgressAtChar(charPos)
+                        // 目标章节渲染完成后台预扩上文，避免下滑看前文时撞硬顶停顿。
+                        prefetchUpTargetChar = if (winStart > 0) winStart else -1
                     }
                 }
                 showToc = false

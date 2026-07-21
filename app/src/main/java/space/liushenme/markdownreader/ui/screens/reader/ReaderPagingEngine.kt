@@ -592,6 +592,110 @@ internal fun resolveDisplayedCharOffset(
     )
 }
 
+/**
+ * 打开书 / 书签跳转共用：按「源码位置 + 可选预览文本」定位到渲染文本偏移。
+ * 与目录标题跳转（[resolveDisplayedCharOffset]）分离——中间位置不应吸附到章节标题。
+ */
+internal fun resolveDisplayedCharOffsetForSavedPosition(
+    sourceContent: String,
+    sourceOffset: Int,
+    displayedText: CharSequence?,
+    renderPlainText: Boolean,
+    windowStart: Int,
+    windowEnd: Int,
+    tocEntries: List<MarkdownTocEntry>,
+    preferredText: String? = null,
+): Int {
+    val displayed = displayedText?.toString().orEmpty()
+    val len = displayed.length
+    if (len == 0) return 0
+    if (renderPlainText) {
+        return (sourceOffset - windowStart).coerceIn(0, (len - 1).coerceAtLeast(0))
+    }
+    val hint = proportionalDisplayedOffset(
+        sourceOffset = sourceOffset,
+        windowStart = windowStart,
+        windowEnd = windowEnd,
+        displayedLen = len,
+    )
+    // 书签/进度预览：优先宽容匹配到视口顶字符（不强制行首）。
+    if (!preferredText.isNullOrBlank()) {
+        val fingerprint = preferredText.replace(Regex("""\s+"""), " ").trim().take(48)
+        locateLooseSnippetNear(displayed, fingerprint, hint)?.let {
+            return it.coerceIn(0, (len - 1).coerceAtLeast(0))
+        }
+        findBookmarkPreviewOffset(displayedText, preferredText)?.let {
+            return it.coerceIn(0, (len - 1).coerceAtLeast(0))
+        }
+    }
+    return resolveDisplayedCharOffsetForBookOpenRestore(
+        sourceContent = sourceContent,
+        sourceOffset = sourceOffset,
+        displayedText = displayedText,
+        renderPlainText = false,
+        windowStart = windowStart,
+        windowEnd = windowEnd,
+        tocEntries = tocEntries,
+    )
+}
+
+/**
+ * 打开书/无预览书签的进度恢复：定位到「上次阅读字符所在行」本身。
+ * 不能用 [resolveDisplayedCharOffset]——那是目录跳转的标题解析器，会把章节中间的位置
+ * 吸附到章节标题；标题序号/文本匹配出偏差时甚至落到前后章节开头。
+ * 这里用源码行文本在渲染文本中按比例提示附近宽容查找；恰好停在章节标题时仍走标题精确定位。
+ */
+internal fun resolveDisplayedCharOffsetForBookOpenRestore(
+    sourceContent: String,
+    sourceOffset: Int,
+    displayedText: CharSequence?,
+    renderPlainText: Boolean,
+    windowStart: Int,
+    windowEnd: Int,
+    tocEntries: List<MarkdownTocEntry>,
+): Int {
+    val displayed = displayedText?.toString().orEmpty()
+    val len = displayed.length
+    if (len == 0) return 0
+    if (renderPlainText) {
+        return (sourceOffset - windowStart).coerceIn(0, (len - 1).coerceAtLeast(0))
+    }
+    tocEntries.find { it.sourceOffset == sourceOffset }?.let { exactEntry ->
+        return resolveDisplayedCharOffset(
+            sourceContent = sourceContent,
+            sourceOffset = sourceOffset,
+            displayedText = displayedText,
+            renderPlainText = false,
+            windowStart = windowStart,
+            windowEnd = windowEnd,
+            tocEntries = tocEntries,
+            preferredEntry = exactEntry,
+        )
+    }
+    val hint = proportionalDisplayedOffset(
+        sourceOffset = sourceOffset,
+        windowStart = windowStart,
+        windowEnd = windowEnd,
+        displayedLen = len,
+    )
+    // 从存储位置「向前」截取源码片段做宽容匹配：保存的是视口顶行的源码位置（长段落折行时
+    // 位于段落中间），若取整行文本会命中段首、恢复到视口上方几行。
+    val forwardSnippet = looseSnippetFrom(sourceContent, sourceOffset)
+    locateLooseSnippetNear(displayed, forwardSnippet, hint)?.let {
+        return it.coerceIn(0, (len - 1).coerceAtLeast(0))
+    }
+    // 兜底：整行文本匹配（存档位置指向行首但行文本含密集标记时向前片段可能失配）。
+    val anchorLine = extractSourceLineAt(sourceContent, sourceOffset)
+    for (candidate in anchorSearchCandidates(anchorLine)) {
+        val fingerprint = candidate.replace(Regex("""\s+"""), " ").trim().take(48)
+        val idx = locateExpandFingerprintNear(displayed, fingerprint, hint)
+        if (idx != null) {
+            return idx.coerceIn(0, (len - 1).coerceAtLeast(0))
+        }
+    }
+    return hint.coerceIn(0, (len - 1).coerceAtLeast(0))
+}
+
 /** Markdown 渲染后长度远小于源码窗口，线性比例比 `(sourceOffset - windowStart)` 更单调。 */
 internal fun proportionalDisplayedOffset(
     sourceOffset: Int,
@@ -663,6 +767,52 @@ internal fun resolveDisplayedCharOffsetForProgressRestore(
     return best
 }
 
+/** Markdown 行内标记/结构字符：宽容匹配时既作词元分隔符，也作词元间允许的填充。 */
+private val LOOSE_SNIPPET_SEPARATOR = Regex("""[\s*_`~>#\[\]()!|:.\-+=\uFFFC]+""")
+private const val LOOSE_SNIPPET_SEPARATOR_CLASS = """[\s*_`~>#\[\]()!|:.\-+=\uFFFC]*"""
+
+/**
+ * 在 [haystack] 中宽容查找 [snippet]，返回离 [expectedIndex] 最近的匹配起点。
+ * 与 [locateExpandFingerprintNear] 的区别：把 Markdown 标记字符也视为分隔/填充，
+ * 因此「渲染文本片段」能在源码中命中（`**`、链接括号等被吸收），反之亦然。
+ * 用于阅读进度的存/取两端做源码⇆渲染坐标的精确互查。
+ */
+internal fun locateLooseSnippetNear(
+    haystack: String,
+    snippet: String?,
+    expectedIndex: Int,
+): Int? {
+    if (snippet.isNullOrBlank() || haystack.isEmpty()) return null
+    val tokens = snippet.split(LOOSE_SNIPPET_SEPARATOR).filter { it.isNotEmpty() }
+    if (tokens.isEmpty() || tokens.sumOf { it.length } < 8) return null
+    val regex = runCatching {
+        Regex(tokens.joinToString(separator = LOOSE_SNIPPET_SEPARATOR_CLASS) { Regex.escape(it) })
+    }.getOrNull() ?: return null
+    var best: Int? = null
+    var bestDist = Int.MAX_VALUE
+    var from = 0
+    while (from < haystack.length) {
+        val match = regex.find(haystack, from) ?: break
+        val dist = abs(match.range.first - expectedIndex)
+        if (dist < bestDist) {
+            bestDist = dist
+            best = match.range.first
+        }
+        from = match.range.first + 1
+    }
+    return best
+}
+
+/** 截取 [from] 起的前向片段并折叠空白，作为宽容匹配的指纹。 */
+internal fun looseSnippetFrom(text: String, from: Int, rawChars: Int = 160, keepChars: Int = 48): String {
+    if (text.isEmpty()) return ""
+    val safe = from.coerceIn(0, text.length)
+    return text.substring(safe, (safe + rawChars).coerceAtMost(text.length))
+        .replace(Regex("""\s+"""), " ")
+        .trim()
+        .take(keepChars)
+}
+
 /**
  * 将 TextView 内已渲染文本的字符下标反查为全书 Markdown 源码下标（与进度恢复映射互逆）。
  */
@@ -683,6 +833,18 @@ internal fun resolveSourceCharOffset(
     }
     if (displayedText is Spanned && isDiagramSpanAtOffset(displayedText, rend)) {
         return proportionalSourceOffset(windowStart, windowEnd, displayed.length, rend)
+    }
+    // 先用视口顶渲染片段在源码窗口内宽容回查：比例映射在标记密集处（长 URL、代码围栏、
+    // 图表源码）会偏差上千字，保存偏了的位置恢复端再精确也只是精确地回到错误的行。
+    val safeWinEnd = windowEnd.coerceIn(windowStart, sourceContent.length)
+    if (safeWinEnd > windowStart) {
+        val snippet = looseSnippetFrom(displayed, rend)
+        val hint = proportionalSourceOffset(windowStart, windowEnd, displayed.length, rend)
+        locateLooseSnippetNear(
+            haystack = sourceContent.substring(windowStart, safeWinEnd),
+            snippet = snippet,
+            expectedIndex = hint - windowStart,
+        )?.let { return (windowStart + it).coerceIn(0, sourceContent.length) }
     }
     var lo = windowStart
     var hi = (windowEnd - 1).coerceAtLeast(windowStart)
@@ -885,6 +1047,7 @@ internal fun shouldTriggerReaderExpandDown(
     threshold: Float = READER_EXPAND_TRIGGER_LOCAL_PROGRESS,
 ): Boolean {
     if (isViewportTopOnDiagramSpan(tv)) return false
+    if (isReaderTextViewAtScrollBottom(tv)) return true
     val charProgress = localCharProgressAtScrollTop(tv)
     if (charProgress < threshold) return false
     val charAtTop = charOffsetAtScrollTop(tv)
@@ -903,6 +1066,8 @@ internal fun shouldTriggerReaderExpandUp(
     threshold: Float = READER_EXPAND_TRIGGER_NEAR_START_PROGRESS,
 ): Boolean {
     if (isViewportTopOnDiagramSpan(tv)) return false
+    // 目录跳转后窗口顶在章节开头，scrollY≈0；此时只能靠边缘拖动触发，进度阈值仍满足。
+    if (tv.scrollY <= 0) return true
     val charProgress = localCharProgressAtScrollTop(tv)
     if (charProgress > threshold) return false
     val charAtTop = charOffsetAtScrollTop(tv)
@@ -911,6 +1076,15 @@ internal fun shouldTriggerReaderExpandUp(
     val line = layout.getLineForOffset(charAtTop)
     val viewportTop = tv.scrollY + tv.paddingTop
     return viewportTop <= layout.getLineTop(line) + 8
+}
+
+/** TextView 是否已滚到内容底部（无法再向下滚时靠边缘拖动触发向下扩窗）。 */
+internal fun isReaderTextViewAtScrollBottom(tv: TextView): Boolean {
+    val layout = tv.layout ?: return false
+    val innerH = tv.height - tv.paddingTop - tv.paddingBottom
+    if (innerH <= 0) return false
+    val maxScroll = (layout.height - innerH).coerceAtLeast(0)
+    return tv.scrollY >= maxScroll - 1
 }
 
 /** 按 layout 行顶滚动到字符偏移，比「字符比例 ≈ scrollY」更贴近目录/书签目标。 */
@@ -938,6 +1112,346 @@ internal fun applyPendingScrollToCharOffset(tv: TextView, charOffsetInText: Int)
 
 internal fun clearPendingScrollCharOffset(tv: TextView?) {
     tv?.setTag(R.id.reader_pending_scroll_char_offset, null)
+    cancelPendingScrollReapply(tv)
+}
+
+/**
+ * 目录跳转「置顶」意图：目标章节即窗口首行，只需 scrollY=0，无需按字符 offset 解析、
+ * 也不进入 offset/anchor 恢复的 LaunchedEffect 竞争。用户开始拖动时清除即可放弃置顶。
+ */
+internal fun requestReaderScrollToTop(tv: TextView?) {
+    tv?.setTag(R.id.reader_pending_scroll_to_top, true)
+}
+
+internal fun clearReaderScrollToTop(tv: TextView?) {
+    tv?.setTag(R.id.reader_pending_scroll_to_top, null)
+}
+
+internal fun hasReaderScrollToTop(tv: TextView?): Boolean =
+    tv?.getTag(R.id.reader_pending_scroll_to_top) == true
+
+/**
+ * 若存在置顶意图，滚到顶部。[clearAfter] 为 true（渲染完成后）时清除意图；
+ * onLayout 首帧只保证在顶部但不清，等 finishMarkdownRender 匹配新内容后再清。
+ */
+internal fun applyReaderScrollToTopIfAny(tv: TextView, clearAfter: Boolean): Boolean {
+    if (tv.getTag(R.id.reader_pending_scroll_to_top) != true) return false
+    if (tv.scrollY != 0) tv.scrollTo(0, 0)
+    if (clearAfter) clearReaderScrollToTop(tv)
+    return true
+}
+
+/**
+ * 打开书 / 书签跳转：在 Markdown 写入后、首帧 draw 前按「源码位置+预览」定位。
+ * 与扩窗 stash 同理——若等 Compose LaunchedEffect，会先以 scrollY=0 画出窗口开头再跳回。
+ */
+internal data class PendingSavedPositionSnap(
+    val sourceContent: String,
+    val sourceOffset: Int,
+    val windowStart: Int,
+    val windowEnd: Int,
+    val preview: String?,
+    val renderPlainText: Boolean,
+    val tocEntries: List<MarkdownTocEntry>,
+)
+
+internal fun stashPendingSavedPositionSnap(tv: TextView?, snap: PendingSavedPositionSnap?) {
+    tv?.setTag(R.id.reader_pending_snap_restore, snap)
+}
+
+internal fun clearPendingSavedPositionSnap(tv: TextView?) {
+    tv?.setTag(R.id.reader_pending_snap_restore, null)
+}
+
+internal fun hasPendingSavedPositionSnap(tv: TextView?): Boolean =
+    tv?.getTag(R.id.reader_pending_snap_restore) is PendingSavedPositionSnap
+
+internal fun applyStashedSavedPositionSnapIfAny(tv: TextView): Boolean {
+    val snap = tv.getTag(R.id.reader_pending_snap_restore) as? PendingSavedPositionSnap ?: return false
+    if (!isReaderTextViewLayoutReady(tv)) return false
+    val offset = resolveDisplayedCharOffsetForSavedPosition(
+        sourceContent = snap.sourceContent,
+        sourceOffset = snap.sourceOffset,
+        displayedText = tv.text,
+        renderPlainText = snap.renderPlainText,
+        windowStart = snap.windowStart,
+        windowEnd = snap.windowEnd,
+        tocEntries = snap.tocEntries,
+        preferredText = snap.preview,
+    )
+    applyPendingScrollToCharOffset(tv, offset)
+    clearPendingSavedPositionSnap(tv)
+    return true
+}
+
+/** 抓取视口顶附近文本作为恢复指纹（空白折叠为单空格，与 [locateExpandFingerprintNear] 的宽容匹配配套）。 */
+internal fun captureExpandFingerprint(tv: TextView): String =
+    previewPlainTextFromTextViewTop(tv)
+        .replace(Regex("\\s+"), " ")
+        .trim()
+        .take(48)
+
+/**
+ * 在显示文本中查找扩窗指纹，返回离 [expectedIndex] 最近的匹配起点。
+ * 指纹在 stash 时已把空白折叠为单空格，而渲染文本里词元间可能是换行/空行，
+ * 因此按词元构造 `\s+` 连接的正则做宽容匹配（直接 indexOf 跨行必失败）。
+ */
+internal fun locateExpandFingerprintNear(
+    text: String,
+    fingerprint: String?,
+    expectedIndex: Int,
+): Int? {
+    if (fingerprint.isNullOrBlank() || fingerprint.length < 8 || text.isEmpty()) return null
+    val tokens = fingerprint.split(' ').filter { it.isNotEmpty() }
+    if (tokens.isEmpty()) return null
+    val regex = runCatching {
+        Regex(tokens.joinToString(separator = "\\s+") { Regex.escape(it) })
+    }.getOrNull() ?: return null
+    var best: Int? = null
+    var bestDist = Int.MAX_VALUE
+    var from = 0
+    while (from < text.length) {
+        val match = regex.find(text, from) ?: break
+        val dist = abs(match.range.first - expectedIndex)
+        if (dist < bestDist) {
+            bestDist = dist
+            best = match.range.first
+        }
+        from = match.range.first + 1
+    }
+    return best
+}
+
+/**
+ * 扩窗前写入恢复信息。
+ * - [anchor]：向上扩窗时优先按「旧 scrollY + 旧窗口起点」叠加 prepend 高度（视觉连续，避免停在目标上方）。
+ * - sourceOffset：兜底比例映射。
+ */
+internal fun stashPendingSourceScrollRestore(
+    tv: TextView?,
+    sourceOffset: Int,
+    windowStart: Int,
+    windowEnd: Int,
+    anchor: TextViewScrollAnchor? = null,
+) {
+    if (tv == null) return
+    tv.setTag(R.id.reader_pending_source_scroll_offset, sourceOffset)
+    tv.setTag(R.id.reader_pending_source_scroll_win_start, windowStart)
+    tv.setTag(R.id.reader_pending_source_scroll_win_end, windowEnd)
+    // 记录扩窗前旧显示文本长度（此刻 tv 仍显示旧窗口内容），向上扩窗恢复时用差值精确定位前置段。
+    tv.setTag(R.id.reader_pending_expand_old_displayed_len, tv.text?.length ?: 0)
+    if (anchor != null) {
+        tv.setTag(R.id.reader_pending_expand_anchor_scroll_y, anchor.scrollY)
+        tv.setTag(R.id.reader_pending_expand_anchor_line_top, anchor.lineTop)
+        tv.setTag(R.id.reader_pending_expand_anchor_window_start, anchor.windowStart)
+    } else {
+        tv.setTag(R.id.reader_pending_expand_anchor_scroll_y, null)
+        tv.setTag(R.id.reader_pending_expand_anchor_line_top, null)
+        tv.setTag(R.id.reader_pending_expand_anchor_window_start, null)
+    }
+    // 扩窗前抓取视口顶附近文本，恢复时精确查找，避免 Markdown 比例映射偏到目标上方。
+    val fingerprint = captureExpandFingerprint(tv)
+    tv.setTag(
+        R.id.reader_pending_expand_fingerprint,
+        fingerprint.takeIf { it.length >= 4 },
+    )
+    tv.setTag(R.id.reader_pending_expand_fingerprint_start, charOffsetAtScrollTop(tv))
+}
+
+/**
+ * 扩窗渲染在途时用户可能继续滑动旧内容；在新内容写入 TextView 前重抓锚点/指纹，
+ * 使恢复落在用户当前视口而非 stash 时的旧位置（否则表现为「滑着滑着被拉回去」）。
+ * 仅当 TextView 仍显示 stash 时的旧内容（长度一致）才刷新，否则坐标系已失效。
+ */
+internal fun refreshStashedExpandAnchorBeforeContentSwap(tv: TextView) {
+    if (!hasPendingSourceScrollRestore(tv)) return
+    val oldDisplayedLen = tv.getTag(R.id.reader_pending_expand_old_displayed_len) as? Int ?: return
+    if ((tv.text?.length ?: 0) != oldDisplayedLen || !isReaderTextViewLayoutReady(tv)) return
+    if (tv.getTag(R.id.reader_pending_expand_anchor_scroll_y) as? Int == null) return
+    val anchorWindowStart =
+        tv.getTag(R.id.reader_pending_expand_anchor_window_start) as? Int ?: return
+    val anchor = captureTextViewScrollAnchor(tv, anchorWindowStart)
+    tv.setTag(R.id.reader_pending_expand_anchor_scroll_y, anchor.scrollY)
+    tv.setTag(R.id.reader_pending_expand_anchor_line_top, anchor.lineTop)
+    val fingerprint = captureExpandFingerprint(tv)
+    tv.setTag(
+        R.id.reader_pending_expand_fingerprint,
+        fingerprint.takeIf { it.length >= 4 },
+    )
+    tv.setTag(R.id.reader_pending_expand_fingerprint_start, charOffsetAtScrollTop(tv))
+}
+
+internal fun clearPendingSourceScrollRestore(tv: TextView?) {
+    tv?.setTag(R.id.reader_pending_source_scroll_offset, null)
+    tv?.setTag(R.id.reader_pending_source_scroll_win_start, null)
+    tv?.setTag(R.id.reader_pending_source_scroll_win_end, null)
+    tv?.setTag(R.id.reader_pending_expand_anchor_scroll_y, null)
+    tv?.setTag(R.id.reader_pending_expand_anchor_line_top, null)
+    tv?.setTag(R.id.reader_pending_expand_anchor_window_start, null)
+    tv?.setTag(R.id.reader_pending_expand_old_displayed_len, null)
+    tv?.setTag(R.id.reader_pending_expand_fingerprint, null)
+    tv?.setTag(R.id.reader_pending_expand_fingerprint_start, null)
+}
+
+internal fun hasPendingSourceScrollRestore(tv: TextView?): Boolean =
+    tv?.getTag(R.id.reader_pending_source_scroll_offset) != null
+
+/** 在 layout 就绪后恢复滚动；须在首帧 draw 前调用（[SafeReaderTextView.onLayout]）。 */
+internal fun applyStashedSourceScrollRestoreIfAny(
+    tv: TextView,
+    renderPlainText: Boolean,
+): Boolean {
+    val sourceOffset = tv.getTag(R.id.reader_pending_source_scroll_offset) as? Int ?: return false
+    val windowStart = tv.getTag(R.id.reader_pending_source_scroll_win_start) as? Int ?: return false
+    val windowEnd = tv.getTag(R.id.reader_pending_source_scroll_win_end) as? Int ?: return false
+    if (!isReaderTextViewLayoutReady(tv)) return false
+    val text = tv.text?.toString().orEmpty()
+    val len = text.length
+    if (len <= 0) return false
+
+    val anchorScrollY = tv.getTag(R.id.reader_pending_expand_anchor_scroll_y) as? Int
+    val anchorLineTop = tv.getTag(R.id.reader_pending_expand_anchor_line_top) as? Int
+    val anchorWindowStart = tv.getTag(R.id.reader_pending_expand_anchor_window_start) as? Int
+    // 向上扩窗是纯前置插入：旧窗口内容在新布局里原样下移。
+    // 前置段显示长度 = 新显示长度 - 旧显示长度（旧窗口对齐章节边界，不会与前置段合并渲染），
+    // 取该边界处行顶像素即前置段高度，叠加到旧 scrollY 上即可精确还原，无需比例/指纹映射。
+    val oldDisplayedLen = tv.getTag(R.id.reader_pending_expand_old_displayed_len) as? Int
+    android.util.Log.d(
+        "ReaderRestoreDbg2",
+        "enter anchorScrollY=$anchorScrollY anchorWinStart=$anchorWindowStart " +
+            "winStart=$windowStart winEnd=$windowEnd len=$len oldDisplayedLen=$oldDisplayedLen " +
+            "srcOff=$sourceOffset fp=${(tv.getTag(R.id.reader_pending_expand_fingerprint) as? String)?.take(12)}",
+    )
+    if (anchorScrollY != null && anchorWindowStart != null && windowStart < anchorWindowStart) {
+        // 时序 guard：向上扩窗是纯前置插入，前置段（含章节标题）渲染后显示长度必然增加。
+        // 若新显示长度未超过旧长度，说明新内容还没写进 TextView，本次不恢复也不清 stash，等就绪帧再来。
+        if (oldDisplayedLen != null && len <= oldDisplayedLen) {
+            android.util.Log.d(
+                "ReaderRestoreDbg2",
+                "expandUp SKIP notReady len=$len oldDisplayedLen=$oldDisplayedLen",
+            )
+            return false
+        }
+        val layout = tv.layout
+        // 优先指纹精确定位旧视口顶行：length-diff 假设「后缀渲染长度不变」，但 Markdown
+        // 整窗重解析时前文可能改变后缀渲染（链接引用/未闭合围栏等），差值边界偏早会把视口顶回前文。
+        // 指纹在旧视口顶抓取，宽容匹配后直接得到该行在新布局中的位置，天然免疫上述偏差。
+        val fingerprint = tv.getTag(R.id.reader_pending_expand_fingerprint) as? String
+        val storedFingerprintStart = tv.getTag(R.id.reader_pending_expand_fingerprint_start) as? Int
+        if (layout != null && oldDisplayedLen != null && oldDisplayedLen in 0..len) {
+            val lengthDiffBoundary = (len - oldDisplayedLen).coerceIn(0, (len - 1).coerceAtLeast(0))
+            val expectedViewportTopIdx =
+                (lengthDiffBoundary + (storedFingerprintStart ?: 0)).coerceIn(0, len - 1)
+            val fingerprintIdx = locateExpandFingerprintNear(
+                text = text,
+                fingerprint = fingerprint,
+                expectedIndex = expectedViewportTopIdx,
+            )
+            if (fingerprintIdx != null) {
+                val line = layout.getLineForOffset(fingerprintIdx)
+                    .coerceIn(0, (layout.lineCount - 1).coerceAtLeast(0))
+                val lineTop = layout.getLineTop(line)
+                val inLineOffset = (anchorScrollY - (anchorLineTop ?: anchorScrollY)).coerceAtLeast(0)
+                android.util.Log.d(
+                    "ReaderRestoreDbg2",
+                    "expandUp fingerprint idx=$fingerprintIdx expected=$expectedViewportTopIdx " +
+                        "lineTop=$lineTop inLineOffset=$inLineOffset",
+                )
+                scrollTextViewPreservingScrollY(tv, lineTop + inLineOffset)
+                clearPendingSourceScrollRestore(tv)
+                return true
+            }
+            val boundaryLine = layout.getLineForOffset(lengthDiffBoundary)
+                .coerceIn(0, (layout.lineCount - 1).coerceAtLeast(0))
+            val prependedHeight = layout.getLineTop(boundaryLine)
+            android.util.Log.d(
+                "ReaderRestoreDbg2",
+                "expandUp exact boundaryOffset=$lengthDiffBoundary prependedHeight=$prependedHeight " +
+                    "anchorScrollY=$anchorScrollY -> targetScrollY=${anchorScrollY + prependedHeight}",
+            )
+            scrollTextViewPreservingScrollY(tv, anchorScrollY + prependedHeight)
+        } else {
+            android.util.Log.d("ReaderRestoreDbg2", "expandUp FALLBACK heightAccum")
+            // 缺少旧长度或 layout 未就绪时回退到高度累加实现。
+            restoreTextViewScrollAfterWindowChange(
+                tv = tv,
+                anchor = TextViewScrollAnchor(
+                    scrollY = anchorScrollY,
+                    lineTop = anchorLineTop ?: anchorScrollY,
+                    windowStart = anchorWindowStart,
+                ),
+                newWindowStart = windowStart,
+                newWindowEnd = windowEnd,
+                renderPlainText = renderPlainText,
+            )
+        }
+        clearPendingSourceScrollRestore(tv)
+        return true
+    }
+    if (anchorScrollY != null && anchorWindowStart != null && windowStart >= anchorWindowStart) {
+        scrollTextViewPreservingScrollY(tv, anchorScrollY)
+        clearPendingSourceScrollRestore(tv)
+        return true
+    }
+
+    val fingerprint = tv.getTag(R.id.reader_pending_expand_fingerprint) as? String
+    if (!fingerprint.isNullOrBlank()) {
+        val storedTop = tv.getTag(R.id.reader_pending_expand_fingerprint_start) as? Int
+        val expectedIndex = when {
+            anchorWindowStart != null && windowStart < anchorWindowStart ->
+                resolveDisplayedCharOffsetForProgressRestore(
+                    sourceOffset = anchorWindowStart,
+                    windowStart = windowStart,
+                    windowEnd = windowEnd,
+                    displayedLen = len,
+                    renderPlainText = renderPlainText,
+                ).coerceIn(0, (len - 1).coerceAtLeast(0)) + (storedTop ?: 0)
+            storedTop != null -> storedTop.coerceIn(0, (len - 1).coerceAtLeast(0))
+            else -> 0
+        }
+        val idx = locateExpandFingerprintNear(
+            text = text,
+            fingerprint = fingerprint,
+            expectedIndex = expectedIndex.coerceIn(0, (len - 1).coerceAtLeast(0)),
+        )
+        android.util.Log.d(
+            "ReaderRestoreDbg2",
+            "fingerprint branch fp='${fingerprint.take(16)}' expected=$expectedIndex idx=$idx",
+        )
+        if (idx != null && idx >= 0) {
+            val layout = tv.layout
+            val savedScrollY = anchorScrollY ?: tv.scrollY
+            val savedLineTop = anchorLineTop ?: savedScrollY
+            if (layout != null) {
+                val line = layout.getLineForOffset(idx)
+                val lineTop = layout.getLineTop(line)
+                val inLineOffset = (savedScrollY - savedLineTop).coerceAtLeast(0)
+                scrollTextViewPreservingScrollY(tv, lineTop + inLineOffset)
+            } else {
+                scrollTextViewToCharOffset(tv, idx)
+            }
+            clearPendingSourceScrollRestore(tv)
+            return true
+        }
+    }
+
+    val displayed = resolveDisplayedCharOffsetForProgressRestore(
+        sourceOffset = sourceOffset,
+        windowStart = windowStart,
+        windowEnd = windowEnd,
+        displayedLen = len,
+        renderPlainText = renderPlainText,
+    )
+    android.util.Log.d("ReaderRestoreDbg2", "PROPORTIONAL fallthrough displayed=$displayed srcOff=$sourceOffset")
+    scrollTextViewToCharOffset(tv, displayed)
+    clearPendingSourceScrollRestore(tv)
+    return true
+}
+
+internal fun cancelPendingScrollReapply(tv: TextView?) {
+    if (tv == null) return
+    val nextGen = (tv.getTag(R.id.reader_pending_scroll_reapply_gen) as? Int ?: 0) + 1
+    tv.setTag(R.id.reader_pending_scroll_reapply_gen, nextGen)
 }
 
 internal fun reapplyPendingScrollCharOffsetIfAny(tv: TextView) {
@@ -945,15 +1459,24 @@ internal fun reapplyPendingScrollCharOffsetIfAny(tv: TextView) {
     scrollTextViewToCharOffset(tv, offset)
 }
 
-/** Mermaid 异步改行高后多次补滚，直到用户手动滑动清除 pending 标记。 */
+/**
+ * 跳转后短暂补一次滚动（等首帧 layout），完成后立刻清除锁定标记。
+ * 若保留 pending 标记，用户滑走后 Mermaid/大图 setResult 仍会按标题 offset 拉回，
+ * 表现为「滑动后跳到稍微前一点」。
+ */
 internal fun schedulePendingScrollReapply(
     tv: TextView,
-    delaysMs: LongArray = longArrayOf(80, 200, 480, 960, 1600),
+    delaysMs: LongArray = longArrayOf(120),
 ) {
+    val gen = (tv.getTag(R.id.reader_pending_scroll_reapply_gen) as? Int ?: 0) + 1
+    tv.setTag(R.id.reader_pending_scroll_reapply_gen, gen)
     delaysMs.forEach { delay ->
         tv.postDelayed({
+            if (tv.getTag(R.id.reader_pending_scroll_reapply_gen) != gen) return@postDelayed
             if (tv.getTag(R.id.reader_pending_scroll_char_offset) != null) {
                 reapplyPendingScrollCharOffsetIfAny(tv)
+                // 补滚一次即解锁，后续布局变化只保留当前 scrollY。
+                clearPendingScrollCharOffset(tv)
             }
         }, delay)
     }
@@ -1131,16 +1654,30 @@ internal fun jumpToGlobalCharInPager(
                 if (pdfJumpByPageIndex) {
                     tv.scrollTo(0, 0)
                 } else {
-                    val displayedOffset = resolveDisplayedCharOffset(
-                        sourceContent = sourceContent,
-                        sourceOffset = safeCharPos,
-                        displayedText = tv.text,
-                        renderPlainText = renderPlainText,
-                        windowStart = globalStart,
-                        tocEntries = tocEntries,
-                        preferredEntry = preferredTocEntry,
-                        preferredText = bookmarkPreviewText,
-                    )
+                    val displayedOffset = if (preferredTocEntry != null) {
+                        resolveDisplayedCharOffset(
+                            sourceContent = sourceContent,
+                            sourceOffset = safeCharPos,
+                            displayedText = tv.text,
+                            renderPlainText = renderPlainText,
+                            windowStart = globalStart,
+                            tocEntries = tocEntries,
+                            preferredEntry = preferredTocEntry,
+                            preferredText = bookmarkPreviewText,
+                        )
+                    } else {
+                        // 打开书 / 书签：与垂直模式同一套「位置+预览」定位。
+                        resolveDisplayedCharOffsetForSavedPosition(
+                            sourceContent = sourceContent,
+                            sourceOffset = safeCharPos,
+                            displayedText = tv.text,
+                            renderPlainText = renderPlainText,
+                            windowStart = globalStart,
+                            windowEnd = globalStart + (tv.text?.length ?: 0),
+                            tocEntries = tocEntries,
+                            preferredText = bookmarkPreviewText,
+                        )
+                    }
                     scrollTextViewToCharOffset(tv, displayedOffset)
                 }
                 onProgress()

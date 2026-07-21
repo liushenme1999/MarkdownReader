@@ -23,6 +23,11 @@ data class BookEntity(
     val coverColor: Int = 0,
     val totalChars: Int = 0,
     val currentPosition: Int = 0,
+    /**
+     * 上次阅读视口顶部附近纯文本预览（与书签 [BookmarkEntity.previewText] 同格式），
+     * 用于重新进入时按书签同样的方式精确定位。
+     */
+    val progressPreviewText: String = "",
     val readingProgress: Float = 0f,
     val lastReadTime: Date? = null,
     val addTime: Date = Date(),

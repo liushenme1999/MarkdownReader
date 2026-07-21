@@ -27,8 +27,17 @@ interface BookDao {
     @Delete
     suspend fun deleteBook(book: BookEntity)
 
-    @Query("UPDATE books SET readingProgress = :progress, currentPosition = :position, lastReadTime = :time WHERE id = :bookId")
-    suspend fun updateReadingProgress(bookId: Long, progress: Float, position: Int, time: Long)
+    @Query(
+        "UPDATE books SET readingProgress = :progress, currentPosition = :position, " +
+            "progressPreviewText = :previewText, lastReadTime = :time WHERE id = :bookId",
+    )
+    suspend fun updateReadingProgress(
+        bookId: Long,
+        progress: Float,
+        position: Int,
+        previewText: String,
+        time: Long,
+    )
 
     @Query("UPDATE books SET isFavorite = :isFavorite WHERE id = :bookId")
     suspend fun updateFavoriteStatus(bookId: Long, isFavorite: Boolean)

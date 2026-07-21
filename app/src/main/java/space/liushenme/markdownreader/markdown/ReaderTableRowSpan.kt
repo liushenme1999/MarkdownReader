@@ -9,6 +9,9 @@ import io.noties.markwon.ext.tables.TableTheme
 /**
  * TextView [android.widget.TextView.setLineSpacing] 会按倍数放大每一行高度；
  * 表格偶数行无底色，被撑高后就像行与行之间插入了空白行。
+ *
+ * 宽屏 Pad 上单元格常排成单行，行高接近正文字号；旧逻辑用 `textSize` 阈值会误判为
+ * 「尚未 layout」而跳过补偿，大屏反而出现假空行，手机窄屏换行后行高更大反而不触发。
  */
 internal class ReaderTableRowSpan(
     theme: TableTheme,
@@ -26,16 +29,12 @@ internal class ReaderTableRowSpan(
     ): Int {
         val size = super.getSize(paint, text, start, end, fm)
         if (fm == null) return size
-        val mult = ReaderTableSpacing.lineSpacingMultiplier
-        if (mult <= 1f) return size
-        val height = fm.descent - fm.ascent
-        if (height <= 0) return size
-        val target = (height / mult).toInt().coerceAtLeast(1)
-        val ratio = target.toFloat() / height
-        fm.ascent = (fm.ascent * ratio).toInt()
-        fm.descent = (fm.descent * ratio).toInt()
-        fm.top = fm.ascent
-        fm.bottom = fm.descent
+        if (!isTableRowMetrics(fm)) return size
+        ReaderTableSpacing.compensateLineSpacing(fm, ReaderTableSpacing.lineSpacingMultiplier)
         return size
     }
+
+    /** [TableRowSpan] layout 完成后固定 `descent=0` 且 `ascent<0`。 */
+    private fun isTableRowMetrics(fm: Paint.FontMetricsInt): Boolean =
+        fm.descent == 0 && fm.ascent < 0
 }

@@ -165,7 +165,11 @@ internal fun applyReaderTextContent(
     }
     if (content.length <= PLAIN_TEXT_PRECOMPUTE_THRESHOLD) {
         val sp = SpannableString(content)
+        refreshStashedExpandAnchorBeforeContentSwap(textView)
         textView.setText(sp, TextView.BufferType.SPANNABLE)
+        if (!applyReaderScrollToTopIfAny(textView, clearAfter = true)) {
+            applyStashedSourceScrollRestoreIfAny(textView, renderPlainText = true)
+        }
         applyHighlightsToRenderedText(textView, highlights, highlightColorArgb)
         return
     }
@@ -174,7 +178,11 @@ internal fun applyReaderTextContent(
         val pre = PrecomputedTextCompat.create(content, params)
         textView.post {
             if (textView.getTag(TAG_READER_RENDER_SIG) != renderSig) return@post
+            refreshStashedExpandAnchorBeforeContentSwap(textView)
             TextViewCompat.setPrecomputedText(textView, pre)
+            if (!applyReaderScrollToTopIfAny(textView, clearAfter = true)) {
+                applyStashedSourceScrollRestoreIfAny(textView, renderPlainText = true)
+            }
             applyHighlightsToRenderedText(textView, highlights, highlightColorArgb)
         }
     }
@@ -192,6 +200,15 @@ internal fun applyMarkdownContent(
 ) {
     fun finishMarkdownRender() {
         textView.setTag(R.id.reader_markdown_render_complete, renderSig)
+        // 目录跳转置顶意图优先：直接 scrollY=0 并清意图，不再走扩窗 stash 恢复。
+        // 打开书/书签 snap 次之：同帧滚到目标，避免 scrollY=0 先画一帧「别的章节」再跳回。
+        // 扩窗滚动恢复交给 onLayout（首帧 draw 前）。此处若 layout 未就绪不要 post，
+        // 否则会在 scrollY=0 先画一帧「开头」再跳回。
+        if (!applyReaderScrollToTopIfAny(textView, clearAfter = true)) {
+            if (!applyStashedSavedPositionSnapIfAny(textView)) {
+                applyStashedSourceScrollRestoreIfAny(textView, renderPlainText = false)
+            }
+        }
         val anchorIndex = textView.getTag(R.id.markdown_anchor_index) as? space.liushenme.markdownreader.markdown.MarkdownAnchorIndex
         if (anchorIndex != null) {
             textView.post { space.liushenme.markdownreader.markdown.RenderedAnchorBinder.bind(textView, anchorIndex) }
@@ -220,6 +237,8 @@ internal fun applyMarkdownContent(
         textView.post {
             if (textView.getTag(TAG_READER_RENDER_SIG) != renderSig) return@post
             textView.setTag(R.id.markdown_anchor_index, prepared.anchorIndex)
+            // 新内容替换前重抓扩窗锚点：渲染在途时用户可能已滑动旧内容，旧锚点会把视口拉回去。
+            refreshStashedExpandAnchorBeforeContentSwap(textView)
             synchronized(markwonRenderLock) {
                 markwon.setParsedMarkdown(
                     textView,
@@ -282,6 +301,7 @@ internal fun MarkdownReaderView(
                 setPadding(padHPx, padTopPx, padHPx, padBottomPx)
                 ReaderTableSpacing.lineSpacingMultiplier = readerLineSpacingMultiplier
                 setLineSpacing(0f, readerLineSpacingMultiplier)
+                setTag(TAG_READER_LINE_SPACING, readerLineSpacingMultiplier)
 
                 val sig0 = readerRenderSignature(
                     content = content,
@@ -349,6 +369,14 @@ internal fun MarkdownReaderView(
             }
             ReaderTableSpacing.lineSpacingMultiplier = readerLineSpacingMultiplier
             textView.setLineSpacing(0f, readerLineSpacingMultiplier)
+            val prevLineSpacing = textView.getTag(TAG_READER_LINE_SPACING) as? Float
+            if (prevLineSpacing != null && prevLineSpacing != readerLineSpacingMultiplier && !contentChanged) {
+                textView.post {
+                    val t = textView.text
+                    if (!t.isNullOrEmpty()) textView.text = t
+                }
+            }
+            textView.setTag(TAG_READER_LINE_SPACING, readerLineSpacingMultiplier)
             if (pdfPagedLayout) {
                 PdfImageLayoutHelper.applyPagedPdfTextGravity(textView, centerVertically = true)
                 textView.includeFontPadding = false
@@ -447,6 +475,10 @@ internal fun bindReaderGesturesAndScroll(
                 touchState.scrollYOnDown = tv?.scrollY ?: 0
                 touchState.blockBookmarkSwipeGesture = tv?.hasActiveReaderTextSelection() == true
                 (tv as? SafeReaderTextView)?.prepareForNewTouch(e.x, e.y)
+                // 手指按下即解除目录/书签跳转锁定：否则滑走后 diagram 仍按标题 offset 拉回。
+                if (allowVerticalScroll) {
+                    clearPendingScrollCharOffset(tv)
+                }
                 if (tv is SafeReaderTextView && tv.isInTextSelection()) {
                     v.parent?.requestDisallowInterceptTouchEvent(true)
                 } else if (!allowVerticalScroll) {
@@ -463,7 +495,19 @@ internal fun bindReaderGesturesAndScroll(
                 if (allowVerticalScroll && tv is SafeReaderTextView) {
                     val dx = e.x - touchState.downX
                     val dy = e.y - touchState.downY
-                    tv.tryMarkVerticalScrollDrag(dx, dy)
+                    val markedDrag = tv.tryMarkVerticalScrollDrag(dx, dy)
+                    if (markedDrag) {
+                        // 用户真正开始拖动即放弃目录置顶意图（程序触发的 scrollTo 不经此路径，故安全）。
+                        clearReaderScrollToTop(tv)
+                        // 纵向拖动一开始就走 onScroll：清除跳转补滚，并在顶部/底部无 scrollY 变化时仍能扩窗。
+                        onScroll(localCharProgressAtScrollTop(tv))
+                    } else if (tv.isUserVerticalScrollDrag()) {
+                        val atTopPullingPrev = tv.scrollY <= 0 && dy > slop
+                        val atBottomPullingNext = isReaderTextViewAtScrollBottom(tv) && dy < -slop
+                        if (atTopPullingPrev || atBottomPullingNext) {
+                            onScroll(localCharProgressAtScrollTop(tv))
+                        }
+                    }
                 }
                 if (!allowVerticalScroll && tv != null) {
                     val dx = e.x - touchState.downX
@@ -486,6 +530,11 @@ internal fun bindReaderGesturesAndScroll(
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (!allowVerticalScroll) {
                     v.parent?.requestDisallowInterceptTouchEvent(false)
+                }
+                val wasVerticalDrag = (tv as? SafeReaderTextView)?.isUserVerticalScrollDrag() == true
+                if (allowVerticalScroll && wasVerticalDrag) {
+                    clearPendingScrollCharOffset(tv)
+                    onScroll(localCharProgressAtScrollTop(tv))
                 }
                 val blockBookmarkSwipe = touchState.blockBookmarkSwipeGesture ||
                     tv?.hasActiveReaderTextSelection() == true
@@ -583,6 +632,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     private var lastTouchX = 0f
     private var lastTouchY = 0f
     private var isVerticalScrollDrag = false
+    /** 当前手势相对按下点的纵向位移（+ 手指下移=想看上文；- 手指上移=想看下文），用于扩窗方向门控。 */
+    private var lastDragDy = 0f
     /** 本次触摸落在 Mermaid/图表 span 上，整段手势内禁止扩窗。 */
     private var gestureOnDiagram = false
     /** 每次手指按下只允许触发一次扩窗，避免连续扩到全书末尾。 */
@@ -593,6 +644,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     private var readerSelectionActionMode: ActionMode? = null
     /** DOWN 在选区外时先标记，UP 仍为轻微点击且仍在选区外才真正清除（避免句柄 DOWN 被误杀）。 */
     private var pendingOutsideTapDismiss = false
+    /** 正在主动清理选区 UI，避免 ActionMode.onDestroy 递归再 dismiss。 */
+    private var clearingSelectionUi = false
     /** 划词选区是否已递增 suppressScrollRefCount（配对递减）。 */
     private var selectionIncrementedSuppress = false
     /** DOWN 时命中链接，UP 时优先跳转而非进入 Editor 选词。 */
@@ -614,12 +667,25 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
         override fun onDestroyActionMode(mode: ActionMode?) {
             if (readerSelectionActionMode == mode) readerSelectionActionMode = null
+            // 系统关掉 ActionMode 时首尾句柄会一起消失；若 session 仍在，同步清掉选区阴影，
+            // 避免出现「句柄没了但高亮还在」。
+            if (!clearingSelectionUi && selectionActive) {
+                post {
+                    if (!clearingSelectionUi &&
+                        selectionActive &&
+                        readerSelectionActionMode == null
+                    ) {
+                        dismissSelection()
+                    }
+                }
+            }
         }
     }
 
     init {
         // Legado MdRead：始终可选中，由系统 Editor 处理长按/句柄/ActionMode
         setTextIsSelectable(true)
+        includeFontPadding = false
         movementMethod = linkMovement
         isVerticalScrollBarEnabled = false
         isLongClickable = true
@@ -636,6 +702,12 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     /** 用户手指正在纵向拖动滚动（用于区分布局重排触发的 scroll 变化）。 */
     fun isUserVerticalScrollDrag(): Boolean = isVerticalScrollDrag
+
+    /** 手指下移（想看上文）→ 才允许向上扩窗；避免目录置顶后 scrollY=0 时向下滑也误触发向上扩窗。 */
+    fun isDragTowardPrevious(): Boolean = lastDragDy > touchSlop
+
+    /** 手指上移（想看下文）→ 才允许向下扩窗。 */
+    fun isDragTowardNext(): Boolean = lastDragDy < -touchSlop
 
     /** 本次手势是否从 diagram 区域开始（扩窗应忽略）。 */
     fun isGestureOnDiagram(): Boolean = gestureOnDiagram
@@ -698,6 +770,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     fun prepareForNewTouch(x: Float, y: Float) {
         isVerticalScrollDrag = false
+        lastDragDy = 0f
         windowExpandConsumedThisGesture = false
         gestureOnDiagram = isTouchOnDiagramSpan(x, y)
         allowReaderScrollSideEffects = false
@@ -716,6 +789,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     internal fun tryMarkVerticalScrollDrag(dx: Float, dy: Float): Boolean {
         if (!allowVerticalScroll || selectionActive) return false
+        lastDragDy = dy
         if (kotlin.math.abs(dy) <= scrollDragSlop || kotlin.math.abs(dy) <= kotlin.math.abs(dx)) {
             return false
         }
@@ -739,6 +813,29 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         onSelectionChanged(start, end)
     }
 
+    /**
+     * 单元测试：模拟系统结束划词 ActionMode（句柄消失），验证选区阴影会同步清除。
+     */
+    internal fun simulateSystemActionModeDestroyForTest() {
+        val mode = object : ActionMode() {
+            override fun setTitle(title: CharSequence?) = Unit
+            override fun setTitle(resId: Int) = Unit
+            override fun setSubtitle(subtitle: CharSequence?) = Unit
+            override fun setSubtitle(resId: Int) = Unit
+            override fun setCustomView(view: android.view.View?) = Unit
+            override fun invalidate() = Unit
+            override fun finish() = Unit
+            override fun getMenu(): Menu = throw UnsupportedOperationException()
+            override fun getTitle(): CharSequence = ""
+            override fun getSubtitle(): CharSequence = ""
+            override fun getCustomView(): android.view.View? = null
+            override fun getMenuInflater(): android.view.MenuInflater =
+                throw UnsupportedOperationException()
+        }
+        readerSelectionActionMode = mode
+        emptySelectionActionMode.onDestroyActionMode(mode)
+    }
+
     private fun setSelectionActive(active: Boolean) {
         if (selectionActive == active) return
         selectionActive = active
@@ -746,19 +843,25 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     }
 
     private fun resetSelectionUiOnly() {
-        savedSelStart = -1
-        savedSelEnd = -1
-        pendingOutsideTapDismiss = false
-        if (selectionIncrementedSuppress) {
-            suppressScrollRefCount = (suppressScrollRefCount - 1).coerceAtLeast(0)
-            selectionIncrementedSuppress = false
+        clearingSelectionUi = true
+        try {
+            savedSelStart = -1
+            savedSelEnd = -1
+            pendingOutsideTapDismiss = false
+            if (selectionIncrementedSuppress) {
+                suppressScrollRefCount = (suppressScrollRefCount - 1).coerceAtLeast(0)
+                selectionIncrementedSuppress = false
+            }
+            allowReaderScrollSideEffects = false
+            readerSelectionActionMode?.finish()
+            readerSelectionActionMode = null
+            movementMethod = linkMovement
+            (text as? Spannable)?.let { Selection.removeSelection(it) }
+            parent?.requestDisallowInterceptTouchEvent(false)
+            invalidate()
+        } finally {
+            clearingSelectionUi = false
         }
-        allowReaderScrollSideEffects = false
-        readerSelectionActionMode?.finish()
-        readerSelectionActionMode = null
-        movementMethod = linkMovement
-        (text as? Spannable)?.let { Selection.removeSelection(it) }
-        parent?.requestDisallowInterceptTouchEvent(false)
     }
 
     private fun restoreSavedSelectionRange() {
@@ -812,18 +915,95 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     override fun canScrollVertically(direction: Int): Boolean =
         allowVerticalScroll && super.canScrollVertically(direction)
 
-    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-        val preserveScrollY = if (changed && allowVerticalScroll && scrollY > 0) scrollY else null
-        super.onLayout(changed, left, top, right, bottom)
-        if (preserveScrollY == null) return
-        val layout = layout ?: return
-        val innerH = height - paddingTop - paddingBottom
-        if (innerH <= 0) return
-        val maxScroll = (layout.height - innerH).coerceAtLeast(0)
-        val target = preserveScrollY.coerceIn(0, maxScroll)
-        if (scrollY != target) {
-            super.scrollTo(0, target)
+    /**
+     * 视口顶字符行锚点：随每次滚动更新；文本异步重排（表格测量、图片/图表占位符→实际高度、
+     * 字号变化）导致锚点行位移时，在 onLayout（绘制前）按同一字符行重新定位，视口不动。
+     * 若只按像素保留 scrollY，上方内容高度变化会把视口顶到更早的内容（表现为「过一会跳回前面」）。
+     */
+    private var viewportAnchorTextLen = -1
+    private var viewportAnchorChar = -1
+    private var viewportAnchorInLineOffset = 0
+
+    private fun updateViewportCharAnchor() {
+        if (!allowVerticalScroll) {
+            viewportAnchorTextLen = -1
+            return
         }
+        val layout = layout ?: return
+        val len = text?.length ?: 0
+        if (len == 0 || layout.text.length != len || layout.lineCount <= 0) {
+            viewportAnchorTextLen = -1
+            return
+        }
+        val y = (scrollY + paddingTop).coerceAtLeast(0)
+        val line = layout.getLineForVertical(y).coerceIn(0, layout.lineCount - 1)
+        viewportAnchorChar = layout.getLineStart(line).coerceIn(0, len - 1)
+        viewportAnchorInLineOffset = scrollY - layout.getLineTop(line)
+        viewportAnchorTextLen = len
+    }
+
+    override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
+        super.onScrollChanged(l, t, oldl, oldt)
+        updateViewportCharAnchor()
+    }
+
+    /** 布局重排后按快照锚点维持视口顶字符行；返回 true 表示做了补偿滚动。 */
+    private fun maintainViewportCharAnchorAfterLayout(
+        snapTextLen: Int,
+        snapChar: Int,
+        snapInLineOffset: Int,
+    ): Boolean {
+        if (!allowVerticalScroll) return false
+        // 划词期间 Editor 可能自行 bringPointIntoView，不与其争抢滚动。
+        if (selectionActive) return false
+        val layout = layout ?: return false
+        val len = text?.length ?: 0
+        if (len == 0 || layout.text.length != len) return false
+        if (snapTextLen != len || snapChar !in 0 until len) {
+            // 新文本首个布局：只建立锚点，不滚动。
+            updateViewportCharAnchor()
+            return false
+        }
+        val innerH = height - paddingTop - paddingBottom
+        if (innerH <= 0) return false
+        val line = layout.getLineForOffset(snapChar)
+            .coerceIn(0, (layout.lineCount - 1).coerceAtLeast(0))
+        val newLineTop = layout.getLineTop(line)
+        val maxScroll = (layout.height - innerH).coerceAtLeast(0)
+        val target = (newLineTop + snapInLineOffset).coerceIn(0, maxScroll)
+        if (target != scrollY) {
+            // scrollTo 触发 onScrollChanged，锚点随新布局刷新。
+            super.scrollTo(scrollX, target)
+            return true
+        }
+        updateViewportCharAnchor()
+        return false
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        // 目录跳转置顶优先：目标章节即首行，首帧就压在顶部，避免闪一下再跳。
+        val scrollToTop = hasReaderScrollToTop(this)
+        val hasSnapStash = !scrollToTop && hasPendingSavedPositionSnap(this)
+        val hasExpandStash = !scrollToTop && !hasSnapStash && hasPendingSourceScrollRestore(this)
+        // 快照必须在 super.onLayout 之前抓：布局过程中的内部 scrollTo 会经 onScrollChanged 污染锚点。
+        val snapTextLen = viewportAnchorTextLen
+        val snapChar = viewportAnchorChar
+        val snapInLineOffset = viewportAnchorInLineOffset
+        super.onLayout(changed, left, top, right, bottom)
+        if (scrollToTop) {
+            // 不清意图：等 finishMarkdownRender 匹配新内容后再清，确保新窗口首帧也在顶部。
+            if (scrollY != 0) super.scrollTo(0, 0)
+            return
+        }
+        if (hasSnapStash) {
+            applyStashedSavedPositionSnapIfAny(this)
+            return
+        }
+        if (hasExpandStash) {
+            applyStashedSourceScrollRestoreIfAny(this, renderPlainText = false)
+            return
+        }
+        maintainViewportCharAnchorAfterLayout(snapTextLen, snapChar, snapInLineOffset)
     }
 
     override fun scrollTo(x: Int, y: Int) {
@@ -942,6 +1122,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             false
         }
         if (event.actionMasked == MotionEvent.ACTION_UP) {
+            // dismiss 会清掉 pending 标记，先记下本次是否区外轻点。
+            val outsideTap = pendingOutsideTapDismiss
             dismissSelectionOnOutsideTapIfNeeded()
             isVerticalScrollDrag = false
             gestureOnDiagram = false
@@ -949,7 +1131,13 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 allowReaderScrollSideEffects = false
             }
             if (selectionActive && !hasSelectionRange()) {
-                restoreSavedSelectionRange()
+                // 区外手势期间系统已清掉 range/句柄时，勿再 restore，否则只剩选区阴影。
+                // 选区内/拖句柄时仍恢复，避免 Editor 瞬时丢 range 导致选区闪断。
+                if (outsideTap) {
+                    dismissSelection()
+                } else {
+                    restoreSavedSelectionRange()
+                }
             }
             if (selectionActive) {
                 ensureSelectionInteractionMode()

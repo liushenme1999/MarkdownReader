@@ -4,4 +4,21 @@
     <item name="markdown_anchor_rendered" type="id" />
     <item name="reader_markdown_render_complete" type="id" />
     <item name="reader_pending_scroll_char_offset" type="id" />
+    <item name="reader_pending_scroll_reapply_gen" type="id" />
+    <!-- 扩窗后与 setParsedMarkdown 同帧恢复：源码锚点 + 新窗口范围 -->
+    <item name="reader_pending_source_scroll_offset" type="id" />
+    <item name="reader_pending_source_scroll_win_start" type="id" />
+    <item name="reader_pending_source_scroll_win_end" type="id" />
+    <!-- 向上扩窗优先用视觉锚点（旧 scrollY + 旧 windowStart），比比例映射更准 -->
+    <item name="reader_pending_expand_anchor_scroll_y" type="id" />
+    <item name="reader_pending_expand_anchor_line_top" type="id" />
+    <item name="reader_pending_expand_anchor_window_start" type="id" />
+    <!-- 扩窗前旧显示文本长度：向上扩窗为纯前置插入，新旧长度差即前置段长度，用于精确还原 -->
+    <item name="reader_pending_expand_old_displayed_len" type="id" />
+    <item name="reader_pending_expand_fingerprint" type="id" />
+    <item name="reader_pending_expand_fingerprint_start" type="id" />
+    <!-- 目录跳转置顶意图：目标章节即窗口首行，只需 scrollY=0，独立于 offset/anchor 恢复 -->
+    <item name="reader_pending_scroll_to_top" type="id" />
+    <!-- 打开书/书签：首帧 draw 前按源码位置+预览 snap，避免先露出窗口开头再跳 -->
+    <item name="reader_pending_snap_restore" type="id" />
 </resources>

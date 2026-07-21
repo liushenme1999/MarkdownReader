@@ -35,30 +35,67 @@ class TableRowSpacingTest {
     }
 
     @Test
-    fun table_rowHeight_notInflatedByLineSpacingMultiplier() {
+    fun table_consecutiveRows_haveNoLargeGap() {
+        assertTableRowsHaveNoLargeGap(tableMd, widthPx = 1200, lineSpacing = 1.5f)
+    }
+
+    @Test
+    fun compactTable_onWideScreen_hasNoLargeGap() {
+        val compactTable = """
+            | A | B | C |
+            | --- | --- | --- |
+            | 1 | 2 | 3 |
+            | 4 | 5 | 6 |
+            | 7 | 8 | 9 |
+        """.trimIndent()
+        assertTableRowsHaveNoLargeGap(compactTable, widthPx = 1400, lineSpacing = 1.5f)
+    }
+
+    @Test
+    fun table_gapUpdatesWhenLineSpacingChanges() {
+        val compactTable = """
+            | X | Y |
+            | --- | --- |
+            | a | b |
+            | c | d |
+        """.trimIndent()
+        val gapAt15 = measureMaxTableRowGap(compactTable, widthPx = 1400, lineSpacing = 1.5f)
+        assertTrue("gap at 1.5x should be <= 1, was $gapAt15", gapAt15 <= 1)
+        val gapAt10 = measureMaxTableRowGap(compactTable, widthPx = 1400, lineSpacing = 1.0f)
+        assertTrue("gap at 1.0x should be <= 1, was $gapAt10", gapAt10 <= 1)
+    }
+
+    private fun assertTableRowsHaveNoLargeGap(markdown: String, widthPx: Int, lineSpacing: Float) {
+        val gap = measureMaxTableRowGap(markdown, widthPx, lineSpacing)
+        assertTrue("max gap is $gap px at width=$widthPx spacing=$lineSpacing", gap <= 1)
+    }
+
+    private fun measureMaxTableRowGap(markdown: String, widthPx: Int, lineSpacing: Float): Int {
         val context: Context = RuntimeEnvironment.getApplication()
-        ReaderTableSpacing.lineSpacingMultiplier = 1.5f
+        ReaderTableSpacing.lineSpacingMultiplier = lineSpacing
         val markwon = ReaderMarkwonFactory.create(context)
-        val prepared = ReaderMarkwonFactory.prepareMarkdown(tableMd)
+        val prepared = ReaderMarkwonFactory.prepareMarkdown(markdown)
         val rendered = markwon.toMarkdown(prepared.text) as Spanned
         val tv = TextView(context).apply {
-            setLineSpacing(0f, 1.5f)
+            includeFontPadding = false
+            textSize = 18f
+            setLineSpacing(0f, lineSpacing)
             text = rendered
             measure(
-                android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.EXACTLY),
+                android.view.View.MeasureSpec.makeMeasureSpec(widthPx, android.view.View.MeasureSpec.EXACTLY),
                 android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED),
             )
         }
         val layout = requireNotNull(tv.layout)
         val rows = rendered.getSpans(0, rendered.length, ReaderTableRowSpan::class.java)
             .sortedBy { rendered.getSpanStart(it) }
-        require(rows.size >= 3) { "need 3+ rows" }
-        val heights = rows.take(3).map { row ->
-            val line = layout.getLineForOffset(rendered.getSpanStart(row))
-            layout.getLineBottom(line) - layout.getLineTop(line)
+        require(rows.size >= 2) { "need 2+ rows" }
+        val lineIndices = rows.map { row -> layout.getLineForOffset(rendered.getSpanStart(row)) }
+        var maxGap = 0
+        for (i in 0 until lineIndices.size - 1) {
+            val gap = layout.getLineTop(lineIndices[i + 1]) - layout.getLineBottom(lineIndices[i])
+            maxGap = maxOf(maxGap, gap)
         }
-        val maxHeight = heights.maxOrNull() ?: 0
-        val minHeight = heights.minOrNull() ?: 0
-        assertTrue("heights=$heights max/min=${maxHeight.toFloat() / minHeight.coerceAtLeast(1)}", maxHeight < minHeight * 2)
+        return maxGap
     }
 }

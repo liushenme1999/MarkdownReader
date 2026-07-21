@@ -115,6 +115,7 @@ internal object ReaderTablePlugin {
                 visitor.forceNewLine()
             }
             builder.append('\u00a0')
+            val spanStart = if (addNewLine) length + 1 else length
             val span = ReaderTableRowSpan(
                 theme = tableTheme,
                 cells = row,
@@ -122,7 +123,7 @@ internal object ReaderTablePlugin {
                 odd = tableRows % 2 == 1,
             )
             tableRows = if (tableRowIsHeader) 0 else tableRows + 1
-            visitor.setSpans(if (addNewLine) length + 1 else length, span)
+            visitor.setSpans(spanStart, span)
             pendingTableRow = null
         }
 
