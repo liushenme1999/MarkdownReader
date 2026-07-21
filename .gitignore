@@ -17,6 +17,9 @@
 bin/
 gen/
 out/
+# Debug build outputs (never commit)
+app/debug/
+
 # Other artifacts under app/release/ (APKs are re-included above)
 app/release/baselineProfiles/
 app/release/output-metadata.json
