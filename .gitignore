@@ -100,3 +100,6 @@ app/build-system/
 *.tmp
 *.bak
 
+# Local venv (软著 Word 生成脚本等)
+.venv-softzhu/
+软著申请/

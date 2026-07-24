@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
+import space.liushenme.markdownreader.BuildConfig
 import space.liushenme.markdownreader.navigation.AppRoutes
 import space.liushenme.markdownreader.ui.components.ShelfStyleTopBarBackground
 import space.liushenme.markdownreader.ui.components.shelfStylePageBackground
@@ -72,7 +73,7 @@ fun ProfileScreen(
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("版本号：1.0.0")
+                    Text("版本号：${BuildConfig.VERSION_NAME}")
                     HorizontalDivider()
                     Text("支持的文件格式：")
                     Text("  - Markdown (.md)", style = MaterialTheme.typography.bodySmall)
@@ -349,7 +350,7 @@ fun ProfileScreen(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    "MD阅读器 v1.0.0",
+                    "MD阅读器 v${BuildConfig.VERSION_NAME}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
                 )

@@ -8,7 +8,7 @@
 | **包名** | `space.liushenme.markdownreader` |
 | **最低系统** | Android 7.0 (API 24) |
 | **目标 SDK** | 35 |
-| **当前版本** | 1.0 (versionCode 1) |
+| **当前版本** | 1.0.1 (versionCode 2) |
 | **仓库** | [github.com/liukejun1999/MarkdownReader](https://github.com/liukejun1999/MarkdownReader) |
 
 ## 安装包下载
@@ -17,7 +17,8 @@
 
 | 版本 | 下载 | 大小约 |
 |------|------|--------|
-| **1.0** | [MD阅读器_release_1.0.apk](app/release/MD阅读器_release_1.0.apk) | 13 MB |
+| **1.0.1** | [MD阅读器_release_1.0.1.apk](app/release/MD阅读器_release_1.0.1.apk) | 13 MB |
+| 1.0 | [MD阅读器_release_1.0.apk](app/release/MD阅读器_release_1.0.apk) | 13 MB |
 
 安装说明：
 

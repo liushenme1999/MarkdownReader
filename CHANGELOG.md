@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-07-24
+
 ### 新增
 
 - LaTeX 块级/行内公式样式（居中、圆角边框与底色）
@@ -18,6 +20,8 @@
 ### 修复
 
 - 行内代码背景向左溢出遮挡相邻文字
+- 长行内代码（如 JSON）在窄屏被裁切、无法换行的问题
+- 列表项中行内代码换行后圆角底色与文字水平错位
 - 块级公式因单个不支持命令导致整段空白
 - Kotlin 编译警告（`ReaderCompoundInlineLatexSpan` 参数命名与接口不一致）
 
@@ -52,5 +56,6 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/liukejun1999/MarkdownReader/releases/tag/v1.0.0

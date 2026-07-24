@@ -8,6 +8,7 @@ import java.io.FileInputStream
 import java.io.InputStream
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
+import space.liushenme.markdownreader.BuildConfig
 
 private const val MAX_TEXT_SCAN_BYTES = 8 * 1024 * 1024
 private const val MAX_URL_BYTES = 15 * 1024 * 1024
@@ -181,7 +182,7 @@ object UrlBookDownloader {
         conn.setRequestProperty("Accept", "*/*")
         conn.setRequestProperty(
             "User-Agent",
-            "MarkdownReader/1.0 (Android)"
+            "MarkdownReader/${BuildConfig.VERSION_NAME} (Android)"
         )
         conn.connect()
         val type = conn.contentType
