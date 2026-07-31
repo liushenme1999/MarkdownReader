@@ -159,6 +159,12 @@ private fun HighlightsList(
     highlights: List<HighlightWithBook>,
     onDelete: (HighlightEntity) -> Unit
 ) {
+    var revealedHighlightId by remember { mutableStateOf<Long?>(null) }
+
+    LaunchedEffect(highlights) {
+        revealedHighlightId = null
+    }
+
     if (highlights.isEmpty()) {
         EmptyState(
             message = "还没有划线笔记",
@@ -173,7 +179,14 @@ private fun HighlightsList(
             items(highlights, key = { it.highlight.id }) { item ->
                 HighlightCard(
                     highlight = item,
-                    onDelete = { onDelete(item.highlight) }
+                    revealedHighlightId = revealedHighlightId,
+                    onRevealChange = { revealedHighlightId = it },
+                    onDelete = {
+                        onDelete(item.highlight)
+                        if (revealedHighlightId == item.highlight.id) {
+                            revealedHighlightId = null
+                        }
+                    }
                 )
             }
         }
@@ -222,105 +235,165 @@ private fun BookmarksList(
 @Composable
 private fun HighlightCard(
     highlight: HighlightWithBook,
+    revealedHighlightId: Long?,
+    onRevealChange: (Long?) -> Unit,
     onDelete: () -> Unit
 ) {
     val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
     val highlightColor = Color(highlight.highlight.color)
+    val density = LocalDensity.current
+    val deleteWidthPx = with(density) { 72.dp.toPx() }
+    var offsetPx by remember(highlight.highlight.id) { mutableFloatStateOf(0f) }
+    val revealedIdSnapshot by rememberUpdatedState(revealedHighlightId)
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        )
-    ) {
-        Row(
-            modifier = Modifier.fillMaxHeight()
+    LaunchedEffect(revealedHighlightId, highlight.highlight.id) {
+        if (revealedHighlightId != highlight.highlight.id) {
+            offsetPx = 0f
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Box(
+            modifier = Modifier.matchParentSize(),
+            contentAlignment = Alignment.CenterEnd
         ) {
-            // 左侧彩色竖条装饰
             Box(
                 modifier = Modifier
-                    .width(5.dp)
+                    .width(72.dp)
                     .fillMaxHeight()
-                    .background(
-                        color = highlightColor,
-                        shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)
-                    )
-            )
-
-            Column(
-                modifier = Modifier.padding(18.dp)
+                    .background(MaterialTheme.colorScheme.error),
+                contentAlignment = Alignment.Center
             ) {
-                // 书籍信息
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(highlightColor)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = highlight.bookTitle,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.weight(1f))
-                    Text(
-                        text = dateFormat.format(highlight.highlight.createTime),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // 高亮内容
-                Text(
-                    text = highlight.highlight.highlightedText,
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontWeight = FontWeight.Medium
-                    ),
+                val err = MaterialTheme.colorScheme.error
+                val deleteIconTint = iconTintForDeleteStrip(err)
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            color = highlightColor.copy(alpha = 0.3f),
-                            shape = RoundedCornerShape(8.dp)
-                        )
-                        .padding(12.dp)
-                )
-
-                // 笔记
-                if (!highlight.highlight.note.isNullOrEmpty()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "笔记: ${highlight.highlight.note}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // 操作按钮
-                Row(
-                    horizontalArrangement = Arrangement.End,
-                    modifier = Modifier.fillMaxWidth()
+                        .fillMaxSize()
+                        .clickable {
+                            onDelete()
+                            offsetPx = 0f
+                        },
+                    contentAlignment = Alignment.Center
                 ) {
-                    TextButton(onClick = onDelete) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
-                            Icons.Default.Delete,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "删除",
+                            modifier = Modifier.size(28.dp),
+                            tint = deleteIconTint
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("删除")
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "删除",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = deleteIconTint
+                        )
                     }
                 }
+            }
+        }
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .graphicsLayer { translationX = offsetPx }
+                .pointerInput(highlight.highlight.id, deleteWidthPx) {
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            offsetPx = (offsetPx + dragAmount).coerceIn(-deleteWidthPx, 0f)
+                        },
+                        onDragEnd = {
+                            val threshold = -deleteWidthPx * 0.35f
+                            if (offsetPx < threshold) {
+                                offsetPx = -deleteWidthPx
+                                onRevealChange(highlight.highlight.id)
+                            } else {
+                                offsetPx = 0f
+                                if (revealedIdSnapshot == highlight.highlight.id) {
+                                    onRevealChange(null)
+                                }
+                            }
+                        }
+                    )
+                },
+            elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface
+            )
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // 左侧彩色竖条装饰
+                Box(
+                    modifier = Modifier
+                        .width(5.dp)
+                        .fillMaxHeight()
+                        .background(
+                            color = highlightColor,
+                            shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)
+                        )
+                )
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 18.dp, top = 18.dp, bottom = 18.dp, end = 8.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(highlightColor)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = highlight.bookTitle,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.weight(1f))
+                        Text(
+                            text = dateFormat.format(highlight.highlight.createTime),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        text = highlight.highlight.highlightedText,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = FontWeight.Medium
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                color = highlightColor.copy(alpha = 0.3f),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            .padding(12.dp)
+                    )
+
+                    if (!highlight.highlight.note.isNullOrEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "笔记: ${highlight.highlight.note}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+
+                SwipeDeleteHintArrow(visible = offsetPx > -8f)
             }
         }
     }
@@ -368,12 +441,20 @@ private fun BookmarkCard(
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "删除",
-                        modifier = Modifier.size(28.dp),
-                        tint = deleteIconTint
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "删除",
+                            modifier = Modifier.size(28.dp),
+                            tint = deleteIconTint
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "删除",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = deleteIconTint
+                        )
+                    }
                 }
             }
         }
@@ -408,59 +489,113 @@ private fun BookmarkCard(
                 containerColor = MaterialTheme.colorScheme.surface
             )
         ) {
-            Column(
-                modifier = Modifier.padding(18.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 18.dp, top = 18.dp, bottom = 18.dp, end = 8.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Bookmark,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Bookmark,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = bookmark.bookTitle,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.weight(1f))
+                        Text(
+                            text = dateFormat.format(bookmark.bookmark.createTime),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     Text(
-                        text = bookmark.bookTitle,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary
+                        text = bookmark.bookmark.previewText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
                     )
-                    Spacer(modifier = Modifier.weight(1f))
-                    Text(
-                        text = dateFormat.format(bookmark.bookmark.createTime),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                    )
+
+                    if (!bookmark.bookmark.note.isNullOrEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "笔记: ${bookmark.bookmark.note}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                                .padding(8.dp)
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Text(
-                    text = bookmark.bookmark.previewText,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                if (!bookmark.bookmark.note.isNullOrEmpty()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "笔记: ${bookmark.bookmark.note}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(
-                                color = MaterialTheme.colorScheme.surfaceVariant,
-                                shape = RoundedCornerShape(8.dp)
-                            )
-                            .padding(8.dp)
-                    )
-                }
+                SwipeDeleteHintArrow(visible = offsetPx > -8f)
             }
         }
+    }
+}
+
+/** 列表项右侧「《」向左轻移 + 呼吸透明度，引导左滑删除。 */
+@Composable
+private fun SwipeDeleteHintArrow(visible: Boolean) {
+    val hintWidth = 28.dp
+    if (!visible) {
+        Spacer(modifier = Modifier.width(hintWidth))
+        return
+    }
+    val infiniteTransition = rememberInfiniteTransition(label = "swipeDeleteHint")
+    val shiftX by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = -5f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 900, easing = EaseInOutSine),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "swipeDeleteHintShift",
+    )
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 0.28f,
+        targetValue = 0.7f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 900, easing = EaseInOutSine),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "swipeDeleteHintAlpha",
+    )
+    Box(
+        modifier = Modifier
+            .width(hintWidth)
+            .padding(end = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "《",
+            modifier = Modifier.graphicsLayer {
+                translationX = shiftX
+                this.alpha = alpha
+            },
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+        )
     }
 }
 
