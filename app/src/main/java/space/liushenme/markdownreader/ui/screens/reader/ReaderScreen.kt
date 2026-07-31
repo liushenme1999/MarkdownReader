@@ -406,10 +406,13 @@ fun ReaderScreen(
         }
 
     val onRemoveHighlightClick: (Long) -> Unit = { highlightId ->
-        (readerTextView.value as? SafeReaderTextView)?.highlightStylePickerShowing = false
+        val tv = readerTextView.value as? SafeReaderTextView
+        tv?.highlightStylePickerShowing = false
         pendingHighlightSelection = null
-        highlights.find { it.id == highlightId }?.let { viewModel.deleteHighlight(it) }
-        (readerTextView.value as? SafeReaderTextView)?.refreshHighlightMenuTitle()
+        if (highlightId > 0L) {
+            highlights.find { it.id == highlightId }?.let { viewModel.deleteHighlight(it) }
+        }
+        tv?.bindSelectionHighlightId(null, 0, 0)
     }
 
     fun currentTopGlobalChar(): Int? {
@@ -1690,8 +1693,15 @@ fun ReaderScreen(
                 draftingHighlightId = id
                 if (id != null) {
                     viewModel.updateHighlightAppearance(id, draftColor, draftStyle)
+                    // 绑定选区 ↔ 划线 id，ActionMode「划线」立刻变为「取消划线」
+                    tv?.bindSelectionHighlightId(
+                        highlightId = id,
+                        displayedStart = pending.displayedStart,
+                        displayedEnd = pending.displayedEnd,
+                    )
+                } else {
+                    tv?.clearPendingHighlightMenuIfUnbound()
                 }
-                tv?.refreshHighlightMenuTitle()
             }
         }
 
@@ -1722,7 +1732,9 @@ fun ReaderScreen(
                 }
             },
             onDismiss = {
-                (readerTextView.value as? SafeReaderTextView)?.highlightStylePickerShowing = false
+                val tv = readerTextView.value as? SafeReaderTextView
+                tv?.highlightStylePickerShowing = false
+                tv?.clearPendingHighlightMenuIfUnbound()
                 pendingHighlightSelection = null
             },
         )
@@ -1951,11 +1963,14 @@ internal fun findHighlightIdForDisplayedSelection(
     pageLocalHighlights.firstOrNull {
         it.highlightedText == text && it.startPosition == displayedStart
     }?.id?.let { return it }
-    return pageLocalHighlights.firstOrNull { h ->
+    pageLocalHighlights.firstOrNull { h ->
         h.highlightedText == text &&
             displayedStart < h.endPosition &&
             displayedEnd > h.startPosition &&
             kotlin.math.abs(h.startPosition - displayedStart) <= 2
-    }?.id
+    }?.id?.let { return it }
+    // Markdown 展示坐标与源码窗坐标不一致时：同文唯一匹配仍可定位「取消划线」
+    val byText = pageLocalHighlights.filter { it.highlightedText == text }
+    return byText.singleOrNull()?.id
 }
 

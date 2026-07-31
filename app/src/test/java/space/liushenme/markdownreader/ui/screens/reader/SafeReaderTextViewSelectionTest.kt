@@ -230,6 +230,7 @@ class SafeReaderTextViewSelectionTest {
         textView.resolveExistingHighlightId = { _, _, _ -> 42L }
         val menu = PopupMenu(textView.context, textView).menu
         textView.populateSelectionMenuForTest(menu)
+        assertEquals(SafeReaderTextView.MENU_ID_CANCEL_HIGHLIGHT, menu.getItem(1).itemId)
         assertEquals("取消划线", menu.getItem(1).title.toString())
     }
 
@@ -239,8 +240,40 @@ class SafeReaderTextViewSelectionTest {
         var removedId: Long? = null
         textView.resolveExistingHighlightId = { _, _, _ -> 7L }
         textView.onRemoveHighlightClick = { removedId = it }
-        assertTrue(textView.performSelectionMenuActionForTest(SafeReaderTextView.MENU_ID_HIGHLIGHT))
+        assertTrue(
+            textView.performSelectionMenuActionForTest(SafeReaderTextView.MENU_ID_CANCEL_HIGHLIGHT),
+        )
         assertEquals(7L, removedId)
         assertTrue(textView.isInTextSelection())
+        // Flow 未更新前 resolve 仍可能返回旧 id，菜单也应立刻回到「划线」
+        val menu = PopupMenu(textView.context, textView).menu
+        textView.populateSelectionMenuForTest(menu)
+        assertEquals(SafeReaderTextView.MENU_ID_HIGHLIGHT, menu.getItem(1).itemId)
+        assertEquals("划线", menu.getItem(1).title.toString())
+    }
+
+    @Test
+    fun bindSelectionHighlightId_switchesMenuToCancel() {
+        activateSelection("选中")
+        textView.resolveExistingHighlightId = { _, _, _ -> null }
+        val menu = PopupMenu(textView.context, textView).menu
+        textView.populateSelectionMenuForTest(menu)
+        assertEquals(SafeReaderTextView.MENU_ID_HIGHLIGHT, menu.getItem(1).itemId)
+        assertEquals("划线", menu.getItem(1).title.toString())
+
+        textView.bindSelectionHighlightId(11L, 2, 4)
+        textView.populateSelectionMenuForTest(menu)
+        assertEquals(SafeReaderTextView.MENU_ID_CANCEL_HIGHLIGHT, menu.getItem(1).itemId)
+        assertEquals("取消划线", menu.getItem(1).title.toString())
+
+        var removedId: Long? = null
+        textView.onRemoveHighlightClick = { removedId = it }
+        assertTrue(
+            textView.performSelectionMenuActionForTest(SafeReaderTextView.MENU_ID_CANCEL_HIGHLIGHT),
+        )
+        assertEquals(11L, removedId)
+        textView.populateSelectionMenuForTest(menu)
+        assertEquals(SafeReaderTextView.MENU_ID_HIGHLIGHT, menu.getItem(1).itemId)
+        assertEquals("划线", menu.getItem(1).title.toString())
     }
 }

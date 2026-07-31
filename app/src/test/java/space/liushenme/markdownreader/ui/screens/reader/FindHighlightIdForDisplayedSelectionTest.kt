@@ -40,4 +40,22 @@ class FindHighlightIdForDisplayedSelectionTest {
         )
         assertNull(findHighlightIdForDisplayedSelection(list, "选中", 2, 4))
     }
+
+    @Test
+    fun findsUniqueTextMatchWhenPositionsDiffer() {
+        val list = listOf(
+            HighlightEntity(
+                id = 9L,
+                bookId = 1L,
+                startPosition = 120,
+                endPosition = 124,
+                highlightedText = "选中",
+                createTime = Date(),
+            ),
+        )
+        assertEquals(
+            9L,
+            findHighlightIdForDisplayedSelection(list, "选中", 2, 4),
+        )
+    }
 }

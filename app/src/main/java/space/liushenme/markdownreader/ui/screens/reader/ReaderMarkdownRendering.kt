@@ -466,10 +466,8 @@ internal fun MarkdownReaderView(
         },
         update = { textView ->
             textView.allowVerticalScroll = allowVerticalScroll
-            (textView as? SafeReaderTextView)?.apply {
-                renderPlainTextBody = renderPlainText
-                this.onOpenPositionReady = { latestOpenPositionReady() }
-            }
+            textView.renderPlainTextBody = renderPlainText
+            textView.onOpenPositionReady = { latestOpenPositionReady() }
             textView.onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange
             textView.onHighlightMenuClick = onHighlightMenuClick
             textView.resolveExistingHighlightId = resolveExistingHighlightId
@@ -800,6 +798,23 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     /** 选区菜单点「取消划线」。 */
     var onRemoveHighlightClick: ((highlightId: Long) -> Unit)? = null
     /**
+     * 本次选区刚创建的划线 id。Markdown 展示坐标与源码坐标不一致时，
+     * [resolveExistingHighlightId] 可能暂时匹配不到，靠此把菜单切成「取消划线」。
+     */
+    var selectionBoundHighlightId: Long? = null
+        private set
+    private var selectionBoundStart: Int = -1
+    private var selectionBoundEnd: Int = -1
+    /** 已点「划线」、落库尚未完成：菜单先显示「取消划线」。 */
+    private var selectionHighlightPending: Boolean = false
+    /** 落库完成前用户已点「取消划线」：收到 id 后立刻删掉。 */
+    private var selectionHighlightAddCancelled: Boolean = false
+    /**
+     * 本地刚点「取消划线」：删除尚未从 Flow 反映时 [resolveExistingHighlightId] 仍可能命中，
+     * 此期间菜单强制显示「划线」，直到选区变化或再次点划线。
+     */
+    private var suppressCancelTitleAfterLocalRemove: Boolean = false
+    /**
      * 划线样式浮窗是否正在显示。为 true 时 ActionMode 被系统销毁不连带清选区，
      * 并尝试重新拉起浮动菜单（避免可聚焦窗口/ invalidate 导致「复制/划线」消失）。
      */
@@ -866,6 +881,15 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     private var pendingOutsideTapDismiss = false
     /** 正在主动清理选区 UI，避免 ActionMode.onDestroy 递归再 dismiss。 */
     private var clearingSelectionUi = false
+    /**
+     * 正在为刷新「划线/取消划线」文案而重建 Floating ActionMode。
+     * MIUI FloatingToolbar 按 itemId 缓存按钮文字，invalidate/setTitle 都不会改文案，必须 finish 再拉起。
+     */
+    private var recreatingSelectionActionMode = false
+    /** 已应用到浮动菜单的文案状态；同状态不再 finish/start，避免连闪两次。 */
+    private var appliedMenuShowsCancel: Boolean? = null
+    /** [refreshHighlightMenuTitle] 已 post，合并多次调用为一次重建。 */
+    private var menuRefreshQueued = false
     /** 划词选区是否已递增 suppressScrollRefCount（配对递减）。 */
     private var selectionIncrementedSuppress = false
     /** DOWN 时命中链接，UP 时优先跳转而非进入 Editor 选词。 */
@@ -874,7 +898,11 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     private val linkMovement = ReaderLinkMovementMethod.getInstance()
     private val selectionMovement = ArrowKeyMovementMethod.getInstance()
 
-    private val selectionActionModeCallback = object : ActionMode.Callback {
+    /**
+     * 必须用 [ActionMode.Callback2]：手动 [startActionMode] 重建菜单时，
+     * 若无 [ActionMode.Callback2.onGetContentRect]，浮动条会落到屏幕顶部。
+     */
+    private val selectionActionModeCallback = object : ActionMode.Callback2() {
         override fun onCreateActionMode(mode: ActionMode?, menu: Menu?): Boolean {
             readerSelectionActionMode = mode
             populateSelectionMenu(menu)
@@ -889,13 +917,15 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         override fun onActionItemClicked(mode: ActionMode?, item: MenuItem?): Boolean {
             return when (item?.itemId) {
                 MENU_ID_COPY -> copySelectionToClipboard()
-                MENU_ID_HIGHLIGHT -> handleHighlightMenuClick(mode)
+                MENU_ID_HIGHLIGHT, MENU_ID_CANCEL_HIGHLIGHT -> handleHighlightMenuClick(mode)
                 else -> false
             }
         }
 
         override fun onDestroyActionMode(mode: ActionMode?) {
             if (readerSelectionActionMode == mode) readerSelectionActionMode = null
+            // 主动重建菜单：保留选区，由 recreate 的 post 重新拉起 ActionMode。
+            if (recreatingSelectionActionMode) return
             // 样式浮窗期间系统可能因焦点/ invalidate 拆掉 ActionMode：保留选区并尝试恢复菜单。
             if (highlightStylePickerShowing && selectionActive && !clearingSelectionUi) {
                 post {
@@ -917,11 +947,32 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                     if (!clearingSelectionUi &&
                         selectionActive &&
                         readerSelectionActionMode == null &&
-                        !highlightStylePickerShowing
+                        !highlightStylePickerShowing &&
+                        !recreatingSelectionActionMode
                     ) {
                         dismissSelection()
                     }
                 }
+            }
+        }
+
+        override fun onGetContentRect(mode: ActionMode?, view: View?, outRect: Rect) {
+            val range = currentSelectionRange()
+            val local = if (range != null) {
+                selectionContentRectInView(range.first, range.last + 1)
+            } else {
+                null
+            }
+            if (local != null) {
+                outRect.set(local)
+            } else {
+                // 避免空矩形被框架当成 (0,0) 贴顶
+                outRect.set(
+                    paddingLeft,
+                    paddingTop,
+                    (width - paddingRight).coerceAtLeast(paddingLeft + 1),
+                    paddingTop + 1,
+                )
             }
         }
     }
@@ -945,13 +996,20 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         menu ?: return
         menu.clear()
         menu.add(Menu.NONE, MENU_ID_COPY, 0, "复制")
-        val existingId = currentSelectionExistingHighlightId()
-        menu.add(
-            Menu.NONE,
-            MENU_ID_HIGHLIGHT,
-            1,
-            if (existingId != null) "取消划线" else "划线",
-        )
+        // 划线 / 取消划线必须用不同 itemId：MIUI FloatingToolbar 按 id 缓存芯片文案，
+        // 同 id 只改 title 时界面仍显示「划线」。
+        val showCancel = shouldShowCancelHighlightTitle()
+        if (showCancel) {
+            menu.add(Menu.NONE, MENU_ID_CANCEL_HIGHLIGHT, 1, "取消划线")
+        } else {
+            menu.add(Menu.NONE, MENU_ID_HIGHLIGHT, 1, "划线")
+        }
+        appliedMenuShowsCancel = showCancel
+    }
+
+    private fun shouldShowCancelHighlightTitle(): Boolean {
+        if (suppressCancelTitleAfterLocalRemove) return false
+        return selectionHighlightPending || currentSelectionExistingHighlightId() != null
     }
 
     private fun currentSelectedText(): String {
@@ -973,9 +1031,73 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     private fun currentSelectionExistingHighlightId(): Long? {
         val range = currentSelectionRange() ?: return null
+        val start = range.first
+        val endExclusive = range.last + 1
+        val boundId = selectionBoundHighlightId
+        if (boundId != null &&
+            selectionBoundStart >= 0 &&
+            selectionBoundEnd > selectionBoundStart &&
+            kotlin.math.abs(start - selectionBoundStart) <= 2 &&
+            kotlin.math.abs(endExclusive - selectionBoundEnd) <= 2
+        ) {
+            return boundId
+        }
         val selected = currentSelectedText()
         if (selected.isBlank()) return null
-        return resolveExistingHighlightId?.invoke(selected, range.first, range.last + 1)
+        return resolveExistingHighlightId?.invoke(selected, start, endExclusive)
+    }
+
+    /** 划线落库成功后绑定到当前选区，并把菜单标题改为「取消划线」。 */
+    fun bindSelectionHighlightId(highlightId: Long?, displayedStart: Int, displayedEnd: Int) {
+        if (highlightId == null || highlightId <= 0L || displayedEnd <= displayedStart) {
+            clearSelectionBoundHighlight()
+            refreshHighlightMenuTitle()
+            return
+        }
+        if (selectionHighlightAddCancelled) {
+            selectionHighlightAddCancelled = false
+            clearSelectionBoundHighlight()
+            onRemoveHighlightClick?.invoke(highlightId)
+            refreshHighlightMenuTitle()
+            return
+        }
+        // 点「划线」时已因 pending 排队切到「取消划线」；落库再 refresh 会二次 finish/start 闪一下
+        val menuRefreshAlreadyInFlight =
+            selectionHighlightPending ||
+                menuRefreshQueued ||
+                recreatingSelectionActionMode ||
+                appliedMenuShowsCancel == true
+        selectionHighlightPending = false
+        selectionBoundHighlightId = highlightId
+        selectionBoundStart = displayedStart
+        selectionBoundEnd = displayedEnd
+        if (!menuRefreshAlreadyInFlight) {
+            refreshHighlightMenuTitle()
+        }
+    }
+
+    private fun clearSelectionBoundHighlight() {
+        selectionBoundHighlightId = null
+        selectionBoundStart = -1
+        selectionBoundEnd = -1
+        selectionHighlightPending = false
+    }
+
+    /**
+     * 样式浮窗关闭且尚未落库时调用：取消 pending，菜单恢复「划线」。
+     * 若已 [bindSelectionHighlightId]，则保持「取消划线」。
+     */
+    fun clearPendingHighlightMenuIfUnbound() {
+        if (selectionBoundHighlightId != null) {
+            selectionHighlightPending = false
+            return
+        }
+        if (!selectionHighlightPending && !selectionHighlightAddCancelled) return
+        selectionHighlightPending = false
+        selectionBoundStart = -1
+        selectionBoundEnd = -1
+        // 保留 selectionHighlightAddCancelled，等 bind 时删掉刚写入的划线
+        refreshHighlightMenuTitle()
     }
 
     /** 复制选区到剪贴板并结束选区。 */
@@ -998,10 +1120,24 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         val range = currentSelectionRange() ?: return false
         val selected = currentSelectedText()
         if (selected.isBlank()) return false
-        val existingId = resolveExistingHighlightId?.invoke(selected, range.first, range.last + 1)
-        if (existingId != null) {
-            onRemoveHighlightClick?.invoke(existingId)
-            refreshHighlightMenuTitle()
+        val existingId = currentSelectionExistingHighlightId()
+        if (existingId != null || selectionHighlightPending) {
+            // 先压住「取消划线」文案，再删库：否则 Flow 未更新时 resolve 仍命中，菜单切不回去
+            suppressCancelTitleAfterLocalRemove = true
+            selectionHighlightPending = false
+            if (existingId == null) {
+                selectionHighlightAddCancelled = true
+            }
+            clearSelectionBoundHighlight()
+            // 立刻清掉选区上的装饰，避免等 Flow 重组前仍显示划线
+            clearReaderHighlightSpansAtRange(this, range.first, range.last + 1)
+            if (existingId != null) {
+                onRemoveHighlightClick?.invoke(existingId)
+            } else {
+                onRemoveHighlightClick?.invoke(-1L)
+            }
+            // 强制重建为「划线」（忽略 applied 同态短路：取消后必切）
+            forceRefreshHighlightMenuTitle()
             return true
         }
         return requestHighlightFromSelection()
@@ -1014,41 +1150,130 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         if (selected.isBlank()) return false
         val bounds = selectionBoundsInWindow(range.first, range.last + 1) ?: return false
         highlightStylePickerShowing = true
+        selectionHighlightAddCancelled = false
+        suppressCancelTitleAfterLocalRemove = false
+        selectionHighlightPending = true
+        selectionBoundStart = range.first
+        selectionBoundEnd = range.last + 1
+        // 先切成「取消划线」，无需等 Room 回调（MIUI 靠 invalidate 刷新文案）
+        refreshHighlightMenuTitle()
         onHighlightMenuClick?.invoke(selected, range.first, range.last + 1, bounds)
         return true
     }
 
     /**
-     * 仅改菜单标题，避免 [ActionMode.invalidate] 在 MIUI 上重建浮动条导致选区菜单消失。
+     * 刷新选区浮动菜单「划线/取消划线」文案。
+     * HyperOS/MIUI 的 FloatingToolbar 会缓存按钮，[ActionMode.invalidate] 与 setTitle 均无效，
+     * 需 finish 后按当前状态重新 [startActionMode]（itemId 也已区分）。
+     * 同文案状态会跳过；多次调用合并为一次重建，避免连闪。
      */
     fun refreshHighlightMenuTitle() {
-        val menu = readerSelectionActionMode?.menu ?: return
-        val item = menu.findItem(MENU_ID_HIGHLIGHT) ?: return
-        val existingId = currentSelectionExistingHighlightId()
-        item.title = if (existingId != null) "取消划线" else "划线"
+        queueHighlightMenuRefresh(force = false)
     }
 
-    /** @deprecated 使用 [refreshHighlightMenuTitle]，避免 MIUI invalidate 拆掉浮动菜单。 */
+    /** 取消划线后必须切回「划线」，即使 applied 状态尚未同步也重建。 */
+    private fun forceRefreshHighlightMenuTitle() {
+        appliedMenuShowsCancel = null
+        queueHighlightMenuRefresh(force = true)
+    }
+
+    private fun queueHighlightMenuRefresh(force: Boolean) {
+        val wantCancel = shouldShowCancelHighlightTitle()
+        if (!force &&
+            appliedMenuShowsCancel == wantCancel &&
+            readerSelectionActionMode != null &&
+            !recreatingSelectionActionMode
+        ) {
+            return
+        }
+        if (menuRefreshQueued) {
+            if (force) {
+                // 已排队的刷新在 post 里会再读 shouldShow；强制时清掉 applied 即可
+                appliedMenuShowsCancel = null
+            }
+            return
+        }
+        menuRefreshQueued = true
+        // 勿在 onActionItemClicked 同步 finish，等点击回调返回后再重建
+        post {
+            menuRefreshQueued = false
+            val showCancel = shouldShowCancelHighlightTitle()
+            if (!force &&
+                appliedMenuShowsCancel == showCancel &&
+                readerSelectionActionMode != null &&
+                !recreatingSelectionActionMode
+            ) {
+                return@post
+            }
+            recreateSelectionActionModeForMenuRefresh()
+        }
+    }
+
+    /** @deprecated 使用 [refreshHighlightMenuTitle]。 */
     fun invalidateSelectionActionModeMenu() {
         refreshHighlightMenuTitle()
+    }
+
+    private fun recreateSelectionActionModeForMenuRefresh() {
+        if (!selectionActive || !hasSelectionRange()) return
+        val body = text
+        val selStart = if (body != null) Selection.getSelectionStart(body) else -1
+        val selEnd = if (body != null) Selection.getSelectionEnd(body) else -1
+        val mode = readerSelectionActionMode
+        if (mode == null) {
+            restoreSelectionActionMode()
+            return
+        }
+        recreatingSelectionActionMode = true
+        try {
+            mode.finish()
+        } catch (_: Throwable) {
+            recreatingSelectionActionMode = false
+            try {
+                mode.menu?.let { populateSelectionMenu(it) }
+                mode.invalidate()
+            } catch (_: Throwable) {
+                // ignore
+            }
+            return
+        }
+        post {
+            recreatingSelectionActionMode = false
+            if (body is android.text.Spannable &&
+                selStart >= 0 &&
+                selEnd > selStart &&
+                selEnd <= body.length
+            ) {
+                val curStart = Selection.getSelectionStart(body)
+                val curEnd = Selection.getSelectionEnd(body)
+                if (curStart < 0 || curStart == curEnd) {
+                    Selection.setSelection(body, selStart, selEnd)
+                }
+            }
+            if (selectionActive && hasSelectionRange() && readerSelectionActionMode == null) {
+                restoreSelectionActionMode()
+            }
+        }
     }
 
     private fun restoreSelectionActionMode() {
         if (readerSelectionActionMode != null) return
         if (!hasSelectionRange()) return
         try {
-            startActionMode(selectionActionModeCallback, ActionMode.TYPE_FLOATING)
+            val mode = startActionMode(selectionActionModeCallback, ActionMode.TYPE_FLOATING)
+            // 拉起后立刻按选区校正锚点（部分 ROM 首帧会用默认 0,0）
+            mode?.invalidateContentRect()
         } catch (_: Throwable) {
             try {
-                startActionMode(selectionActionModeCallback)
+                startActionMode(selectionActionModeCallback)?.invalidateContentRect()
             } catch (_: Throwable) {
                 // 部分机型无法手动拉起，至少保留选区高亮与句柄
             }
         }
     }
 
-    /** 选区在窗口坐标系中的包围盒（用于划线浮窗定位）。 */
-    internal fun selectionBoundsInWindow(selStart: Int, selEnd: Int): android.graphics.Rect? {
+    /** 选区在 TextView 坐标系中的包围盒（Floating ActionMode 锚点）。 */
+    private fun selectionContentRectInView(selStart: Int, selEnd: Int): android.graphics.Rect? {
         val layout = layout ?: return null
         val len = text?.length ?: return null
         if (len == 0) return null
@@ -1057,22 +1282,39 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         if (start >= end) return null
         val startLine = layout.getLineForOffset(start)
         val endLine = layout.getLineForOffset(end)
-        val loc = IntArray(2)
-        getLocationInWindow(loc)
-        val top = loc[1] + totalPaddingTop + layout.getLineTop(startLine) - scrollY
-        val bottom = loc[1] + totalPaddingTop + layout.getLineBottom(endLine) - scrollY
+        // 与 Editor 一致：含 padding，并扣除 scroll，相对本 View
+        val top = totalPaddingTop + layout.getLineTop(startLine) - scrollY
+        val bottom = totalPaddingTop + layout.getLineBottom(endLine) - scrollY
         val left: Int
         val right: Int
         if (startLine == endLine) {
             val x0 = layout.getPrimaryHorizontal(start)
             val x1 = layout.getPrimaryHorizontal(end)
-            left = loc[0] + totalPaddingLeft + minOf(x0, x1).toInt() - scrollX
-            right = loc[0] + totalPaddingLeft + maxOf(x0, x1).toInt() - scrollX
+            left = totalPaddingLeft + minOf(x0, x1).toInt() - scrollX
+            right = totalPaddingLeft + maxOf(x0, x1).toInt() - scrollX
         } else {
-            left = loc[0] + totalPaddingLeft
-            right = loc[0] + width - totalPaddingRight
+            left = totalPaddingLeft
+            right = width - totalPaddingRight
         }
-        return android.graphics.Rect(left, top, right.coerceAtLeast(left + 1), bottom.coerceAtLeast(top + 1))
+        return android.graphics.Rect(
+            left,
+            top,
+            right.coerceAtLeast(left + 1),
+            bottom.coerceAtLeast(top + 1),
+        )
+    }
+
+    /** 选区在窗口坐标系中的包围盒（用于划线浮窗定位）。 */
+    internal fun selectionBoundsInWindow(selStart: Int, selEnd: Int): android.graphics.Rect? {
+        val local = selectionContentRectInView(selStart, selEnd) ?: return null
+        val loc = IntArray(2)
+        getLocationInWindow(loc)
+        return android.graphics.Rect(
+            local.left + loc[0],
+            local.top + loc[1],
+            local.right + loc[0],
+            local.bottom + loc[1],
+        )
     }
 
     /** 单元测试：填充选区菜单项。 */
@@ -1084,7 +1326,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     internal fun performSelectionMenuActionForTest(itemId: Int): Boolean {
         return when (itemId) {
             MENU_ID_COPY -> copySelectionToClipboard()
-            MENU_ID_HIGHLIGHT -> handleHighlightMenuClick(readerSelectionActionMode)
+            MENU_ID_HIGHLIGHT, MENU_ID_CANCEL_HIGHLIGHT ->
+                handleHighlightMenuClick(readerSelectionActionMode)
             else -> false
         }
     }
@@ -1246,6 +1489,12 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             savedSelStart = -1
             savedSelEnd = -1
             pendingOutsideTapDismiss = false
+            clearSelectionBoundHighlight()
+            appliedMenuShowsCancel = null
+            menuRefreshQueued = false
+            recreatingSelectionActionMode = false
+            selectionHighlightAddCancelled = false
+            suppressCancelTitleAfterLocalRemove = false
             if (selectionIncrementedSuppress) {
                 suppressScrollRefCount = (suppressScrollRefCount - 1).coerceAtLeast(0)
                 selectionIncrementedSuppress = false
@@ -1600,8 +1849,16 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     override fun onSelectionChanged(selStart: Int, selEnd: Int) {
         super.onSelectionChanged(selStart, selEnd)
         if (selStart >= 0 && selEnd >= 0 && selStart != selEnd) {
-            savedSelStart = minOf(selStart, selEnd)
-            savedSelEnd = maxOf(selStart, selEnd)
+            val newStart = minOf(selStart, selEnd)
+            val newEnd = maxOf(selStart, selEnd)
+            // 拖动句柄改变选区后，允许重新按真实划线状态显示「取消划线」
+            if (suppressCancelTitleAfterLocalRemove &&
+                (newStart != savedSelStart || newEnd != savedSelEnd)
+            ) {
+                suppressCancelTitleAfterLocalRemove = false
+            }
+            savedSelStart = newStart
+            savedSelEnd = newEnd
             ensureSelectionInteractionMode()
             if (!selectionActive) {
                 setSelectionActive(true)
@@ -1616,6 +1873,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     companion object {
         internal const val MENU_ID_COPY = 0x4D520001
         internal const val MENU_ID_HIGHLIGHT = 0x4D520002
+        /** 与 [MENU_ID_HIGHLIGHT] 分离，避免 MIUI 浮动条按 id 缓存「划线」文案。 */
+        internal const val MENU_ID_CANCEL_HIGHLIGHT = 0x4D520003
     }
 }
 
@@ -1702,6 +1961,15 @@ internal fun clearReaderHighlightSpans(textView: TextView) {
     if (text !is Spannable || text.isEmpty()) return
     text.getSpans(0, text.length, HighlightBackgroundSpan::class.java).forEach { text.removeSpan(it) }
     text.getSpans(0, text.length, HighlightUnderlineSpan::class.java).forEach { text.removeSpan(it) }
+    textView.invalidate()
+}
+
+/** 清除指定展示区间上的划线装饰（点「取消划线」时立刻去掉预览 span）。 */
+internal fun clearReaderHighlightSpansAtRange(textView: TextView, start: Int, end: Int) {
+    val text = ensureReaderSpannable(textView) ?: return
+    if (start < 0 || end > text.length || start >= end) return
+    text.getSpans(start, end, HighlightBackgroundSpan::class.java).forEach { text.removeSpan(it) }
+    text.getSpans(start, end, HighlightUnderlineSpan::class.java).forEach { text.removeSpan(it) }
     textView.invalidate()
 }
 
