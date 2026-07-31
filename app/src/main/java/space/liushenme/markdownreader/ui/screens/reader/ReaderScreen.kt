@@ -1760,6 +1760,7 @@ fun ReaderScreen(
         TocSheet(
             entries = tocEntries,
             emptyTocMessage = emptyTocMessage,
+            currentEntry = chapterEntry,
             onEntryClick = { entry ->
                 if (readerContent.isNotEmpty()) {
                     val contentLen = readerContent.length

@@ -62,12 +62,27 @@ internal fun drawReaderHighlightDecorations(
     val text = textView.text
     if (text !is Spanned || text.isEmpty()) return
 
+    val padL = textView.compoundPaddingLeft
+    val padT = textView.extendedPaddingTop
+    val padR = textView.compoundPaddingRight
+    val padB = textView.extendedPaddingBottom
+    val viewW = textView.width
+    val viewH = textView.height
+    if (viewW - padR <= padL || viewH - padB <= padT) return
+
     canvas.save()
-    // 对齐 TextView.onDraw：compoundPaddingLeft + extendedPaddingTop（gravity=TOP 时无额外 voffset）
-    canvas.translate(
-        textView.compoundPaddingLeft.toFloat(),
-        textView.extendedPaddingTop.toFloat(),
+    // View.draw 已 translate(-scrollX,-scrollY)：可视区在 canvas 上是 scroll 偏移后的矩形。
+    // 必须带上 scroll，否则滚动后正文划线被裁光；不裁则会画出 View 顶边盖住章节条/状态栏。
+    val scrollX = textView.scrollX
+    val scrollY = textView.scrollY
+    canvas.clipRect(
+        scrollX + padL,
+        scrollY + padT,
+        scrollX + viewW - padR,
+        scrollY + viewH - padB,
     )
+    // 对齐 TextView.onDraw：compoundPaddingLeft + extendedPaddingTop（gravity=TOP 时无额外 voffset）
+    canvas.translate(padL.toFloat(), padT.toFloat())
 
     if (underText) {
         text.getSpans(0, text.length, HighlightBackgroundSpan::class.java).forEach { span ->

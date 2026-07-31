@@ -26,12 +26,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.pager.HorizontalPager
@@ -389,11 +388,23 @@ internal fun BookmarksSheet(
 internal fun TocSheet(
     entries: List<MarkdownTocEntry>,
     emptyTocMessage: String,
+    currentEntry: MarkdownTocEntry? = null,
     onEntryClick: (MarkdownTocEntry) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val tocScrollState = rememberScrollState()
+    val listState = rememberLazyListState()
+    val currentIndex = remember(entries, currentEntry) {
+        resolveTocCurrentIndex(entries, currentEntry)
+    }
+
+    LaunchedEffect(entries, currentIndex) {
+        val index = currentIndex ?: return@LaunchedEffect
+        if (index in entries.indices) {
+            // 非末尾：置顶；最后几章内容不够填满时自然停在 maxScroll，智能显示。
+            listState.scrollToItem(index)
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -418,16 +429,24 @@ internal fun TocSheet(
                 )
                 Spacer(modifier = Modifier.height(24.dp))
             } else {
-                Column(
+                val highlightBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                val highlightFg = MaterialTheme.colorScheme.primary
+                LazyColumn(
+                    state = listState,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 520.dp)
-                        .verticalScroll(tocScrollState)
+                        .heightIn(max = 520.dp),
                 ) {
-                    entries.forEachIndexed { index, entry ->
+                    itemsIndexed(
+                        items = entries,
+                        key = { index, entry -> "${entry.sourceOffset}_${entry.level}_$index" },
+                    ) { index, entry ->
+                        val isCurrent = index == currentIndex
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isCurrent) highlightBg else Color.Transparent)
                                 .clickable { onEntryClick(entry) }
                                 .padding(vertical = 10.dp, horizontal = 4.dp)
                                 .padding(
@@ -437,7 +456,14 @@ internal fun TocSheet(
                         ) {
                             MarkdownInlineHtmlText(
                                 text = entry.rawTitle,
-                                style = MaterialTheme.typography.bodyLarge,
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+                                ),
+                                color = if (isCurrent) {
+                                    highlightFg
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f)
@@ -455,6 +481,18 @@ internal fun TocSheet(
             Spacer(modifier = Modifier.navigationBarsPadding())
         }
     }
+}
+
+/** 在目录列表中定位当前阅读章节下标；优先 [MarkdownTocEntry.sourceOffset]，其次 rawTitle。 */
+internal fun resolveTocCurrentIndex(
+    entries: List<MarkdownTocEntry>,
+    currentEntry: MarkdownTocEntry?,
+): Int? {
+    if (currentEntry == null || entries.isEmpty()) return null
+    entries.indexOfFirst { it.sourceOffset == currentEntry.sourceOffset }
+        .takeIf { it >= 0 }
+        ?.let { return it }
+    return entries.indexOfFirst { it.rawTitle == currentEntry.rawTitle }.takeIf { it >= 0 }
 }
 
 @Composable
