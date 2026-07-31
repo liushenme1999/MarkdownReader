@@ -1,10 +1,14 @@
 package space.liushenme.markdownreader.ui.screens.reader
 
+import android.content.ClipboardManager
+import android.content.Context
 import android.text.Selection
 import android.text.SpannableString
 import android.view.MotionEvent
 import android.widget.FrameLayout
+import android.widget.PopupMenu
 import android.widget.TextView
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -170,5 +174,73 @@ class SafeReaderTextViewSelectionTest {
         }
         // Robolectric 下系统长按未必画出选区，但应完成 prep 并进入可选中状态
         assertTrue(textView.isTextSelectable)
+    }
+
+    @Test
+    fun selectionMenu_containsCopyAndHighlight() {
+        val menu = PopupMenu(textView.context, textView).menu
+        textView.populateSelectionMenuForTest(menu)
+        assertEquals(2, menu.size())
+        assertEquals(SafeReaderTextView.MENU_ID_COPY, menu.getItem(0).itemId)
+        assertEquals("复制", menu.getItem(0).title.toString())
+        assertEquals(SafeReaderTextView.MENU_ID_HIGHLIGHT, menu.getItem(1).itemId)
+        assertEquals("划线", menu.getItem(1).title.toString())
+    }
+
+    @Test
+    fun copyMenu_writesClipboardAndDismissesSelection() {
+        activateSelection("选中")
+        assertTrue(textView.performSelectionMenuActionForTest(SafeReaderTextView.MENU_ID_COPY))
+        val clipboard = textView.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        assertEquals(
+            "选中",
+            clipboard.primaryClip?.getItemAt(0)?.coerceToText(textView.context)?.toString(),
+        )
+        assertFalse(textView.isInTextSelection())
+        assertFalse(textView.hasVisibleTextSelection())
+    }
+
+    @Test
+    fun highlightMenu_invokesCallbackAndKeepsSelection() {
+        activateSelection("选中")
+        var got: String? = null
+        var gotStart = -1
+        var gotEnd = -1
+        var gotBounds: android.graphics.Rect? = null
+        textView.onHighlightMenuClick = { text, start, end, bounds ->
+            got = text
+            gotStart = start
+            gotEnd = end
+            gotBounds = android.graphics.Rect(bounds)
+        }
+        assertTrue(textView.performSelectionMenuActionForTest(SafeReaderTextView.MENU_ID_HIGHLIGHT))
+        assertEquals("选中", got)
+        assertEquals(2, gotStart)
+        assertEquals(4, gotEnd)
+        val bounds = gotBounds
+        assertTrue(bounds != null && !bounds.isEmpty)
+        // 点划线后应保留选区与系统菜单
+        assertTrue(textView.isInTextSelection())
+        assertTrue(textView.hasVisibleTextSelection())
+    }
+
+    @Test
+    fun selectionMenu_showsCancelWhenExistingHighlight() {
+        activateSelection("选中")
+        textView.resolveExistingHighlightId = { _, _, _ -> 42L }
+        val menu = PopupMenu(textView.context, textView).menu
+        textView.populateSelectionMenuForTest(menu)
+        assertEquals("取消划线", menu.getItem(1).title.toString())
+    }
+
+    @Test
+    fun cancelHighlightMenu_invokesRemoveCallback() {
+        activateSelection("选中")
+        var removedId: Long? = null
+        textView.resolveExistingHighlightId = { _, _, _ -> 7L }
+        textView.onRemoveHighlightClick = { removedId = it }
+        assertTrue(textView.performSelectionMenuActionForTest(SafeReaderTextView.MENU_ID_HIGHLIGHT))
+        assertEquals(7L, removedId)
+        assertTrue(textView.isInTextSelection())
     }
 }

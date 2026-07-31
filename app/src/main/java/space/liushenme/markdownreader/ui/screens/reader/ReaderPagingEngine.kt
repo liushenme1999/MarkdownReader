@@ -951,31 +951,54 @@ internal fun isReaderTextViewLayoutReady(
     return true
 }
 
-/** 等待 Markwon 异步渲染完成且 layout 就绪（避免在空白/旧文本上恢复滚动）。 */
+/**
+ * 等待 Markwon 异步渲染完成且 layout 就绪（避免在空白/旧文本上恢复滚动）。
+ *
+ * [expectedRenderSig] 必须与 [TAG_READER_RENDER_SIG] / `reader_markdown_render_complete` 一致，
+ * 即 [readerContentSignature]（**不含划线**）。若误传 [readerRenderSignature]，签名永远对不上，
+ * 会空等到约 maxAttempts×32ms 超时，进页遮罩长时间不揭开。
+ */
 internal suspend fun awaitReaderMarkdownRenderReady(
     tvProvider: () -> TextView?,
     expectedRenderSig: String,
     maxAttempts: Int = 200,
 ): TextView? {
-    repeat(maxAttempts) {
+    val t0 = android.os.SystemClock.uptimeMillis()
+    readerOpenDbg("awaitMarkdown enter expectLen=${expectedRenderSig.length} expectTail=${expectedRenderSig.takeLast(48)}")
+    var lastActual: Any? = "__unset__"
+    repeat(maxAttempts) { attempt ->
         val tv = tvProvider()
+        val actual = tv?.getTag(R.id.reader_markdown_render_complete)
+        if (actual != lastActual) {
+            lastActual = actual
+            readerOpenDbg(
+                "awaitMarkdown tag@${attempt} actual=${(actual as? String)?.takeLast(48)} " +
+                    "match=${actual == expectedRenderSig} layoutReady=${tv?.let { isReaderTextViewLayoutReady(it) }}",
+            )
+        }
         if (tv != null &&
-            tv.getTag(R.id.reader_markdown_render_complete) == expectedRenderSig &&
+            actual == expectedRenderSig &&
             isReaderTextViewLayoutReady(tv)
         ) {
             kotlinx.coroutines.delay(48)
             if (tv.getTag(R.id.reader_markdown_render_complete) == expectedRenderSig &&
                 isReaderTextViewLayoutReady(tv)
             ) {
+                readerOpenDbg("awaitMarkdown ready attempt=$attempt +${android.os.SystemClock.uptimeMillis() - t0}ms")
                 return tv
             }
         }
         kotlinx.coroutines.delay(32)
     }
-    return tvProvider()?.takeIf {
+    val timedOut = tvProvider()?.takeIf {
         it.getTag(R.id.reader_markdown_render_complete) == expectedRenderSig &&
             isReaderTextViewLayoutReady(it)
     }
+    readerOpenDbg(
+        "awaitMarkdown ${if (timedOut != null) "late-ready" else "TIMEOUT"} " +
+            "+${android.os.SystemClock.uptimeMillis() - t0}ms lastActual=${(lastActual as? String)?.takeLast(48)}",
+    )
+    return timedOut
 }
 
 internal suspend fun awaitReaderTextViewLayout(
@@ -1720,8 +1743,9 @@ internal fun highlightsForPageSlice(
         val s = (h.startPosition - globalStart).coerceIn(0, slice.length)
         val e = (h.endPosition - globalStart).coerceIn(0, slice.length)
         if (e <= s) return@mapNotNull null
-        val text = slice.substring(s, e)
-        h.copy(startPosition = s, endPosition = e, highlightedText = text)
+        // 保留用户选中的展示层原文，供 Markdown 渲染后匹配；勿用源码切片覆盖（含 #/` 等时会对不上）
+        val snippet = h.highlightedText.ifBlank { slice.substring(s, e) }
+        h.copy(startPosition = s, endPosition = e, highlightedText = snippet)
     }
 }
 

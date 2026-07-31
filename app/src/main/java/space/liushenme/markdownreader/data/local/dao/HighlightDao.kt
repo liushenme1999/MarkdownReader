@@ -15,6 +15,9 @@ interface HighlightDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertHighlight(highlight: HighlightEntity): Long
 
+    @Update
+    suspend fun updateHighlight(highlight: HighlightEntity)
+
     @Delete
     suspend fun deleteHighlight(highlight: HighlightEntity)
 

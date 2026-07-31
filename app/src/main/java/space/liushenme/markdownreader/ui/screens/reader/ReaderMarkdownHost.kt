@@ -114,7 +114,15 @@ internal fun ReaderPagedMarkdownHost(
     pageTextViews: MutableMap<Int, TextView>,
     renderPlainText: Boolean,
     modifier: Modifier = Modifier,
-    onTextSelected: (String) -> Unit,
+    onHighlightMenuClick: (
+        text: String,
+        displayedStart: Int,
+        displayedEnd: Int,
+        selectionBoundsInWindow: android.graphics.Rect,
+    ) -> Unit = { _, _, _, _ -> },
+    resolveExistingHighlightId: (text: String, displayedStart: Int, displayedEnd: Int) -> Long? =
+        { _, _, _ -> null },
+    onRemoveHighlightClick: (highlightId: Long) -> Unit = {},
     onReadingVerticalScroll: (Int) -> Unit,
     onSwipeDownBookmark: () -> Unit,
     onCenterTap: () -> Unit,
@@ -177,7 +185,9 @@ internal fun ReaderPagedMarkdownHost(
                 readerLineSpacingMultiplier = readerLineSpacingMultiplier,
                 highlights = pageHighlights,
                 modifier = Modifier.fillMaxSize(),
-                onTextSelected = onTextSelected,
+                onHighlightMenuClick = onHighlightMenuClick,
+                resolveExistingHighlightId = resolveExistingHighlightId,
+                onRemoveHighlightClick = onRemoveHighlightClick,
                 onScroll = { },
                 onReadingVerticalScroll = onReadingVerticalScroll,
                 onViewReady = { tv ->

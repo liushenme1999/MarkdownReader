@@ -17,6 +17,8 @@ class HighlightRepository @Inject constructor(
 
     suspend fun addHighlight(highlight: HighlightEntity): Long = highlightDao.insertHighlight(highlight)
 
+    suspend fun updateHighlight(highlight: HighlightEntity) = highlightDao.updateHighlight(highlight)
+
     suspend fun deleteHighlight(highlight: HighlightEntity) = highlightDao.deleteHighlight(highlight)
 
     suspend fun deleteHighlightsByBookId(bookId: Long) = highlightDao.deleteHighlightsByBookId(bookId)

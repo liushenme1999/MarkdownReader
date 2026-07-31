@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import space.liushenme.markdownreader.data.preferences.readerPreferencesDataStore
 import space.liushenme.markdownreader.model.AppThemeMode
+import space.liushenme.markdownreader.model.HighlightStyle
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -46,6 +47,16 @@ class ReaderSettingsRepository @Inject constructor(
         prefs[KEY_LINE_SPACING_MULT] ?: DEFAULT_LINE_SPACING_MULT
     }
 
+    /** 上次选用的划线颜色 ARGB；缺省为默认黄。 */
+    val lastHighlightColorArgb: Flow<Int> = dataStore.data.map { prefs ->
+        prefs[KEY_LAST_HIGHLIGHT_COLOR] ?: DEFAULT_HIGHLIGHT_COLOR_ARGB
+    }
+
+    /** 上次选用的划线样式；缺省为背景色。 */
+    val lastHighlightStyle: Flow<HighlightStyle> = dataStore.data.map { prefs ->
+        HighlightStyle.fromStorageKey(prefs[KEY_LAST_HIGHLIGHT_STYLE])
+    }
+
     suspend fun setPageTurnMode(mode: ReaderPageTurnMode) {
         dataStore.edit { prefs ->
             prefs[KEY_PAGE_TURN_MODE] = mode.name
@@ -82,10 +93,18 @@ class ReaderSettingsRepository @Inject constructor(
         }
     }
 
+    suspend fun setLastHighlightPreference(colorArgb: Int, style: HighlightStyle) {
+        dataStore.edit { prefs ->
+            prefs[KEY_LAST_HIGHLIGHT_COLOR] = colorArgb
+            prefs[KEY_LAST_HIGHLIGHT_STYLE] = style.storageKey
+        }
+    }
+
     companion object {
         const val DEFAULT_FONT_SIZE = 16
         const val DEFAULT_PADDING_DP = 32
         const val DEFAULT_LINE_SPACING_MULT = 1.5f
+        const val DEFAULT_HIGHLIGHT_COLOR_ARGB = 0xFFFFFF00.toInt()
 
         private val KEY_PAGE_TURN_MODE = stringPreferencesKey("reader_page_turn_mode")
         private val KEY_APP_THEME_MODE = stringPreferencesKey("app_theme_mode")
@@ -96,6 +115,8 @@ class ReaderSettingsRepository @Inject constructor(
         private val KEY_FONT_SIZE = intPreferencesKey("reader_font_size")
         private val KEY_READER_PADDING_DP = intPreferencesKey("reader_reader_padding_dp")
         private val KEY_LINE_SPACING_MULT = floatPreferencesKey("reader_line_spacing_multiplier")
+        private val KEY_LAST_HIGHLIGHT_COLOR = intPreferencesKey("reader_last_highlight_color")
+        private val KEY_LAST_HIGHLIGHT_STYLE = stringPreferencesKey("reader_last_highlight_style")
 
         private fun themeToStoredName(theme: ReadingTheme): String = when (theme) {
             ReadingTheme.Paper -> "Paper"

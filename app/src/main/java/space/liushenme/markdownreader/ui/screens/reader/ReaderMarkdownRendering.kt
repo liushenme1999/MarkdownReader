@@ -1,6 +1,8 @@
 package space.liushenme.markdownreader.ui.screens.reader
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.text.Selection
 import android.text.Spannable
@@ -8,6 +10,7 @@ import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.ClickableSpan
 import android.text.style.BackgroundColorSpan
+import android.graphics.Canvas
 import android.graphics.Rect
 import android.os.Build
 import android.view.ActionMode
@@ -91,7 +94,9 @@ import space.liushenme.markdownreader.ui.theme.MarkdownReaderTheme
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
 import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.markdown.DiagramImageLoader
+import space.liushenme.markdownreader.markdown.MarkdownAnchorIndex
 import space.liushenme.markdownreader.markdown.NetworkImageCache
+import space.liushenme.markdownreader.markdown.PreparedMarkdown
 import space.liushenme.markdownreader.markdown.ReaderMarkwonFactory
 import space.liushenme.markdownreader.markdown.ReaderTableSpacing
 import java.io.File
@@ -127,15 +132,61 @@ internal val markwonRenderLock = Any()
 /** 曾用于主线程同步渲染；现一律走 [readerMarkwonRenderExecutor] 以避免 HtmlPlugin 并发崩溃。 */
 internal const val MARKWON_BACKGROUND_RENDER_THRESHOLD = 4000
 
+internal fun readerContentSignature(
+    content: String,
+    renderPlainText: Boolean,
+    themeName: String,
+    fontSize: Int,
+): String = "${renderPlainText}_${content.length}_${content.hashCode()}_${themeName}_$fontSize"
+
+internal fun readerHighlightSignature(
+    highlights: List<HighlightEntity>,
+): String = highlights.joinToString("|") {
+    "${it.id}_${it.startPosition}_${it.endPosition}_${it.color}_${it.style}"
+}
+
+/** 兼容旧调用：内容签名 + 划线签名。 */
 internal fun readerRenderSignature(
     content: String,
     renderPlainText: Boolean,
     themeName: String,
     fontSize: Int,
     highlights: List<HighlightEntity>,
-): String {
-    val hlKey = highlights.joinToString("|") { "${it.id}_${it.startPosition}_${it.endPosition}" }
-    return "${renderPlainText}_${content.length}_${content.hashCode()}_${themeName}_${fontSize}_$hlKey"
+): String = "${readerContentSignature(content, renderPlainText, themeName, fontSize)}|${readerHighlightSignature(highlights)}"
+
+/** 把最新划线状态挂到 TextView，供异步 Markdown/纯文本渲染完成时读取（避免闭包捕获空列表）。 */
+internal fun syncReaderPendingHighlights(
+    textView: TextView,
+    highlights: List<HighlightEntity>,
+    highlightColorArgb: Int,
+    sourceContentLength: Int,
+) {
+    val safe = textView as? SafeReaderTextView ?: return
+    safe.pendingHighlights = highlights
+    safe.pendingHighlightColorArgb = highlightColorArgb
+    safe.pendingHighlightSourceLength = sourceContentLength
+}
+
+/** 用 TextView 上挂着的最新划线刷新 span。 */
+internal fun refreshReaderHighlightSpansFromPending(
+    textView: TextView,
+    fallbackSourceLength: Int = -1,
+) {
+    val safe = textView as? SafeReaderTextView
+    val highlights = safe?.pendingHighlights ?: emptyList()
+    val color = safe?.pendingHighlightColorArgb ?: 0
+    val sourceLen = when {
+        safe != null && safe.pendingHighlightSourceLength >= 0 -> safe.pendingHighlightSourceLength
+        fallbackSourceLength >= 0 -> fallbackSourceLength
+        else -> textView.text?.length ?: 0
+    }
+    refreshReaderHighlightSpans(
+        textView = textView,
+        highlights = highlights,
+        highlightColorArgb = color,
+        sourceContentLength = sourceLen,
+        highlightSig = readerHighlightSignature(highlights),
+    )
 }
 
 internal fun applyReaderTextContent(
@@ -149,15 +200,21 @@ internal fun applyReaderTextContent(
     pdfFullWidthImages: Boolean = false,
     pdfCenterImageVertically: Boolean = false,
 ) {
+    syncReaderPendingHighlights(
+        textView = textView,
+        highlights = highlights,
+        highlightColorArgb = highlightColorArgb,
+        sourceContentLength = content.length,
+    )
     textView.setTag(TAG_READER_RENDER_SIG, renderSig)
+    // 正文异步渲染期间可能先刷过划线签名；清掉以免完成后被「已同步」挡住二次刷新。
+    textView.setTag(TAG_READER_HIGHLIGHT_SIG, null)
     if (!renderPlainText) {
         applyMarkdownContent(
             textView = textView,
             content = content,
             renderSig = renderSig,
             markwon = markwon,
-            highlights = highlights,
-            highlightColorArgb = highlightColorArgb,
             pdfFullWidthImages = pdfFullWidthImages,
             pdfCenterImageVertically = pdfCenterImageVertically,
         )
@@ -172,7 +229,7 @@ internal fun applyReaderTextContent(
                 applyStashedSourceScrollRestoreIfAny(textView, renderPlainText = true)
             }
         }
-        applyHighlightsToRenderedText(textView, highlights, highlightColorArgb)
+        refreshReaderHighlightSpansFromPending(textView, fallbackSourceLength = content.length)
         return
     }
     val params = TextViewCompat.getTextMetricsParams(textView)
@@ -187,7 +244,7 @@ internal fun applyReaderTextContent(
                     applyStashedSourceScrollRestoreIfAny(textView, renderPlainText = true)
                 }
             }
-            applyHighlightsToRenderedText(textView, highlights, highlightColorArgb)
+            refreshReaderHighlightSpansFromPending(textView, fallbackSourceLength = content.length)
         }
     }
 }
@@ -197,13 +254,15 @@ internal fun applyMarkdownContent(
     content: String,
     renderSig: String,
     markwon: Markwon,
-    highlights: List<HighlightEntity>,
-    highlightColorArgb: Int,
     pdfFullWidthImages: Boolean = false,
     pdfCenterImageVertically: Boolean = false,
 ) {
     fun finishMarkdownRender() {
         textView.setTag(R.id.reader_markdown_render_complete, renderSig)
+        readerOpenDbg(
+            "finishMarkdown completeTagTail=${renderSig.takeLast(48)} " +
+                "textLen=${textView.text?.length} layout=${textView.layout != null}",
+        )
         // 目录跳转置顶意图优先：直接 scrollY=0 并清意图，不再走扩窗 stash 恢复。
         // 打开书/书签 snap 次之：同帧滚到目标，避免 scrollY=0 先画一帧「别的章节」再跳回。
         // 扩窗滚动恢复交给 onLayout（首帧 draw 前）。此处若 layout 未就绪不要 post，
@@ -217,7 +276,9 @@ internal fun applyMarkdownContent(
         if (anchorIndex != null) {
             textView.post { space.liushenme.markdownreader.markdown.RenderedAnchorBinder.bind(textView, anchorIndex) }
         }
-        applyHighlightsToRenderedText(textView, highlights, highlightColorArgb)
+        // 必须读 pending：闭包里的 highlights 可能是启动渲染时的空列表，二次进页时
+        // Room 热缓存会在 Markdown 完成前把划线刷上来，若此处用旧空列表会清掉并写死空签名。
+        refreshReaderHighlightSpansFromPending(textView, fallbackSourceLength = content.length)
         if (pdfFullWidthImages) {
             if (pdfCenterImageVertically) {
                 PdfImageLayoutHelper.clearLayoutState(textView)
@@ -230,26 +291,42 @@ internal fun applyMarkdownContent(
     }
 
     textView.setTag(R.id.reader_markdown_render_complete, null)
-    val prepared = ReaderMarkwonFactory.prepareMarkdown(content)
-    textView.setTag(R.id.markdown_anchor_index, prepared.anchorIndex)
-    val markdown = NetworkImageCache.rewriteCachedUrls(textView.context, prepared.text)
-    // 一律后台 Markwon 渲染：主线程 setMarkdown 与 executor 上 toMarkdown 并发会触发 HtmlPlugin CME。
+    // prepareMarkdown / rewriteCachedUrls / toMarkdown 全部进后台，避免进页主线程卡顿。
+    val appContext = textView.context.applicationContext
+    val renderT0 = android.os.SystemClock.uptimeMillis()
+    readerOpenDbg("markwonQueue contentLen=${content.length} sigTail=${renderSig.takeLast(48)}")
     readerMarkwonRenderExecutor.execute {
+        val tPrep0 = android.os.SystemClock.uptimeMillis()
+        val prepared = runCatching { ReaderMarkwonFactory.prepareMarkdown(content) }
+            .getOrElse { PreparedMarkdown(text = content, anchorIndex = MarkdownAnchorIndex()) }
+        val markdown = NetworkImageCache.rewriteCachedUrls(appContext, prepared.text)
+        val tPrep1 = android.os.SystemClock.uptimeMillis()
         val rendered: CharSequence = synchronized(markwonRenderLock) {
             runCatching { markwon.toMarkdown(markdown) }.getOrNull() ?: content
         }
+        val tMd1 = android.os.SystemClock.uptimeMillis()
+        readerOpenDbg(
+            "markwonBg prepare=${tPrep1 - tPrep0}ms toMarkdown=${tMd1 - tPrep1}ms " +
+                "totalBg=${tMd1 - renderT0}ms outLen=${rendered.length}",
+        )
         textView.post {
-            if (textView.getTag(TAG_READER_RENDER_SIG) != renderSig) return@post
+            if (textView.getTag(TAG_READER_RENDER_SIG) != renderSig) {
+                readerOpenDbg("markwonPost skip staleSig")
+                return@post
+            }
             textView.setTag(R.id.markdown_anchor_index, prepared.anchorIndex)
             // 新内容替换前重抓扩窗锚点：渲染在途时用户可能已滑动旧内容，旧锚点会把视口拉回去。
             refreshStashedExpandAnchorBeforeContentSwap(textView)
+            val tSet0 = android.os.SystemClock.uptimeMillis()
             synchronized(markwonRenderLock) {
                 markwon.setParsedMarkdown(
                     textView,
                     rendered as? android.text.Spanned ?: android.text.SpannableString(rendered),
                 )
             }
+            readerOpenDbg("setParsedMarkdown +${android.os.SystemClock.uptimeMillis() - tSet0}ms")
             finishMarkdownRender()
+            readerOpenDbg("markwonDone wall=${android.os.SystemClock.uptimeMillis() - renderT0}ms")
         }
     }
 }
@@ -266,7 +343,15 @@ internal fun MarkdownReaderView(
     readerLineSpacingMultiplier: Float,
     highlights: List<space.liushenme.markdownreader.data.local.entity.HighlightEntity>,
     modifier: Modifier = Modifier.fillMaxSize(),
-    onTextSelected: (String) -> Unit,
+    onHighlightMenuClick: (
+        text: String,
+        displayedStart: Int,
+        displayedEnd: Int,
+        selectionBoundsInWindow: android.graphics.Rect,
+    ) -> Unit = { _, _, _, _ -> },
+    resolveExistingHighlightId: (text: String, displayedStart: Int, displayedEnd: Int) -> Long? =
+        { _, _, _ -> null },
+    onRemoveHighlightClick: (highlightId: Long) -> Unit = {},
     onScroll: (Float) -> Unit,
     onReadingVerticalScroll: (verticalScrollDeltaPx: Int) -> Unit,
     onViewReady: (TextView) -> Unit,
@@ -308,12 +393,17 @@ internal fun MarkdownReaderView(
                 setLineSpacing(0f, readerLineSpacingMultiplier)
                 setTag(TAG_READER_LINE_SPACING, readerLineSpacingMultiplier)
 
-                val sig0 = readerRenderSignature(
+                val sig0 = readerContentSignature(
                     content = content,
                     renderPlainText = renderPlainText,
                     themeName = theme::class.java.name,
                     fontSize = fontSize,
+                )
+                syncReaderPendingHighlights(
+                    textView = this,
                     highlights = highlights,
+                    highlightColorArgb = theme.highlightColor.toArgb(),
+                    sourceContentLength = content.length,
                 )
                 applyReaderTextContent(
                     textView = this,
@@ -328,6 +418,9 @@ internal fun MarkdownReaderView(
                 )
 
                 this.onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange
+                this.onHighlightMenuClick = onHighlightMenuClick
+                this.resolveExistingHighlightId = resolveExistingHighlightId
+                this.onRemoveHighlightClick = onRemoveHighlightClick
                 bindReaderGesturesAndScroll(
                     textView = this,
                     touchState = touchState,
@@ -347,6 +440,9 @@ internal fun MarkdownReaderView(
             textView.allowVerticalScroll = allowVerticalScroll
             (textView as? SafeReaderTextView)?.renderPlainTextBody = renderPlainText
             textView.onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange
+            textView.onHighlightMenuClick = onHighlightMenuClick
+            textView.resolveExistingHighlightId = resolveExistingHighlightId
+            textView.onRemoveHighlightClick = onRemoveHighlightClick
             textView.setTextColor(theme.textColor.toArgb())
             textView.setBackgroundColor(theme.backgroundColor.toArgb())
             textView.textSize = fontSize.toFloat()
@@ -354,15 +450,26 @@ internal fun MarkdownReaderView(
             val padHPx = (readerPaddingHorizontalDp * density).toInt().coerceAtLeast(0)
             val padBottomPx = (readerPaddingDp * density).toInt().coerceAtLeast(0)
             val padTopPx = (readerPaddingTopDp * density).toInt().coerceAtLeast(0)
-            val renderSig = readerRenderSignature(
+            val contentSig = readerContentSignature(
                 content = content,
                 renderPlainText = renderPlainText,
                 themeName = theme::class.java.name,
                 fontSize = fontSize,
-                highlights = highlights,
             )
-            val prevSig = textView.getTag(TAG_READER_RENDER_SIG) as? String
-            val contentChanged = prevSig != renderSig
+            val highlightSig = readerHighlightSignature(highlights)
+            val highlightColorArgb = theme.highlightColor.toArgb()
+            // 无论正文是否变化，都同步最新划线，供异步渲染完成时读取。
+            syncReaderPendingHighlights(
+                textView = textView,
+                highlights = highlights,
+                highlightColorArgb = highlightColorArgb,
+                sourceContentLength = content.length,
+            )
+            val prevContentSig = textView.getTag(TAG_READER_RENDER_SIG) as? String
+            val prevHighlightSig = textView.getTag(TAG_READER_HIGHLIGHT_SIG) as? String
+            // TAG_READER_RENDER_SIG 仅存内容签名，改划线颜色/样式时只刷新 span
+            val contentChanged = prevContentSig != contentSig
+            val highlightsChanged = prevHighlightSig != highlightSig
             if (contentChanged) {
                 if (pdfPagedLayout) {
                     PdfImageLayoutHelper.clearLayoutState(textView)
@@ -393,13 +500,30 @@ internal fun MarkdownReaderView(
                     textView = textView,
                     content = content,
                     renderPlainText = renderPlainText,
-                    renderSig = renderSig,
+                    renderSig = contentSig,
                     markwon = markwon,
                     highlights = highlights,
-                    highlightColorArgb = theme.highlightColor.toArgb(),
+                    highlightColorArgb = highlightColorArgb,
                     pdfFullWidthImages = pdfFullWidthImages,
                     pdfCenterImageVertically = pdfPagedLayout,
                 )
+            } else if (highlightsChanged) {
+                val renderComplete = textView.getTag(R.id.reader_markdown_render_complete) as? String
+                val markdownStillRendering =
+                    !renderPlainText && renderComplete != contentSig
+                if (markdownStillRendering) {
+                    // 正文尚未落地：只更新 pending，等 finishMarkdownRender 再刷，
+                    // 避免在空/旧文本上写死 HIGHLIGHT_SIG 后被空闭包覆盖且不再重组。
+                    textView.setTag(TAG_READER_HIGHLIGHT_SIG, null)
+                } else {
+                    refreshReaderHighlightSpans(
+                        textView = textView,
+                        highlights = highlights,
+                        highlightColorArgb = highlightColorArgb,
+                        sourceContentLength = content.length,
+                        highlightSig = highlightSig,
+                    )
+                }
             }
 
             bindReaderGesturesAndScroll(
@@ -625,6 +749,39 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     /** 正文是否按纯文本渲染；扩窗 stash 恢复时需与写入内容一致。 */
     var renderPlainTextBody: Boolean = false
     var onReaderTextSelectionActiveChange: ((Boolean) -> Unit)? = null
+    /** 选区菜单点「划线」时回调选中文本、展示层起止与窗口坐标选区矩形（保持选区）。 */
+    var onHighlightMenuClick: (
+        (
+            text: String,
+            displayedStart: Int,
+            displayedEnd: Int,
+            selectionBoundsInWindow: android.graphics.Rect,
+        ) -> Unit
+    )? = null
+    /** 当前选区若已有划线则返回其 id，用于菜单显示「取消划线」。 */
+    var resolveExistingHighlightId: ((text: String, displayedStart: Int, displayedEnd: Int) -> Long?)? =
+        null
+    /** 选区菜单点「取消划线」。 */
+    var onRemoveHighlightClick: ((highlightId: Long) -> Unit)? = null
+    /**
+     * 划线样式浮窗是否正在显示。为 true 时 ActionMode 被系统销毁不连带清选区，
+     * 并尝试重新拉起浮动菜单（避免可聚焦窗口/ invalidate 导致「复制/划线」消失）。
+     */
+    var highlightStylePickerShowing: Boolean = false
+    /**
+     * Compose update 写入的最新划线；异步 Markdown/PrecomputedText 完成时从此读取，
+     * 避免启动渲染时闭包捕获的空列表在完成后把 span 清掉。
+     */
+    var pendingHighlights: List<HighlightEntity> = emptyList()
+    var pendingHighlightColorArgb: Int = 0
+    var pendingHighlightSourceLength: Int = -1
+
+    override fun onDraw(canvas: Canvas) {
+        // 纯色底画在文字下；下划线画在文字上。不用 LineBackgroundSpan，避免 ParagraphStyle 卡死布局。
+        drawReaderHighlightDecorations(this, canvas, underText = true)
+        super.onDraw(canvas)
+        drawReaderHighlightDecorations(this, canvas, underText = false)
+    }
 
     /** 引用计数：多个并发异步渲染各自递增，仅全部完成后才解除抑制。 */
     private var suppressScrollRefCount: Int = 0
@@ -662,26 +819,50 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     private val linkMovement = ReaderLinkMovementMethod.getInstance()
     private val selectionMovement = ArrowKeyMovementMethod.getInstance()
 
-    private val emptySelectionActionMode = object : ActionMode.Callback {
-        override fun onCreateActionMode(mode: ActionMode?, menu: Menu?) =
-            true.also {
-                menu?.clear()
-                readerSelectionActionMode = mode
+    private val selectionActionModeCallback = object : ActionMode.Callback {
+        override fun onCreateActionMode(mode: ActionMode?, menu: Menu?): Boolean {
+            readerSelectionActionMode = mode
+            populateSelectionMenu(menu)
+            return true
+        }
+
+        override fun onPrepareActionMode(mode: ActionMode?, menu: Menu?): Boolean {
+            populateSelectionMenu(menu)
+            return true
+        }
+
+        override fun onActionItemClicked(mode: ActionMode?, item: MenuItem?): Boolean {
+            return when (item?.itemId) {
+                MENU_ID_COPY -> copySelectionToClipboard()
+                MENU_ID_HIGHLIGHT -> handleHighlightMenuClick(mode)
+                else -> false
             }
-
-        override fun onPrepareActionMode(mode: ActionMode?, menu: Menu?) = false
-
-        override fun onActionItemClicked(mode: ActionMode?, item: MenuItem?) = false
+        }
 
         override fun onDestroyActionMode(mode: ActionMode?) {
             if (readerSelectionActionMode == mode) readerSelectionActionMode = null
+            // 样式浮窗期间系统可能因焦点/ invalidate 拆掉 ActionMode：保留选区并尝试恢复菜单。
+            if (highlightStylePickerShowing && selectionActive && !clearingSelectionUi) {
+                post {
+                    if (highlightStylePickerShowing &&
+                        selectionActive &&
+                        !clearingSelectionUi &&
+                        readerSelectionActionMode == null &&
+                        hasSelectionRange()
+                    ) {
+                        restoreSelectionActionMode()
+                    }
+                }
+                return
+            }
             // 系统关掉 ActionMode 时首尾句柄会一起消失；若 session 仍在，同步清掉选区阴影，
             // 避免出现「句柄没了但高亮还在」。
             if (!clearingSelectionUi && selectionActive) {
                 post {
                     if (!clearingSelectionUi &&
                         selectionActive &&
-                        readerSelectionActionMode == null
+                        readerSelectionActionMode == null &&
+                        !highlightStylePickerShowing
                     ) {
                         dismissSelection()
                     }
@@ -699,9 +880,156 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         isLongClickable = true
         isFocusable = true
         isFocusableInTouchMode = true
-        customSelectionActionModeCallback = emptySelectionActionMode
+        customSelectionActionModeCallback = selectionActionModeCallback
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             setTextClassifier(TextClassifier.NO_OP)
+        }
+    }
+
+    private fun populateSelectionMenu(menu: Menu?) {
+        menu ?: return
+        menu.clear()
+        menu.add(Menu.NONE, MENU_ID_COPY, 0, "复制")
+        val existingId = currentSelectionExistingHighlightId()
+        menu.add(
+            Menu.NONE,
+            MENU_ID_HIGHLIGHT,
+            1,
+            if (existingId != null) "取消划线" else "划线",
+        )
+    }
+
+    private fun currentSelectedText(): String {
+        val range = currentSelectionRange() ?: return ""
+        return text?.subSequence(range.first, range.last + 1)?.toString().orEmpty()
+    }
+
+    private fun currentSelectionRange(): IntRange? {
+        val body = text ?: return null
+        val selStart = Selection.getSelectionStart(body)
+        val selEnd = Selection.getSelectionEnd(body)
+        if (selStart < 0 || selEnd < 0 || selStart == selEnd) return null
+        val start = minOf(selStart, selEnd)
+        val end = maxOf(selStart, selEnd).coerceAtMost(body.length)
+        if (start >= end) return null
+        return start until end
+    }
+
+    private fun currentSelectionExistingHighlightId(): Long? {
+        val range = currentSelectionRange() ?: return null
+        val selected = text?.subSequence(range.first, range.last + 1)?.toString().orEmpty()
+        if (selected.isEmpty()) return null
+        return resolveExistingHighlightId?.invoke(selected, range.first, range.last + 1)
+    }
+
+    /** 复制选区到剪贴板并结束选区。 */
+    private fun copySelectionToClipboard(): Boolean {
+        val selected = currentSelectedText()
+        if (selected.isEmpty()) return false
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            ?: return false
+        clipboard.setPrimaryClip(ClipData.newPlainText("selection", selected))
+        dismissSelection()
+        return true
+    }
+
+    /**
+     * 选区菜单「划线 / 取消划线」：
+     * - 已划线 → 删除该划线，刷新菜单标题，保持选区与 ActionMode
+     * - 未划线 → 打开样式浮窗，保持选区与 ActionMode（复制/划线按钮不消失）
+     */
+    private fun handleHighlightMenuClick(mode: ActionMode?): Boolean {
+        val range = currentSelectionRange() ?: return false
+        val selected = text?.subSequence(range.first, range.last + 1)?.toString().orEmpty()
+        if (selected.isEmpty()) return false
+        val existingId = resolveExistingHighlightId?.invoke(selected, range.first, range.last + 1)
+        if (existingId != null) {
+            onRemoveHighlightClick?.invoke(existingId)
+            refreshHighlightMenuTitle()
+            return true
+        }
+        return requestHighlightFromSelection()
+    }
+
+    /** 打开划线浮窗；不结束选区，保留系统复制/划线菜单。 */
+    private fun requestHighlightFromSelection(): Boolean {
+        val range = currentSelectionRange() ?: return false
+        val selected = text?.subSequence(range.first, range.last + 1)?.toString().orEmpty()
+        if (selected.isEmpty()) return false
+        val bounds = selectionBoundsInWindow(range.first, range.last + 1) ?: return false
+        highlightStylePickerShowing = true
+        onHighlightMenuClick?.invoke(selected, range.first, range.last + 1, bounds)
+        return true
+    }
+
+    /**
+     * 仅改菜单标题，避免 [ActionMode.invalidate] 在 MIUI 上重建浮动条导致选区菜单消失。
+     */
+    fun refreshHighlightMenuTitle() {
+        val menu = readerSelectionActionMode?.menu ?: return
+        val item = menu.findItem(MENU_ID_HIGHLIGHT) ?: return
+        val existingId = currentSelectionExistingHighlightId()
+        item.title = if (existingId != null) "取消划线" else "划线"
+    }
+
+    /** @deprecated 使用 [refreshHighlightMenuTitle]，避免 MIUI invalidate 拆掉浮动菜单。 */
+    fun invalidateSelectionActionModeMenu() {
+        refreshHighlightMenuTitle()
+    }
+
+    private fun restoreSelectionActionMode() {
+        if (readerSelectionActionMode != null) return
+        if (!hasSelectionRange()) return
+        try {
+            startActionMode(selectionActionModeCallback, ActionMode.TYPE_FLOATING)
+        } catch (_: Throwable) {
+            try {
+                startActionMode(selectionActionModeCallback)
+            } catch (_: Throwable) {
+                // 部分机型无法手动拉起，至少保留选区高亮与句柄
+            }
+        }
+    }
+
+    /** 选区在窗口坐标系中的包围盒（用于划线浮窗定位）。 */
+    internal fun selectionBoundsInWindow(selStart: Int, selEnd: Int): android.graphics.Rect? {
+        val layout = layout ?: return null
+        val len = text?.length ?: return null
+        if (len == 0) return null
+        val start = selStart.coerceIn(0, len)
+        val end = selEnd.coerceIn(0, len)
+        if (start >= end) return null
+        val startLine = layout.getLineForOffset(start)
+        val endLine = layout.getLineForOffset(end)
+        val loc = IntArray(2)
+        getLocationInWindow(loc)
+        val top = loc[1] + totalPaddingTop + layout.getLineTop(startLine) - scrollY
+        val bottom = loc[1] + totalPaddingTop + layout.getLineBottom(endLine) - scrollY
+        val left: Int
+        val right: Int
+        if (startLine == endLine) {
+            val x0 = layout.getPrimaryHorizontal(start)
+            val x1 = layout.getPrimaryHorizontal(end)
+            left = loc[0] + totalPaddingLeft + minOf(x0, x1).toInt() - scrollX
+            right = loc[0] + totalPaddingLeft + maxOf(x0, x1).toInt() - scrollX
+        } else {
+            left = loc[0] + totalPaddingLeft
+            right = loc[0] + width - totalPaddingRight
+        }
+        return android.graphics.Rect(left, top, right.coerceAtLeast(left + 1), bottom.coerceAtLeast(top + 1))
+    }
+
+    /** 单元测试：填充选区菜单项。 */
+    internal fun populateSelectionMenuForTest(menu: Menu) {
+        populateSelectionMenu(menu)
+    }
+
+    /** 单元测试：模拟点击选区菜单项。 */
+    internal fun performSelectionMenuActionForTest(itemId: Int): Boolean {
+        return when (itemId) {
+            MENU_ID_COPY -> copySelectionToClipboard()
+            MENU_ID_HIGHLIGHT -> handleHighlightMenuClick(readerSelectionActionMode)
+            else -> false
         }
     }
 
@@ -844,7 +1172,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 throw UnsupportedOperationException()
         }
         readerSelectionActionMode = mode
-        emptySelectionActionMode.onDestroyActionMode(mode)
+        selectionActionModeCallback.onDestroyActionMode(mode)
         if (!clearingSelectionUi && selectionActive && readerSelectionActionMode == null) {
             dismissSelection()
         }
@@ -1180,7 +1508,10 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         }
     }
 
-    private companion object
+    companion object {
+        internal const val MENU_ID_COPY = 0x4D520001
+        internal const val MENU_ID_HIGHLIGHT = 0x4D520002
+    }
 }
 
 /** @see ReaderMarkwonFactory */
@@ -1190,31 +1521,155 @@ internal fun createMarkwon(context: Context): Markwon = ReaderMarkwonFactory.cre
 internal fun createPdfMarkwon(context: Context): Markwon = ReaderMarkwonFactory.create(context)
 
 /**
- * 在 Markwon 渲染后的纯文本上按划线内容做背景高亮（源码下标与渲染后 Spanned 长度不一致，故用文本匹配）。
+ * 在渲染后的文本上为划线上色。优先使用页/窗内相对 [HighlightEntity.startPosition]/[endPosition]；
+ * 源码与 Spanned 长度不一致时，在估算位置附近只匹配一次，避免同文全局全标。
  */
 internal fun applyHighlightsToRenderedText(
     textView: TextView,
     highlights: List<space.liushenme.markdownreader.data.local.entity.HighlightEntity>,
-    highlightColorArgb: Int
+    highlightColorArgb: Int,
+    sourceContentLength: Int = -1,
 ) {
-    val text = textView.text
-    if (text !is Spannable || highlights.isEmpty()) return
+    if (highlights.isEmpty()) return
+    val text = ensureReaderSpannable(textView) ?: return
     val full = text.toString()
     highlights.forEach { highlight ->
-        val snippet = highlight.highlightedText
-        if (snippet.isEmpty()) return@forEach
-        var searchFrom = 0
-        while (searchFrom < full.length) {
-            val idx = full.indexOf(snippet, searchFrom)
-            if (idx < 0) break
-            val end = idx + snippet.length
-            text.setSpan(
-                BackgroundColorSpan(highlightColorArgb),
-                idx,
-                end,
-                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
-            )
-            searchFrom = end
+        val range = resolveHighlightDisplayedRange(
+            displayed = full,
+            highlight = highlight,
+            sourceContentLength = sourceContentLength,
+        ) ?: return@forEach
+        val spanColor = if (android.graphics.Color.alpha(highlight.color) < 16) {
+            highlightColorArgb
+        } else {
+            highlight.color
         }
+        val style = space.liushenme.markdownreader.model.HighlightStyle.fromStorageKey(highlight.style)
+        val spanStart = range.first
+        val spanEnd = range.last + 1
+        val span: Any = when (style) {
+            space.liushenme.markdownreader.model.HighlightStyle.Background ->
+                HighlightBackgroundSpan(spanColor)
+            space.liushenme.markdownreader.model.HighlightStyle.Underline ->
+                HighlightUnderlineSpan(spanColor, wavy = false)
+            space.liushenme.markdownreader.model.HighlightStyle.Wavy ->
+                HighlightUnderlineSpan(spanColor, wavy = true)
+        }
+        text.setSpan(
+            span,
+            spanStart,
+            spanEnd,
+            Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
     }
+    textView.invalidate()
+}
+
+/**
+ * 在展示层选区上立即打上划线样式（不依赖源码坐标映射），用于点「划线」瞬间出默认效果。
+ */
+internal fun applyHighlightDecorationAtRange(
+    textView: TextView,
+    start: Int,
+    end: Int,
+    colorArgb: Int,
+    style: space.liushenme.markdownreader.model.HighlightStyle,
+) {
+    val text = ensureReaderSpannable(textView) ?: return
+    if (start < 0 || end > text.length || start >= end) return
+    text.getSpans(start, end, HighlightBackgroundSpan::class.java).forEach { text.removeSpan(it) }
+    text.getSpans(start, end, HighlightUnderlineSpan::class.java).forEach { text.removeSpan(it) }
+    val span: Any = when (style) {
+        space.liushenme.markdownreader.model.HighlightStyle.Background ->
+            HighlightBackgroundSpan(colorArgb)
+        space.liushenme.markdownreader.model.HighlightStyle.Underline ->
+            HighlightUnderlineSpan(colorArgb, wavy = false)
+        space.liushenme.markdownreader.model.HighlightStyle.Wavy ->
+            HighlightUnderlineSpan(colorArgb, wavy = true)
+    }
+    text.setSpan(span, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+    textView.invalidate()
+}
+
+/** 清除由阅读划线写入的 span，保留 Markdown 自身背景色等。 */
+internal fun clearReaderHighlightSpans(textView: TextView) {
+    val text = textView.text
+    if (text !is Spannable || text.isEmpty()) return
+    text.getSpans(0, text.length, HighlightBackgroundSpan::class.java).forEach { text.removeSpan(it) }
+    text.getSpans(0, text.length, HighlightUnderlineSpan::class.java).forEach { text.removeSpan(it) }
+    textView.invalidate()
+}
+
+/** Markwon 偶发给出只读 Spanned；划线需要可变 [Spannable]。 */
+internal fun ensureReaderSpannable(textView: TextView): Spannable? {
+    val raw = textView.text ?: return null
+    if (raw is Spannable) return raw
+    if (raw.isEmpty()) return null
+    val mutable = SpannableString(raw)
+    textView.setText(mutable, TextView.BufferType.SPANNABLE)
+    return textView.text as? Spannable
+}
+
+internal fun refreshReaderHighlightSpans(
+    textView: TextView,
+    highlights: List<HighlightEntity>,
+    highlightColorArgb: Int,
+    sourceContentLength: Int,
+    highlightSig: String,
+) {
+    clearReaderHighlightSpans(textView)
+    applyHighlightsToRenderedText(
+        textView = textView,
+        highlights = highlights,
+        highlightColorArgb = highlightColorArgb,
+        sourceContentLength = sourceContentLength,
+    )
+    textView.setTag(TAG_READER_HIGHLIGHT_SIG, highlightSig)
+}
+
+/**
+ * 将划线映射到展示层 [start, end) 区间；每条划线至多一处。
+ */
+internal fun resolveHighlightDisplayedRange(
+    displayed: String,
+    highlight: space.liushenme.markdownreader.data.local.entity.HighlightEntity,
+    sourceContentLength: Int,
+): IntRange? {
+    val snippet = highlight.highlightedText
+    if (snippet.isEmpty() || displayed.isEmpty()) return null
+    val s = highlight.startPosition
+    val e = highlight.endPosition
+    if (s in 0..displayed.length && e in (s + 1)..displayed.length &&
+        displayed.substring(s, e) == snippet
+    ) {
+        return s until e
+    }
+    if (s in 0 until displayed.length &&
+        s + snippet.length <= displayed.length &&
+        displayed.regionMatches(s, snippet, 0, snippet.length)
+    ) {
+        return s until (s + snippet.length)
+    }
+    val estimate = when {
+        sourceContentLength > 0 ->
+            ((s.toLong() * displayed.length) / sourceContentLength)
+                .toInt()
+                .coerceIn(0, displayed.length)
+        else -> s.coerceIn(0, displayed.length)
+    }
+    var bestIdx = -1
+    var bestDist = Int.MAX_VALUE
+    var from = 0
+    while (from <= displayed.length - snippet.length) {
+        val idx = displayed.indexOf(snippet, from)
+        if (idx < 0) break
+        val dist = kotlin.math.abs(idx - estimate)
+        if (dist < bestDist) {
+            bestDist = dist
+            bestIdx = idx
+        }
+        from = idx + 1
+    }
+    if (bestIdx < 0) return null
+    return bestIdx until (bestIdx + snippet.length)
 }

@@ -229,19 +229,36 @@ internal fun ReaderFontSheet(
     }
 }
 
+private enum class ReaderMarksSheetTab {
+    Bookmarks,
+    Highlights,
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun BookmarksSheet(
     bookmarks: List<space.liushenme.markdownreader.data.local.entity.BookmarkEntity>,
+    highlights: List<HighlightEntity>,
     totalChars: Int,
     onBookmarkClick: (space.liushenme.markdownreader.data.local.entity.BookmarkEntity) -> Unit,
     onDeleteBookmark: (space.liushenme.markdownreader.data.local.entity.BookmarkEntity) -> Unit,
+    onHighlightClick: (HighlightEntity) -> Unit,
+    onDeleteHighlight: (HighlightEntity) -> Unit,
     onDismiss: () -> Unit
 ) {
+    var selectedTab by remember { mutableStateOf(ReaderMarksSheetTab.Bookmarks) }
     var revealedBookmarkId by remember { mutableStateOf<Long?>(null) }
+    var revealedHighlightId by remember { mutableStateOf<Long?>(null) }
 
     LaunchedEffect(bookmarks) {
         revealedBookmarkId = null
+    }
+    LaunchedEffect(highlights) {
+        revealedHighlightId = null
+    }
+    LaunchedEffect(selectedTab) {
+        revealedBookmarkId = null
+        revealedHighlightId = null
     }
 
     ModalBottomSheet(
@@ -253,45 +270,112 @@ internal fun BookmarksSheet(
                 .padding(24.dp)
         ) {
             Text(
-                "我的书签",
+                "书签与划线",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
 
+            Spacer(modifier = Modifier.height(12.dp))
+
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                SegmentedButton(
+                    selected = selectedTab == ReaderMarksSheetTab.Bookmarks,
+                    onClick = { selectedTab = ReaderMarksSheetTab.Bookmarks },
+                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                ) {
+                    Text("书签")
+                }
+                SegmentedButton(
+                    selected = selectedTab == ReaderMarksSheetTab.Highlights,
+                    onClick = { selectedTab = ReaderMarksSheetTab.Highlights },
+                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                ) {
+                    Text("划线")
+                }
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
 
-            if (bookmarks.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        "暂无书签",
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                    )
-                }
-            } else {
-                bookmarks.forEachIndexed { index, bookmark ->
-                    if (index > 0) {
-                        HorizontalDivider(
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
-                        )
-                    }
-                    BookmarkItem(
-                        bookmark = bookmark,
-                        totalChars = totalChars,
-                        revealedBookmarkId = revealedBookmarkId,
-                        onRevealChange = { id -> revealedBookmarkId = id },
-                        onClick = { onBookmarkClick(bookmark) },
-                        onDelete = {
-                            onDeleteBookmark(bookmark)
-                            if (revealedBookmarkId == bookmark.id) {
-                                revealedBookmarkId = null
+            val listScroll = rememberScrollState()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 520.dp)
+                    .verticalScroll(listScroll)
+            ) {
+                when (selectedTab) {
+                    ReaderMarksSheetTab.Bookmarks -> {
+                        if (bookmarks.isEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(32.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "暂无书签",
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                )
+                            }
+                        } else {
+                            bookmarks.forEachIndexed { index, bookmark ->
+                                if (index > 0) {
+                                    HorizontalDivider(
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+                                    )
+                                }
+                                BookmarkItem(
+                                    bookmark = bookmark,
+                                    totalChars = totalChars,
+                                    revealedBookmarkId = revealedBookmarkId,
+                                    onRevealChange = { id -> revealedBookmarkId = id },
+                                    onClick = { onBookmarkClick(bookmark) },
+                                    onDelete = {
+                                        onDeleteBookmark(bookmark)
+                                        if (revealedBookmarkId == bookmark.id) {
+                                            revealedBookmarkId = null
+                                        }
+                                    }
+                                )
                             }
                         }
-                    )
+                    }
+                    ReaderMarksSheetTab.Highlights -> {
+                        if (highlights.isEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(32.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "暂无划线",
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                )
+                            }
+                        } else {
+                            highlights.forEachIndexed { index, highlight ->
+                                if (index > 0) {
+                                    HorizontalDivider(
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+                                    )
+                                }
+                                HighlightListItem(
+                                    highlight = highlight,
+                                    totalChars = totalChars,
+                                    revealedHighlightId = revealedHighlightId,
+                                    onRevealChange = { id -> revealedHighlightId = id },
+                                    onClick = { onHighlightClick(highlight) },
+                                    onDelete = {
+                                        onDeleteHighlight(highlight)
+                                        if (revealedHighlightId == highlight.id) {
+                                            revealedHighlightId = null
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -508,149 +592,145 @@ internal fun BookmarkItem(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun HighlightActionSheet(
-    selectedText: String,
-    onHighlight: (Color) -> Unit,
-    onAddBookmark: (String?) -> Unit,
-    onDismiss: () -> Unit
+internal fun HighlightListItem(
+    highlight: HighlightEntity,
+    totalChars: Int,
+    revealedHighlightId: Long?,
+    onRevealChange: (Long?) -> Unit,
+    onClick: () -> Unit,
+    onDelete: () -> Unit
 ) {
-    var showNoteDialog by remember { mutableStateOf(false) }
-    var noteText by remember { mutableStateOf("") }
+    val density = LocalDensity.current
+    val deleteWidthPx = with(density) { 72.dp.toPx() }
+    var offsetPx by remember(highlight.id) { mutableFloatStateOf(0f) }
+    val revealedIdSnapshot by rememberUpdatedState(revealedHighlightId)
+    val accent = Color(highlight.color).let { c ->
+        if (c.alpha < 0.06f) Color(0xFFFFFF00) else c
+    }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(24.dp)
-        ) {
-            Text(
-                "划线与笔记",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                selectedText.take(100) + if (selectedText.length > 100) "..." else "",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // 高亮颜色选择
-            Text("选择高亮颜色", style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(10.dp))
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                // "无颜色"选项
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(
-                                color = MaterialTheme.colorScheme.surfaceVariant,
-                                shape = CircleShape
-                            )
-                            .border(
-                                width = 1.5.dp,
-                                color = MaterialTheme.colorScheme.outlineVariant,
-                                shape = CircleShape
-                            )
-                            .clickable { onHighlight(Color.Transparent) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "无颜色",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(3.dp))
-                    Text("无", style = MaterialTheme.typography.labelSmall)
-                }
-
-                val colors = listOf(
-                    Color(0xFFFFFF00) to "黄色",
-                    Color(0xFF00FF00) to "绿色",
-                    Color(0xFF00FFFF) to "青色",
-                    Color(0xFFFF00FF) to "粉色",
-                    Color(0xFFFFA500) to "橙色"
-                )
-                colors.forEach { (color, name) ->
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(color)
-                                .border(
-                                    width = 2.dp,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
-                                    shape = CircleShape
-                                )
-                                .clickable { onHighlight(color) }
-                        )
-                        Spacer(modifier = Modifier.height(3.dp))
-                        Text(name, style = MaterialTheme.typography.labelSmall)
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // 添加书签按钮
-            Button(
-                onClick = { showNoteDialog = true },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.BookmarkAdd, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("添加书签笔记")
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
+    LaunchedEffect(revealedHighlightId, highlight.id) {
+        if (revealedHighlightId != highlight.id) {
+            offsetPx = 0f
         }
     }
 
-    // 笔记输入对话框
-    if (showNoteDialog) {
-        AlertDialog(
-            onDismissRequest = { showNoteDialog = false },
-            title = { Text("添加笔记") },
-            text = {
-                OutlinedTextField(
-                    value = noteText,
-                    onValueChange = { noteText = it },
-                    label = { Text("笔记内容（可选）") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onAddBookmark(noteText.takeIf { it.isNotEmpty() })
-                        showNoteDialog = false
-                    }
+    val progressPercent = remember(highlight.startPosition, totalChars) {
+        if (totalChars <= 0) null
+        else ((highlight.startPosition * 100f) / totalChars).roundToInt().coerceIn(0, 100)
+    }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Box(
+            modifier = Modifier.matchParentSize(),
+            contentAlignment = Alignment.CenterEnd
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(72.dp)
+                    .fillMaxHeight()
+                    .background(MaterialTheme.colorScheme.error),
+                contentAlignment = Alignment.Center
+            ) {
+                val err = MaterialTheme.colorScheme.error
+                val deleteIconTint = iconTintForDeleteStrip(err)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable {
+                            onDelete()
+                            offsetPx = 0f
+                        },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text("添加")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showNoteDialog = false }) {
-                    Text("取消")
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "删除",
+                        modifier = Modifier.size(28.dp),
+                        tint = deleteIconTint
+                    )
                 }
             }
-        )
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .graphicsLayer { translationX = offsetPx }
+                .background(MaterialTheme.colorScheme.surface)
+                .pointerInput(highlight.id, deleteWidthPx) {
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            offsetPx = (offsetPx + dragAmount).coerceIn(-deleteWidthPx, 0f)
+                        },
+                        onDragEnd = {
+                            val threshold = -deleteWidthPx * 0.35f
+                            if (offsetPx < threshold) {
+                                offsetPx = -deleteWidthPx
+                                onRevealChange(highlight.id)
+                            } else {
+                                offsetPx = 0f
+                                if (revealedIdSnapshot == highlight.id) {
+                                    onRevealChange(null)
+                                }
+                            }
+                        }
+                    )
+                }
+                .clickable {
+                    if (offsetPx < -4f) {
+                        offsetPx = 0f
+                        onRevealChange(null)
+                    } else {
+                        onClick()
+                    }
+                }
+                .padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(
+                modifier = Modifier.widthIn(min = 44.dp, max = 56.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(accent)
+                        .border(
+                            width = 1.dp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f),
+                            shape = CircleShape
+                        )
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = progressPercent?.let { "$it%" } ?: "—",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = highlight.highlightedText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (!highlight.note.isNullOrEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = highlight.note,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
     }
 }
+

@@ -20,11 +20,14 @@ import space.liushenme.markdownreader.importing.ParsedBookStorage
 import space.liushenme.markdownreader.importing.UrlBookDownloader
 import space.liushenme.markdownreader.markdown.MarkdownInlineHtml
 import space.liushenme.markdownreader.markdown.MarkdownPreprocessor
+import space.liushenme.markdownreader.model.HighlightStyle
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
+import androidx.compose.ui.graphics.toArgb
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.*
@@ -101,6 +104,22 @@ class ReaderViewModel @Inject constructor(
             initialValue = ReaderPageTurnMode.VerticalScroll
         )
 
+    val lastHighlightColorArgb: StateFlow<Int> =
+        readerSettingsRepository.lastHighlightColorArgb
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = ReaderSettingsRepository.DEFAULT_HIGHLIGHT_COLOR_ARGB,
+            )
+
+    val lastHighlightStyle: StateFlow<HighlightStyle> =
+        readerSettingsRepository.lastHighlightStyle
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = HighlightStyle.DEFAULT,
+            )
+
     private val _loadError = MutableStateFlow<String?>(null)
     val loadError: StateFlow<String?> = _loadError.asStateFlow()
 
@@ -127,9 +146,12 @@ class ReaderViewModel @Inject constructor(
 
     fun loadBook(context: Context, bookId: Long) {
         if (loadedBookId == bookId && _content.value.isNotEmpty() && _book.value?.id == bookId) {
+            readerOpenDbg("loadBook skip cached bookId=$bookId contentLen=${_content.value.length}")
             return
         }
         loadedBookId = bookId
+        val t0 = android.os.SystemClock.uptimeMillis()
+        readerOpenDbg("loadBook start bookId=$bookId")
 
         loadBookJob?.cancel()
         bookmarkCollectJob?.cancel()
@@ -149,6 +171,7 @@ class ReaderViewModel @Inject constructor(
                 _content.value = ""
                 _loadError.value = "找不到该书，可能已被删除。"
                 _readerLoadEpoch.value = _readerLoadEpoch.value + 1L
+                readerOpenDbg("loadBook missing bookId=$bookId +${android.os.SystemClock.uptimeMillis() - t0}ms")
                 return@launch
             }
 
@@ -181,6 +204,11 @@ class ReaderViewModel @Inject constructor(
                 _book.value = synced
             }
             _readerLoadEpoch.value = _readerLoadEpoch.value + 1L
+            readerOpenDbg(
+                "loadBook contentReady len=${text.length} pos=$lastKnownReadingCharPos " +
+                    "toc=${_structuredToc.value?.size ?: 0} epoch=${_readerLoadEpoch.value} " +
+                    "+${android.os.SystemClock.uptimeMillis() - t0}ms",
+            )
 
             if (text.isEmpty()) {
                 _loadError.value =
@@ -401,26 +429,136 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    fun addHighlight(selectedText: String, color: androidx.compose.ui.graphics.Color) {
-        viewModelScope.launch {
-            _book.value?.let { book ->
-                val content = _content.value
-                val position = (readingProgress.value * book.totalChars).toInt()
-                val startPos = content.indexOf(selectedText, position.coerceAtMost(content.length))
-
-                if (startPos != -1) {
-                    val highlight = HighlightEntity(
-                        bookId = book.id,
-                        startPosition = startPos,
-                        endPosition = startPos + selectedText.length,
-                        highlightedText = selectedText,
-                        color = color.hashCode(),
-                        createTime = Date()
-                    )
-                    highlightRepository.addHighlight(highlight)
-                }
-            }
+    /**
+     * 立即落库一条划线并返回 id；失败返回 null。
+     * 用于点「划线」后立刻按当前样式渲染，再在浮窗里改色/样式时 [updateHighlightAppearance]。
+     *
+     * 使用 [NonCancellable]：Compose 里点划线后的 LaunchedEffect 会在取消选区时被取消，
+     * 若不防护，Room 写入会被中断，表现为松手后划线消失、重进也没有。
+     */
+    suspend fun addHighlightNow(
+        selectedText: String,
+        color: androidx.compose.ui.graphics.Color,
+        style: HighlightStyle = lastHighlightStyle.value,
+        sourceStartHint: Int = lastKnownReadingCharPos,
+    ): Long? = withContext(NonCancellable) {
+        if (selectedText.isBlank()) return@withContext null
+        val book = _book.value ?: return@withContext null
+        val content = _content.value
+        if (content.isEmpty()) return@withContext null
+        val hint = sourceStartHint.coerceIn(0, content.length)
+        // 源码中找不到完全匹配时仍按 hint 落库，渲染侧靠 highlightedText 在展示层匹配
+        val startPos = resolveHighlightSourceStart(content, selectedText, hint)
+            ?: hint.coerceIn(0, (content.length - selectedText.length).coerceAtLeast(0))
+        val endPos = (startPos + selectedText.length).coerceAtMost(content.length)
+        if (endPos <= startPos) return@withContext null
+        // 同一区域已有划线则复用，避免连点「划线」重复插入
+        highlights.value.firstOrNull {
+            it.startPosition == startPos && it.endPosition == endPos
+        }?.let { return@withContext it.id }
+        val colorArgb = highlightColorArgb(color)
+        val highlight = HighlightEntity(
+            bookId = book.id,
+            startPosition = startPos,
+            endPosition = endPos,
+            highlightedText = selectedText,
+            color = colorArgb,
+            style = style.storageKey,
+            createTime = Date(),
+        )
+        val id = highlightRepository.addHighlight(highlight)
+        readerSettingsRepository.setLastHighlightPreference(colorArgb, style)
+        // Flow 可能略滞后：乐观写入，保证浮窗打开瞬间就能看到划线
+        val saved = highlight.copy(id = id)
+        val current = highlights.value
+        if (current.none { it.id == id }) {
+            highlights.value = listOf(saved) + current
         }
+        id
+    }
+
+    /**
+     * 在 viewModelScope 落库，不受 Compose 取消选区影响；结果通过 [onResult] 回传。
+     */
+    fun addHighlightFromSelection(
+        selectedText: String,
+        color: androidx.compose.ui.graphics.Color,
+        style: HighlightStyle,
+        sourceStartHint: Int,
+        onResult: (Long?) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            val id = addHighlightNow(
+                selectedText = selectedText,
+                color = color,
+                style = style,
+                sourceStartHint = sourceStartHint,
+            )
+            onResult(id)
+        }
+    }
+
+    fun updateHighlightAppearance(
+        highlightId: Long,
+        color: androidx.compose.ui.graphics.Color,
+        style: HighlightStyle,
+    ) {
+        if (highlightId <= 0L) return
+        viewModelScope.launch {
+            val existing = highlights.value.find { it.id == highlightId } ?: return@launch
+            val colorArgb = highlightColorArgb(color)
+            val updated = existing.copy(color = colorArgb, style = style.storageKey)
+            // 先乐观更新 UI，再落库
+            highlights.value = highlights.value.map { if (it.id == highlightId) updated else it }
+            highlightRepository.updateHighlight(updated)
+            readerSettingsRepository.setLastHighlightPreference(colorArgb, style)
+        }
+    }
+
+    fun deleteHighlight(highlight: HighlightEntity) {
+        viewModelScope.launch {
+            // 先乐观移除，菜单/正文立刻变为未划线
+            highlights.value = highlights.value.filterNot { it.id == highlight.id }
+            highlightRepository.deleteHighlight(highlight)
+        }
+    }
+
+    private fun highlightColorArgb(color: androidx.compose.ui.graphics.Color): Int =
+        if (color.alpha < 0.06f) {
+            ReaderSettingsRepository.DEFAULT_HIGHLIGHT_COLOR_ARGB
+        } else {
+            color.toArgb()
+        }
+
+    /**
+     * 在全书源码中定位划线起点：优先命中 [hint]，否则取距 hint 最近的一处匹配。
+     */
+    private fun resolveHighlightSourceStart(
+        content: String,
+        selectedText: String,
+        hint: Int,
+    ): Int? {
+        if (selectedText.isEmpty() || content.isEmpty()) return null
+        val safeHint = hint.coerceIn(0, content.length)
+        if (safeHint + selectedText.length <= content.length &&
+            content.regionMatches(safeHint, selectedText, 0, selectedText.length)
+        ) {
+            return safeHint
+        }
+        var best = -1
+        var bestDist = Int.MAX_VALUE
+        var from = 0
+        while (from <= content.length - selectedText.length) {
+            val idx = content.indexOf(selectedText, from)
+            if (idx < 0) break
+            val dist = abs(idx - safeHint)
+            if (dist < bestDist) {
+                bestDist = dist
+                best = idx
+            }
+            from = idx + 1
+        }
+        return best.takeIf { it >= 0 }
     }
 
     fun setTheme(theme: ReadingTheme) {

@@ -155,8 +155,14 @@ fun ReaderScreen(
     var showToc by remember { mutableStateOf(false) }
     var showTopBar by remember { mutableStateOf(false) }
     var readerTextSelectionActive by remember { mutableStateOf(false) }
+    var pendingHighlightSelection by remember {
+        mutableStateOf<PendingHighlightPicker?>(null)
+    }
     var showReaderPageTurnSheet by remember { mutableStateOf(false) }
     var diagramPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
+
+    val lastHighlightColorArgb by viewModel.lastHighlightColorArgb.collectAsState()
+    val lastHighlightStyle by viewModel.lastHighlightStyle.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
     val readerTextView = remember { mutableStateOf<TextView?>(null) }
@@ -166,7 +172,12 @@ fun ReaderScreen(
 
     val onReaderTextSelectionActiveChange: (Boolean) -> Unit = { active ->
         readerTextSelectionActive = active
-        if (active) showTopBar = false
+        if (active) {
+            showTopBar = false
+        } else {
+            // 选区结束时收起划线浮窗（落库在 ViewModel.NonCancellable，不被此处取消）
+            pendingHighlightSelection = null
+        }
     }
 
     val structuredToc by viewModel.structuredToc.collectAsState()
@@ -179,9 +190,10 @@ fun ReaderScreen(
         }
         val stored = structuredToc.orEmpty()
         when {
+            // 优先用入库目录，避免进页再扫全书 ATX（与 prepareMarkdown 重复且占主线程）
             renderPlainText -> stored.ifEmpty { parsePlainTextToc(readerContent) }
-            readerContent.isNotEmpty() -> parseMarkdownToc(readerContent).ifEmpty { stored }
             stored.isNotEmpty() -> stored
+            readerContent.isNotEmpty() -> parseMarkdownToc(readerContent)
             else -> emptyList()
         }
     }
@@ -231,8 +243,31 @@ fun ReaderScreen(
     val chapterBoundaries = remember(readerContent, tocEntries) {
         computeChapterBoundaries(readerContent, tocEntries)
     }
-    var displayWindowStartChar by remember(readerContent, readerLoadEpoch) { mutableIntStateOf(0) }
-    var displayWindowEndChar by remember(readerContent, readerLoadEpoch) { mutableIntStateOf(0) }
+    // 正文一到齐就同步算出首窗，避免先 (0,0) 空 setText 再整窗二次渲染。
+    val initialDisplayWindow = remember(
+        readerContent,
+        readerLoadEpoch,
+        pageTurnMode,
+        chapterBoundaries,
+    ) {
+        if (readerContent.isEmpty()) {
+            0 to 0
+        } else if (pageTurnMode != ReaderPageTurnMode.VerticalScroll) {
+            0 to readerContent.length
+        } else {
+            val targetChar = viewModel.readingCharPosForRestore().coerceIn(
+                0,
+                (readerContent.length - 1).coerceAtLeast(0),
+            )
+            computeReadingWindow(chapterBoundaries, targetChar, readerContent.length)
+        }
+    }
+    var displayWindowStartChar by remember(readerContent, readerLoadEpoch) {
+        mutableIntStateOf(initialDisplayWindow.first)
+    }
+    var displayWindowEndChar by remember(readerContent, readerLoadEpoch) {
+        mutableIntStateOf(initialDisplayWindow.second)
+    }
     /** 向上/向下扩窗后，按全书字符锚点恢复视口，避免跳到章节顶部。 */
     var pendingScrollRestoreGlobalChar by remember(readerContent) { mutableStateOf<Int?>(null) }
     var pendingScrollRestoreBookmarkPreview by remember(readerContent) { mutableStateOf<String?>(null) }
@@ -245,7 +280,12 @@ fun ReaderScreen(
      * 打开书/书签 snap 完成前用主题色遮住正文，避免异步渲染期间以 scrollY=0 露出窗口开头（更早章节）。
      * 独立于 [pendingScrollRestoreGlobalChar]：滚动前须先清 pending，否则 onScroll 会误取消 restore。
      */
-    var coverUntilPositionRestore by remember(readerContent, readerLoadEpoch) { mutableStateOf(false) }
+    // 有正文时先遮罩，等首帧定位完成再揭开（与同步首窗配套，避免露出章节开头）
+    var coverUntilPositionRestore by remember(readerContent, readerLoadEpoch, pageTurnMode) {
+        mutableStateOf(
+            readerContent.isNotEmpty() && pageTurnMode == ReaderPageTurnMode.VerticalScroll,
+        )
+    }
     /** 每次请求滚动恢复时递增，避免已取消的 LaunchedEffect 在 tv.post 中仍 snap 到旧锚点。 */
     var scrollRestoreGeneration by remember(readerContent) { mutableIntStateOf(0) }
     /** 与 [scrollRestoreGeneration] 同步，供 tv.post 读取（避免旧 restore 覆盖 tag 后误执行 snap）。 */
@@ -298,6 +338,79 @@ fun ReaderScreen(
         )
     }
 
+    // 取消选区后 / TextView 就绪后按已落库列表重刷划线；key 含 tv，避免划线先到、View 未就绪时永久漏刷
+    LaunchedEffect(
+        readerTextSelectionActive,
+        displayedHighlights,
+        displayedContent,
+        currentTheme,
+        readerTextView.value,
+    ) {
+        if (readerTextSelectionActive) return@LaunchedEffect
+        val tv = readerTextView.value ?: return@LaunchedEffect
+        if (displayedHighlights.isEmpty()) return@LaunchedEffect
+        syncReaderPendingHighlights(
+            textView = tv,
+            highlights = displayedHighlights,
+            highlightColorArgb = currentTheme.highlightColor.toArgb(),
+            sourceContentLength = displayedContent.length,
+        )
+        // 等一帧，避免与 ActionMode 销毁抢同一遍 span 更新
+        kotlinx.coroutines.delay(16)
+        if (readerTextSelectionActive) return@LaunchedEffect
+        if (readerTextView.value !== tv) return@LaunchedEffect
+        refreshReaderHighlightSpans(
+            textView = tv,
+            highlights = displayedHighlights,
+            highlightColorArgb = currentTheme.highlightColor.toArgb(),
+            sourceContentLength = displayedContent.length,
+            highlightSig = readerHighlightSignature(displayedHighlights),
+        )
+    }
+
+    fun currentPageLocalHighlights(): List<HighlightEntity> {
+        if (pageTurnMode == ReaderPageTurnMode.VerticalScroll) return displayedHighlights
+        if (pageSpecs.isEmpty()) return emptyList()
+        val pageIdx = pagerState.currentPage.coerceIn(0, pageSpecs.lastIndex)
+        val (slice, globalStart) = pageSpecs[pageIdx]
+        val globalEnd = if (pageIdx + 1 < pageSpecs.size) {
+            pageSpecs[pageIdx + 1].second
+        } else {
+            Int.MAX_VALUE
+        }
+        return highlightsForPageSlice(globalStart, globalEnd, highlights, slice)
+    }
+
+    fun resolveExistingHighlightId(
+        text: String,
+        displayedStart: Int,
+        displayedEnd: Int,
+    ): Long? = findHighlightIdForDisplayedSelection(
+        pageLocalHighlights = currentPageLocalHighlights(),
+        text = text,
+        displayedStart = displayedStart,
+        displayedEnd = displayedEnd,
+    )
+
+    val onHighlightMenuClick: (String, Int, Int, android.graphics.Rect) -> Unit =
+        { selected, start, end, bounds ->
+            if (selected.isNotBlank()) {
+                pendingHighlightSelection = PendingHighlightPicker(
+                    text = selected,
+                    displayedStart = start,
+                    displayedEnd = end,
+                    boundsInWindow = bounds,
+                )
+            }
+        }
+
+    val onRemoveHighlightClick: (Long) -> Unit = { highlightId ->
+        (readerTextView.value as? SafeReaderTextView)?.highlightStylePickerShowing = false
+        pendingHighlightSelection = null
+        highlights.find { it.id == highlightId }?.let { viewModel.deleteHighlight(it) }
+        (readerTextView.value as? SafeReaderTextView)?.refreshHighlightMenuTitle()
+    }
+
     fun currentTopGlobalChar(): Int? {
         if (readerContent.isEmpty()) return null
         val tv = readerTextView.value
@@ -332,19 +445,19 @@ fun ReaderScreen(
         )
     }
 
-    val displayedRenderSig = remember(
+    // 与 TAG_READER_RENDER_SIG / reader_markdown_render_complete 一致（不含划线）。
+    // 切勿用 readerRenderSignature：划线变化会改签名，await 永远对不上 → 遮罩空等约 6.4s。
+    val displayedContentSig = remember(
         displayedContent,
         renderPlainText,
         currentTheme,
         fontSize,
-        displayedHighlights,
     ) {
-        readerRenderSignature(
+        readerContentSignature(
             content = displayedContent,
             renderPlainText = renderPlainText,
             themeName = currentTheme::class.java.name,
             fontSize = fontSize,
-            highlights = displayedHighlights,
         )
     }
 
@@ -471,6 +584,10 @@ fun ReaderScreen(
         pendingScrollRestoreAnchor = null
         pendingScrollRestoreSnapToLine = true
         coverUntilPositionRestore = true
+        readerOpenDbg(
+            "cover=true reason=initWindow win=$start..$end target=$targetChar " +
+                "contentLen=${readerContent.length} epoch=$readerLoadEpoch",
+        )
         clearPendingSavedPositionSnap(readerTextView.value)
         if (isPdfBook) {
             // PDF 与书签跳转一致：按页码恢复，不用 Markdown SavedPosition 文本启发式。
@@ -626,7 +743,7 @@ fun ReaderScreen(
     // 跳转后台预扩上文：目标章节渲染+置顶完成后，在更宽窗口里用跳转同款精确 resolver
     // 把目标章节重新定位到顶部（视觉不动、前文已就绪），使下滑看前文时无撞硬顶+异步重渲染的停顿。
     // 不走 length-diff 扩窗恢复：大窗口下其「后缀渲染长度不变」假设不成立，会偏移几千字导致乱跳。
-    LaunchedEffect(prefetchUpTargetChar, displayWindowStartChar, displayedRenderSig) {
+    LaunchedEffect(prefetchUpTargetChar, displayWindowStartChar, displayedContentSig) {
         val target = prefetchUpTargetChar
         if (target <= 0) return@LaunchedEffect
         if (pageTurnMode != ReaderPageTurnMode.VerticalScroll) {
@@ -646,7 +763,7 @@ fun ReaderScreen(
         }
         val tv = awaitReaderMarkdownRenderReady(
             tvProvider = { readerTextView.value },
-            expectedRenderSig = displayedRenderSig,
+            expectedRenderSig = displayedContentSig,
         ) ?: return@LaunchedEffect
         // 目标窗口若已改变（用户又跳转/扩窗）则放弃。
         if (displayWindowStartChar != target || prefetchUpTargetChar != target) return@LaunchedEffect
@@ -700,7 +817,7 @@ fun ReaderScreen(
     LaunchedEffect(
         displayWindowStartChar,
         displayWindowEndChar,
-        displayedRenderSig,
+        displayedContentSig,
         pendingScrollRestoreGlobalChar,
         pendingScrollRestorePdfPageIndex,
         scrollRestoreGeneration,
@@ -714,6 +831,7 @@ fun ReaderScreen(
             pendingScrollRestoreAnchor = null
             pendingScrollRestoreSnapToLine = true
             coverUntilPositionRestore = false
+            readerOpenDbg("cover=false reason=emptyContent")
             return@LaunchedEffect
         }
         // 必须在 await 前捕获：等待期间用户滑动会递增 generation，完成后应中止而非沿用新 gen 执行旧 snap。
@@ -749,6 +867,7 @@ fun ReaderScreen(
             pendingScrollRestoreAnchor = null
             pendingScrollRestoreSnapToLine = true
             coverUntilPositionRestore = false
+            readerOpenDbg("cover=false reason=abortRestore gen=$restoreGen")
             windowExpandInFlight = false
             expandRestoreGuard[0] = false
             readerTextView.value?.let {
@@ -777,7 +896,7 @@ fun ReaderScreen(
             }
             else -> awaitReaderMarkdownRenderReady(
                 tvProvider = { readerTextView.value },
-                expectedRenderSig = displayedRenderSig,
+                expectedRenderSig = displayedContentSig,
             )
         } ?: run {
             abortRestoreCleanup()
@@ -878,6 +997,7 @@ fun ReaderScreen(
             if (scrollRestoreGenRef[0] == restoreGen) {
                 clearPendingSavedPositionSnap(tv)
                 coverUntilPositionRestore = false
+                readerOpenDbg("cover=false reason=restoreDone gen=$restoreGen")
                 windowExpandInFlight = false
                 expandRestoreGuard[0] = false
             }
@@ -1060,7 +1180,9 @@ fun ReaderScreen(
                                     readerLineSpacingMultiplier = readerBodyLineSpacing,
                                     highlights = displayedHighlights,
                                     modifier = Modifier.fillMaxSize(),
-                                    onTextSelected = {},
+                                    onHighlightMenuClick = onHighlightMenuClick,
+                                    resolveExistingHighlightId = ::resolveExistingHighlightId,
+                                    onRemoveHighlightClick = onRemoveHighlightClick,
                                     onScroll = { _ ->
                                         val readerTv = readerTextView.value as? SafeReaderTextView
                                         // Compose state 写入同帧不可读：用局部标志避免「已取消 restore 仍挡住扩窗」。
@@ -1086,6 +1208,7 @@ fun ReaderScreen(
                                             pendingScrollRestoreAnchor = null
                                             pendingScrollRestoreSnapToLine = true
                                             coverUntilPositionRestore = false
+                                            readerOpenDbg("cover=false reason=scrollCancelSnap")
                                             clearPendingSavedPositionSnap(readerTv)
                                         }
                                         val restoreBlocking = !restoreCanceledThisScroll &&
@@ -1176,7 +1299,9 @@ fun ReaderScreen(
                                     pageTextViews = pageTextViews,
                                     renderPlainText = renderPlainText,
                                     modifier = Modifier.fillMaxSize(),
-                                    onTextSelected = {},
+                                    onHighlightMenuClick = onHighlightMenuClick,
+                                    resolveExistingHighlightId = ::resolveExistingHighlightId,
+                                    onRemoveHighlightClick = onRemoveHighlightClick,
                                     onReadingVerticalScroll = onReaderVerticalScroll,
                                     onSwipeDownBookmark = onReaderSwipeBookmark,
                                     onCenterTap = {
@@ -1392,97 +1517,209 @@ fun ReaderScreen(
         )
     }
 
-    // 书签列表
+    fun estimateHighlightSourceStart(displayedStart: Int): Int {
+        val contentLen = readerContent.length
+        if (contentLen <= 0) return 0
+        val windowStart: Int
+        val windowEnd: Int
+        if (pageTurnMode != ReaderPageTurnMode.VerticalScroll && pageSpecs.isNotEmpty()) {
+            val pageIdx = pagerState.currentPage.coerceIn(0, pageSpecs.lastIndex)
+            windowStart = pageSpecs[pageIdx].second
+            windowEnd = if (pageIdx + 1 < pageSpecs.size) {
+                pageSpecs[pageIdx + 1].second
+            } else {
+                contentLen
+            }
+        } else {
+            windowStart = displayWindowStartChar
+            windowEnd = displayWindowEndChar.coerceAtMost(contentLen)
+        }
+        val sourceLen = (windowEnd - windowStart).coerceAtLeast(1)
+        if (renderPlainText) {
+            return (windowStart + displayedStart).coerceIn(0, contentLen)
+        }
+        val displayedLen = (readerTextView.value?.text?.length ?: sourceLen).coerceAtLeast(1)
+        return (windowStart + (displayedStart.toLong() * sourceLen / displayedLen).toInt())
+            .coerceIn(0, contentLen)
+    }
+
+    fun jumpToReaderChar(rawPosition: Int, preview: String?) {
+        if (readerContent.isEmpty()) return
+        val contentLen = readerContent.length
+        val totalC = book?.totalChars?.takeIf { it > 0 } ?: contentLen
+        val charPos = resolveGlobalCharPos(rawPosition, contentLen, totalC)
+        val bookmarkPreview = preview
+        val pdfPageIndex = pdfPageIndexForTocOrBookmark(
+            isPdfBook = isPdfBook,
+            tocEntries = tocEntries,
+            readerContent = readerContent,
+            charPos = charPos,
+            tocEntry = null,
+        )
+        if (pageTurnMode != ReaderPageTurnMode.VerticalScroll && pageSpecs.isNotEmpty()) {
+            jumpToGlobalCharInPager(
+                scope = scope,
+                charPos = charPos,
+                contentLen = contentLen,
+                sourceContent = readerContent,
+                renderPlainText = renderPlainText,
+                tocEntries = tocEntries,
+                bookmarkPreviewText = bookmarkPreview,
+                pageSpecs = pageSpecs,
+                pagerState = pagerState,
+                pageTextViews = pageTextViews,
+                assignActiveTextView = { readerTextView.value = it },
+                onProgress = {
+                    viewModel.updateReadingProgressAtChar(charPos, bookmarkPreview)
+                },
+                pdfJumpByPageIndex = isPdfBook,
+                pdfPageIndex = pdfPageIndex,
+            )
+        } else if (isPdfBook && pdfPageIndex != null) {
+            pendingScrollRestoreGlobalChar = null
+            pendingScrollRestoreBookmarkPreview = null
+            pendingScrollRestoreAnchor = null
+            pendingScrollRestoreSnapToLine = true
+            clearPendingSavedPositionSnap(readerTextView.value)
+            coverUntilPositionRestore = true
+            bumpScrollRestoreGeneration()
+            jumpToPdfPageVertically(
+                contentLen = contentLen,
+                chapterBoundaries = chapterBoundaries,
+                pageIndex = pdfPageIndex,
+                tocEntries = tocEntries,
+                setReadingWindow = { start, end ->
+                    displayWindowStartChar = start
+                    displayWindowEndChar = end
+                },
+                onPendingPdfPageIndex = { pendingScrollRestorePdfPageIndex = it },
+                onProgress = {
+                    viewModel.updateReadingProgressAtChar(charPos, null)
+                },
+            )
+        } else {
+            clearPendingScrollCharOffset(readerTextView.value)
+            pendingScrollRestoreBookmarkPreview = bookmarkPreview
+            pendingScrollRestoreAnchor = null
+            pendingScrollRestoreSnapToLine = true
+            coverUntilPositionRestore = true
+            jumpToCharInChunkWindow(
+                contentLen = contentLen,
+                chapterBoundaries = chapterBoundaries,
+                charPos = charPos,
+                setReadingWindow = { start, end ->
+                    displayWindowStartChar = start
+                    displayWindowEndChar = end
+                    stashSavedPositionSnapForPendingRestore(
+                        sourceOffset = charPos,
+                        windowStart = start,
+                        windowEnd = end,
+                        preview = bookmarkPreview,
+                    )
+                },
+                onAnchorGlobalChar = { queueScrollRestore(it) },
+                onProgress = {
+                    viewModel.updateReadingProgressAtChar(charPos, bookmarkPreview)
+                },
+            )
+        }
+    }
+
+    val readerSafeTv = readerTextView.value as? SafeReaderTextView
+    LaunchedEffect(pendingHighlightSelection != null) {
+        readerSafeTv?.highlightStylePickerShowing = pendingHighlightSelection != null
+    }
+
+    pendingHighlightSelection?.let { pending ->
+        var draftColor by remember(pending) { mutableStateOf(Color(lastHighlightColorArgb)) }
+        var draftStyle by remember(pending) { mutableStateOf(lastHighlightStyle) }
+        var draftingHighlightId by remember(pending) { mutableStateOf<Long?>(null) }
+
+        LaunchedEffect(pending) {
+            val tv = readerTextView.value as? SafeReaderTextView
+            tv?.highlightStylePickerShowing = true
+            // 先按选区展示坐标立刻打上默认样式，避免等源码映射/Flow 才出现、或画错位置
+            val previewColor = if (draftColor.alpha < 0.06f) {
+                lastHighlightColorArgb
+            } else {
+                draftColor.toArgb()
+            }
+            tv?.let {
+                applyHighlightDecorationAtRange(
+                    textView = it,
+                    start = pending.displayedStart,
+                    end = pending.displayedEnd,
+                    colorArgb = previewColor,
+                    style = draftStyle,
+                )
+            }
+            // 落库走 ViewModel 作用域，取消选区不会中断写入
+            viewModel.addHighlightFromSelection(
+                selectedText = pending.text,
+                color = draftColor,
+                style = draftStyle,
+                sourceStartHint = estimateHighlightSourceStart(pending.displayedStart),
+            ) { id ->
+                draftingHighlightId = id
+                if (id != null) {
+                    viewModel.updateHighlightAppearance(id, draftColor, draftStyle)
+                }
+                tv?.refreshHighlightMenuTitle()
+            }
+        }
+
+        HighlightStylePopup(
+            selectionBoundsInWindow = pending.boundsInWindow,
+            selectedColor = draftColor,
+            selectedStyle = draftStyle,
+            onPick = { color, style ->
+                draftColor = color
+                draftStyle = style
+                val tv = readerTextView.value as? SafeReaderTextView
+                val previewColor = if (color.alpha < 0.06f) {
+                    lastHighlightColorArgb
+                } else {
+                    color.toArgb()
+                }
+                tv?.let {
+                    applyHighlightDecorationAtRange(
+                        textView = it,
+                        start = pending.displayedStart,
+                        end = pending.displayedEnd,
+                        colorArgb = previewColor,
+                        style = style,
+                    )
+                }
+                draftingHighlightId?.let { id ->
+                    viewModel.updateHighlightAppearance(id, color, style)
+                }
+            },
+            onDismiss = {
+                (readerTextView.value as? SafeReaderTextView)?.highlightStylePickerShowing = false
+                pendingHighlightSelection = null
+            },
+        )
+    }
+
+    // 书签 / 划线列表
     if (showBookmarks) {
         BookmarksSheet(
             bookmarks = bookmarks,
+            highlights = highlights,
             totalChars = book?.totalChars?.takeIf { it > 0 } ?: readerContent.length.coerceAtLeast(1),
             onBookmarkClick = { bookmark ->
-                if (readerContent.isNotEmpty()) {
-                    val position = bookmark.position
-                    val bookmarkPreview = bookmark.previewText
-                    val contentLen = readerContent.length
-                    val totalC = book?.totalChars?.takeIf { it > 0 } ?: contentLen
-                    val charPos = resolveGlobalCharPos(position, contentLen, totalC)
-                    val pdfPageIndex = pdfPageIndexForTocOrBookmark(
-                        isPdfBook = isPdfBook,
-                        tocEntries = tocEntries,
-                        readerContent = readerContent,
-                        charPos = charPos,
-                        tocEntry = null,
-                    )
-                    if (pageTurnMode != ReaderPageTurnMode.VerticalScroll && pageSpecs.isNotEmpty()) {
-                        jumpToGlobalCharInPager(
-                            scope = scope,
-                            charPos = charPos,
-                            contentLen = contentLen,
-                            sourceContent = readerContent,
-                            renderPlainText = renderPlainText,
-                            tocEntries = tocEntries,
-                            bookmarkPreviewText = bookmarkPreview,
-                            pageSpecs = pageSpecs,
-                            pagerState = pagerState,
-                            pageTextViews = pageTextViews,
-                            assignActiveTextView = { readerTextView.value = it },
-                            onProgress = {
-                                viewModel.updateReadingProgressAtChar(charPos, bookmarkPreview)
-                            },
-                            pdfJumpByPageIndex = isPdfBook,
-                            pdfPageIndex = pdfPageIndex,
-                        )
-                    } else if (isPdfBook && pdfPageIndex != null) {
-                        pendingScrollRestoreGlobalChar = null
-                        pendingScrollRestoreBookmarkPreview = null
-                        pendingScrollRestoreAnchor = null
-                        pendingScrollRestoreSnapToLine = true
-                        clearPendingSavedPositionSnap(readerTextView.value)
-                        coverUntilPositionRestore = true
-                        bumpScrollRestoreGeneration()
-                        jumpToPdfPageVertically(
-                            contentLen = contentLen,
-                            chapterBoundaries = chapterBoundaries,
-                            pageIndex = pdfPageIndex,
-                            tocEntries = tocEntries,
-                            setReadingWindow = { start, end ->
-                                displayWindowStartChar = start
-                                displayWindowEndChar = end
-                            },
-                            onPendingPdfPageIndex = { pendingScrollRestorePdfPageIndex = it },
-                            onProgress = {
-                                viewModel.updateReadingProgressAtChar(charPos, null)
-                            },
-                        )
-                    } else {
-                        clearPendingScrollCharOffset(readerTextView.value)
-                        pendingScrollRestoreBookmarkPreview = bookmarkPreview
-                        pendingScrollRestoreAnchor = null
-                        pendingScrollRestoreSnapToLine = true
-                        coverUntilPositionRestore = true
-                        jumpToCharInChunkWindow(
-                            contentLen = contentLen,
-                            chapterBoundaries = chapterBoundaries,
-                            charPos = charPos,
-                            setReadingWindow = { start, end ->
-                                displayWindowStartChar = start
-                                displayWindowEndChar = end
-                                stashSavedPositionSnapForPendingRestore(
-                                    sourceOffset = charPos,
-                                    windowStart = start,
-                                    windowEnd = end,
-                                    preview = bookmarkPreview,
-                                )
-                            },
-                            onAnchorGlobalChar = { queueScrollRestore(it) },
-                            onProgress = {
-                                viewModel.updateReadingProgressAtChar(charPos, bookmarkPreview)
-                            },
-                        )
-                    }
-                }
+                jumpToReaderChar(bookmark.position, bookmark.previewText)
                 showBookmarks = false
             },
             onDeleteBookmark = { bookmark ->
                 viewModel.deleteBookmark(bookmark)
+            },
+            onHighlightClick = { highlight ->
+                jumpToReaderChar(highlight.startPosition, highlight.highlightedText)
+                showBookmarks = false
+            },
+            onDeleteHighlight = { highlight ->
+                viewModel.deleteHighlight(highlight)
             },
             onDismiss = {
                 showBookmarks = false
@@ -1663,5 +1900,34 @@ private fun DiagramPreviewDialog(
             }
         }
     }
+}
+
+private data class PendingHighlightPicker(
+    val text: String,
+    val displayedStart: Int,
+    val displayedEnd: Int,
+    val boundsInWindow: android.graphics.Rect,
+)
+
+/** 在当前页/窗的相对坐标划线列表中查找与选区匹配的划线 id。 */
+internal fun findHighlightIdForDisplayedSelection(
+    pageLocalHighlights: List<HighlightEntity>,
+    text: String,
+    displayedStart: Int,
+    displayedEnd: Int,
+): Long? {
+    if (text.isEmpty() || displayedEnd <= displayedStart) return null
+    pageLocalHighlights.firstOrNull {
+        it.startPosition == displayedStart && it.endPosition == displayedEnd
+    }?.id?.let { return it }
+    pageLocalHighlights.firstOrNull {
+        it.highlightedText == text && it.startPosition == displayedStart
+    }?.id?.let { return it }
+    return pageLocalHighlights.firstOrNull { h ->
+        h.highlightedText == text &&
+            displayedStart < h.endPosition &&
+            displayedEnd > h.startPosition &&
+            kotlin.math.abs(h.startPosition - displayedStart) <= 2
+    }?.id
 }
 

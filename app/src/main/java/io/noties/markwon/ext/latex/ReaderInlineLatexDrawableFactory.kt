@@ -43,12 +43,8 @@ internal class ReaderInlineLatexLoader(
 ) : JLatexMathPlugin.JLatextAsyncDrawableLoader(config) {
 
     override fun placeholder(drawable: AsyncDrawable): android.graphics.drawable.Drawable? {
-        if (drawable !is JLatextAsyncDrawable || drawable.isBlock) return null
-        return runCatching {
-            ReaderInlineLatexDrawableFactory.create(
-                config = config,
-                latex = normalizeInlineLatex(drawable.destination),
-            )
-        }.getOrNull()
+        // 勿在 toMarkdown 时同步 JLatexMathDrawable.build()：公式书会把首屏卡在后台线程数秒，
+        // 且 placeholder==result 还会在 attach 后再 load 一次导致二次布局。交给异步 loader。
+        return null
     }
 }

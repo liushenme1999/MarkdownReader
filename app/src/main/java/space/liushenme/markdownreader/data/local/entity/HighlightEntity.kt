@@ -27,6 +27,8 @@ data class HighlightEntity(
     val endPosition: Int,
     val highlightedText: String,
     val color: Int = 0xFFFFFF00.toInt(), // 默认黄色
+    /** [space.liushenme.markdownreader.model.HighlightStyle.storageKey] */
+    val style: String = "background",
     val note: String? = null,
     val createTime: Date = Date()
 )

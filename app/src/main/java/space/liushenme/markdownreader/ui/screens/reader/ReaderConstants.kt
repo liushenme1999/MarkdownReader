@@ -101,8 +101,18 @@ import kotlin.math.roundToInt
 internal fun readingChromeShade(readingBackground: Color): Color =
     lerp(readingBackground, Color.Black, 0.04f)
 
-/** [TextView] 上用于判断是否需要重新执行 Markwon 渲染的 tag key */
+/** 进页空白/遮罩/渲染分阶段耗时，过滤 logcat: `adb logcat -s ReaderOpenDbg` */
+internal const val READER_OPEN_DBG = "ReaderOpenDbg"
+
+internal fun readerOpenDbg(msg: String) {
+    android.util.Log.d(READER_OPEN_DBG, "${android.os.SystemClock.uptimeMillis()} $msg")
+}
+
+/** [TextView] 上用于判断是否需要重新执行 Markwon 渲染的 tag key（不含划线） */
 internal const val TAG_READER_RENDER_SIG = 0x4d445f52 // "MD_R"
+
+/** [TextView] 上用于判断是否仅需重绘划线 span 的 tag key */
+internal const val TAG_READER_HIGHLIGHT_SIG = 0x4d445f48 // "MD_H"
 
 /** 记录上次应用的行距倍数，行距变化时触发 TextView 重排以更新表格 span 补偿 */
 internal const val TAG_READER_LINE_SPACING = 0x4d445f4c // "MD_L"
