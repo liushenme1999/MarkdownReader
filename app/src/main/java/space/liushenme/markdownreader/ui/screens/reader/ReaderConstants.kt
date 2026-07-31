@@ -73,6 +73,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.widget.TextViewCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
+import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
@@ -109,16 +110,16 @@ internal fun readerOpenDbg(msg: String) {
 }
 
 /** [TextView] 上用于判断是否需要重新执行 Markwon 渲染的 tag key（不含划线） */
-internal const val TAG_READER_RENDER_SIG = 0x4d445f52 // "MD_R"
+internal val TAG_READER_RENDER_SIG = R.id.reader_render_sig
 
 /** [TextView] 上用于判断是否仅需重绘划线 span 的 tag key */
-internal const val TAG_READER_HIGHLIGHT_SIG = 0x4d445f48 // "MD_H"
+internal val TAG_READER_HIGHLIGHT_SIG = R.id.reader_highlight_sig
 
 /** 记录上次应用的行距倍数，行距变化时触发 TextView 重排以更新表格 span 补偿 */
-internal const val TAG_READER_LINE_SPACING = 0x4d445f4c // "MD_L"
+internal val TAG_READER_LINE_SPACING = R.id.reader_line_spacing
 
 /** 滚动恢复代数：防止已取消的 LaunchedEffect 在 tv.post 中仍执行旧的 snap 滚动 */
-internal const val TAG_READER_SCROLL_RESTORE_GEN = 0x4d445f47 // "MD_G"
+internal val TAG_READER_SCROLL_RESTORE_GEN = R.id.reader_scroll_restore_gen
 
 /** 顶栏/底栏显示时，累计垂直滚动超过该像素后再收起（避免轻微抖动误触） */
 internal val ReaderHideChromeScrollThreshold = 56.dp

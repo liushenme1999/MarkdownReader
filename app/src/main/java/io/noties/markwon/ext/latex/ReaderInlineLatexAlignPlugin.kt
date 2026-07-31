@@ -42,6 +42,7 @@ internal class ReaderInlineLatexAlignPlugin(
                         config = config,
                         context = appContext,
                         textColor = textColor,
+                        sourceLatex = latex,
                     ),
                 )
                 return@on

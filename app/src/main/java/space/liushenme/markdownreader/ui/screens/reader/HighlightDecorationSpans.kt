@@ -77,11 +77,20 @@ internal fun drawReaderHighlightDecorations(
             drawHighlightBackgroundRange(canvas, layout, start, end, span.backgroundColor)
         }
     } else {
+        val density = textView.resources.displayMetrics.density.coerceAtLeast(1f)
         text.getSpans(0, text.length, HighlightUnderlineSpan::class.java).forEach { span ->
             val start = text.getSpanStart(span)
             val end = text.getSpanEnd(span)
             if (start < 0 || end <= start) return@forEach
-            drawHighlightUnderlineRange(canvas, layout, start, end, span.color, span.wavy)
+            drawHighlightUnderlineRange(
+                canvas = canvas,
+                layout = layout,
+                start = start,
+                end = end,
+                color = span.color,
+                wavy = span.wavy,
+                density = density,
+            )
         }
     }
     canvas.restore()
@@ -127,11 +136,17 @@ private fun drawHighlightUnderlineRange(
     end: Int,
     color: Int,
     wavy: Boolean,
+    density: Float,
 ) {
     val last = (end - 1).coerceAtLeast(start)
     val firstLine = layout.getLineForOffset(start)
     val lastLine = layout.getLineForOffset(last)
     highlightStrokePaint.color = color
+    // 相对 baseline 下移，避免贴住汉字底部；波浪上拱再额外让出振幅。
+    val gapBelowBaseline = (5.5f * density).coerceIn(8f, 22f)
+    val waveAmp = (2.2f * density).coerceIn(3f, 8f)
+    val waveStep = (5.5f * density).coerceIn(8f, 16f)
+    highlightStrokePaint.strokeWidth = (1.15f * density).coerceIn(2.5f, 4.5f)
     for (line in firstLine..lastLine) {
         val lineStart = layout.getLineStart(line)
         val lineEnd = layout.getLineEnd(line)
@@ -147,16 +162,17 @@ private fun drawHighlightUnderlineRange(
         if (right <= left + 1f) continue
 
         val baseline = layout.getLineBaseline(line)
-        val y = baseline + 4.5f
+        // 直线：baseline 下方留空隙；波浪：中线再下移 waveAmp，使波峰仍在字下。
+        val y = baseline + gapBelowBaseline + if (wavy) waveAmp else 0f
         if (wavy) {
             highlightWavePath.reset()
             var x = left
             var up = true
             highlightWavePath.moveTo(x, y)
             while (x < right) {
-                val next = (x + 7f).coerceAtMost(right)
+                val next = (x + waveStep).coerceAtMost(right)
                 val mid = (x + next) / 2f
-                val cy = if (up) y - 3.5f else y + 3.5f
+                val cy = if (up) y - waveAmp else y + waveAmp
                 highlightWavePath.quadTo(mid, cy, next, y)
                 up = !up
                 x = next

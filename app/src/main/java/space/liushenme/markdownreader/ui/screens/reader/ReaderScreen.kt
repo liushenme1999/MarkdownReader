@@ -394,9 +394,10 @@ fun ReaderScreen(
 
     val onHighlightMenuClick: (String, Int, Int, android.graphics.Rect) -> Unit =
         { selected, start, end, bounds ->
-            if (selected.isNotBlank()) {
+            // 公式选区底层曾是 \uFFFC，extract 后应已是 $…$；仍要求非空白，避免空划线。
+            if (selected.isNotBlank() && end > start) {
                 pendingHighlightSelection = PendingHighlightPicker(
-                    text = selected,
+                    text = selected.trim(),
                     displayedStart = start,
                     displayedEnd = end,
                     boundsInWindow = bounds,
@@ -542,6 +543,30 @@ fun ReaderScreen(
      * 误取消恢复后 scrollY 停在 0，表现为跳回开头。
      */
     val expandRestoreGuard = remember(readerContent) { booleanArrayOf(false) }
+
+    /** TextView 侧 snap/置顶已完成后揭罩，并取消仍在跑的 Compose restore，避免二次滚动。 */
+    fun onReaderOpenPositionReady() {
+        if (!coverUntilPositionRestore &&
+            pendingScrollRestoreGlobalChar == null &&
+            pendingScrollRestorePdfPageIndex == null &&
+            pendingScrollRestoreBookmarkPreview == null
+        ) {
+            return
+        }
+        coverUntilPositionRestore = false
+        readerOpenDbg("cover=false reason=openPositionReady")
+        // 仅取消打开/书签类 snap restore；扩窗 restore（snapToLine=false）仍交给 Compose。
+        if (pendingScrollRestoreSnapToLine) {
+            bumpScrollRestoreGeneration()
+            pendingScrollRestoreGlobalChar = null
+            pendingScrollRestoreBookmarkPreview = null
+            pendingScrollRestorePdfPageIndex = null
+            pendingScrollRestoreAnchor = null
+            pendingScrollRestoreSnapToLine = true
+            windowExpandInFlight = false
+            expandRestoreGuard[0] = false
+        }
+    }
 
     LaunchedEffect(showTopBar) {
         scrollAccumForHideChrome = 0
@@ -1165,186 +1190,188 @@ fun ReaderScreen(
                             readerPaddingDp
                         }
 
-                        @Composable
-                        fun ReaderHost(modifier: Modifier) {
-                            Box(modifier = modifier) {
-                            if (pageTurnMode == ReaderPageTurnMode.VerticalScroll) {
-                                MarkdownReaderView(
-                                    content = displayedContent,
-                                    renderPlainText = renderPlainText,
-                                    theme = currentTheme,
-                                    fontSize = fontSize,
-                                    readerPaddingDp = readerPaddingDp,
-                                    readerPaddingHorizontalDp = readerHorizontalPaddingDp,
-                                    readerPaddingTopDp = readerPaddingTopDp,
-                                    readerLineSpacingMultiplier = readerBodyLineSpacing,
-                                    highlights = displayedHighlights,
-                                    modifier = Modifier.fillMaxSize(),
-                                    onHighlightMenuClick = onHighlightMenuClick,
-                                    resolveExistingHighlightId = ::resolveExistingHighlightId,
-                                    onRemoveHighlightClick = onRemoveHighlightClick,
-                                    onScroll = { _ ->
-                                        val readerTv = readerTextView.value as? SafeReaderTextView
-                                        // Compose state 写入同帧不可读：用局部标志避免「已取消 restore 仍挡住扩窗」。
-                                        var restoreCanceledThisScroll = false
-                                        if (readerTv != null) {
-                                            // 任意滚动都解除标题 snap 锁定（含惯性滑动）；扩窗 restore 不受此 tag 影响。
-                                            clearPendingScrollCharOffset(readerTv)
-                                        }
-                                        // 任意滚动（含惯性）都取消目录/书签 snap 的 Compose restore；
-                                        // 仅手指拖动时取消会漏掉「渲染完成前已松手惯性滑动」，导致晚到的 tv.post 把视口拉回标题上方。
-                                        val cancelSnapRestore = !expandRestoreGuard[0] &&
-                                            pendingScrollRestoreSnapToLine &&
-                                            !windowExpandInFlight &&
-                                            (pendingScrollRestoreGlobalChar != null ||
-                                                pendingScrollRestorePdfPageIndex != null ||
-                                                pendingScrollRestoreBookmarkPreview != null)
-                                        if (cancelSnapRestore) {
-                                            restoreCanceledThisScroll = true
-                                            bumpScrollRestoreGeneration()
-                                            pendingScrollRestoreGlobalChar = null
-                                            pendingScrollRestoreBookmarkPreview = null
-                                            pendingScrollRestorePdfPageIndex = null
-                                            pendingScrollRestoreAnchor = null
-                                            pendingScrollRestoreSnapToLine = true
-                                            coverUntilPositionRestore = false
-                                            readerOpenDbg("cover=false reason=scrollCancelSnap")
-                                            clearPendingSavedPositionSnap(readerTv)
-                                        }
-                                        val restoreBlocking = !restoreCanceledThisScroll &&
-                                            (pendingScrollRestoreGlobalChar != null ||
-                                                pendingScrollRestorePdfPageIndex != null)
-                                        if (readerTv != null &&
-                                            readerTv.allowReaderScrollSideEffects &&
-                                            !readerTv.shouldSuppressReaderScrollSideEffects() &&
-                                            !windowExpandInFlight &&
-                                            !restoreBlocking
-                                        ) {
-                                            val now = System.currentTimeMillis()
-                                            if (now - lastScrollProgressSaveMs >= 200L) {
-                                                lastScrollProgressSaveMs = now
-                                                // PDF 必须走页码反查；TXT/MD 用 currentTopGlobalChar 统一入口。
-                                                val estimated = currentTopGlobalChar() ?: return@MarkdownReaderView
-                                                lastScrollTopGlobalChar = estimated
-                                                android.util.Log.d(
-                                                    "ReaderCoordDbg",
-                                                    "scrollTop estimated=$estimated scrollY=${readerTv.scrollY} " +
-                                                        "winStart=$displayWindowStartChar winEnd=$displayWindowEndChar " +
-                                                        "contentLen=${readerContent.length}",
-                                                )
-                                                val preview = if (isPdfBook) {
-                                                    null
-                                                } else {
-                                                    previewPlainTextFromTextViewTop(readerTv)
-                                                }
-                                                viewModel.updateReadingProgressAtChar(estimated, preview)
-                                            }
-                                        }
-                                        if (readerTv?.allowReaderScrollSideEffects != true ||
-                                            !readerTv.isUserVerticalScrollDrag() ||
-                                            readerTv.shouldSuppressReaderScrollSideEffects() ||
-                                            readerTv.isGestureOnDiagram() ||
-                                            isViewportTopOnDiagramSpan(readerTv) ||
-                                            windowExpandInFlight ||
-                                            restoreBlocking
-                                        ) {
-                                            return@MarkdownReaderView
-                                        }
-                                        val winStart = displayWindowStartChar
-                                        val winEnd = displayWindowEndChar
-                                        // 方向门控：目录置顶后 scrollY=0 且 winStart>0，若无方向判断，向下滑第一帧
-                                        // 也会因 shouldTriggerReaderExpandUp(scrollY<=0) 误触发向上扩窗 → 向上乱跳。
-                                        if (winStart > 0 &&
-                                            readerTv.isDragTowardPrevious() &&
-                                            shouldTriggerReaderExpandUp(readerTv) &&
-                                            readerTv.consumeWindowExpandThisGesture()
-                                        ) {
-                                            windowExpandInFlight = true
-                                            expandWindowUpToken++
-                                        } else if (winEnd < readerContent.length &&
-                                            readerTv.isDragTowardNext() &&
-                                            shouldTriggerReaderExpandDown(readerTv) &&
-                                            readerTv.consumeWindowExpandThisGesture()
-                                        ) {
-                                            windowExpandInFlight = true
-                                            expandWindowDownToken++
-                                        }
-                                    },
-                                    onReadingVerticalScroll = onReaderVerticalScroll,
-                                    onViewReady = { tv -> readerTextView.value = tv },
-                                    allowVerticalScroll = true,
-                                    onSwipeRightBookmark = onReaderSwipeBookmark,
-                                    onCenterTap = {
-                                        if (!readerTextSelectionActive) showTopBar = !showTopBar
-                                    },
-                                    onDiagramTap = { bitmap ->
-                                        showTopBar = false
-                                        diagramPreviewBitmap = bitmap
-                                    },
-                                    onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange,
-                                    pdfFullWidthImages = isPdfBook,
-                                )
-                            } else {
-                                ReaderPagedMarkdownHost(
-                                    pages = pageSpecs,
-                                    pageTurnMode = pageTurnMode,
-                                    pagerState = pagerState,
-                                    theme = currentTheme,
-                                    fontSize = fontSize,
-                                    readerPaddingDp = readerPaddingDp,
-                                    readerPaddingHorizontalDp = readerHorizontalPaddingDp,
-                                    readerPaddingTopDp = readerPaddingTopDp,
-                                    readerLineSpacingMultiplier = readerBodyLineSpacing,
-                                    highlights = highlights,
-                                    pageTextViews = pageTextViews,
-                                    renderPlainText = renderPlainText,
-                                    modifier = Modifier.fillMaxSize(),
-                                    onHighlightMenuClick = onHighlightMenuClick,
-                                    resolveExistingHighlightId = ::resolveExistingHighlightId,
-                                    onRemoveHighlightClick = onRemoveHighlightClick,
-                                    onReadingVerticalScroll = onReaderVerticalScroll,
-                                    onSwipeDownBookmark = onReaderSwipeBookmark,
-                                    onCenterTap = {
-                                        if (!readerTextSelectionActive) showTopBar = !showTopBar
-                                    },
-                                    onDiagramTap = { bitmap ->
-                                        showTopBar = false
-                                        diagramPreviewBitmap = bitmap
-                                    },
-                                    onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange,
-                                    onPageTextViewReady = { pageIdx, tv ->
-                                        if (pageIdx == pagerState.currentPage) {
-                                            readerTextView.value = tv
-                                        }
-                                    },
-                                    pdfFullWidthImages = isPdfBook,
-                                )
-                            }
-                            // 打开书/书签定位完成前遮住正文，避免先露出窗口开头（更早章节）再跳回。
-                            if (coverUntilPositionRestore) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(currentTheme.backgroundColor),
-                                )
-                            }
-                            }
-                        }
-
-                        if (immersiveChapterTitle != null) {
-                            Column(Modifier.fillMaxSize()) {
+                        // 始终同一 Column 槽位：章节条显隐不得切换「裸 ReaderHost / Column 包一层」，
+                        // 否则 AndroidView factory 会反复重建 → 周期性全量 Markwon。
+                        Column(Modifier.fillMaxSize()) {
+                            if (immersiveChapterTitle != null) {
                                 ReaderImmersiveChapterTitleBar(
                                     title = immersiveChapterTitle,
-                                    theme = currentTheme
-                                )
-                                ReaderHost(
-                                    Modifier
-                                        .weight(1f)
-                                        .fillMaxWidth()
+                                    theme = currentTheme,
                                 )
                             }
-                        } else {
-                            ReaderHost(Modifier.fillMaxSize())
+                            key(bookId, pageTurnMode) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth(),
+                                ) {
+                                    if (pageTurnMode == ReaderPageTurnMode.VerticalScroll) {
+                                        MarkdownReaderView(
+                                            content = displayedContent,
+                                            renderPlainText = renderPlainText,
+                                            theme = currentTheme,
+                                            fontSize = fontSize,
+                                            readerPaddingDp = readerPaddingDp,
+                                            readerPaddingHorizontalDp = readerHorizontalPaddingDp,
+                                            readerPaddingTopDp = readerPaddingTopDp,
+                                            readerLineSpacingMultiplier = readerBodyLineSpacing,
+                                            highlights = displayedHighlights,
+                                            modifier = Modifier.fillMaxSize(),
+                                            onHighlightMenuClick = onHighlightMenuClick,
+                                            resolveExistingHighlightId = ::resolveExistingHighlightId,
+                                            onRemoveHighlightClick = onRemoveHighlightClick,
+                                            onScroll = { _ ->
+                                                val readerTv = readerTextView.value as? SafeReaderTextView
+                                                // Compose state 写入同帧不可读：用局部标志避免「已取消 restore 仍挡住扩窗」。
+                                                var restoreCanceledThisScroll = false
+                                                if (readerTv != null) {
+                                                    // 任意滚动都解除标题 snap 锁定（含惯性滑动）；扩窗 restore 不受此 tag 影响。
+                                                    clearPendingScrollCharOffset(readerTv)
+                                                }
+                                                // 任意滚动（含惯性）都取消目录/书签 snap 的 Compose restore；
+                                                // 仅手指拖动时取消会漏掉「渲染完成前已松手惯性滑动」，导致晚到的 tv.post 把视口拉回标题上方。
+                                                val cancelSnapRestore = !expandRestoreGuard[0] &&
+                                                    pendingScrollRestoreSnapToLine &&
+                                                    !windowExpandInFlight &&
+                                                    (pendingScrollRestoreGlobalChar != null ||
+                                                        pendingScrollRestorePdfPageIndex != null ||
+                                                        pendingScrollRestoreBookmarkPreview != null)
+                                                if (cancelSnapRestore) {
+                                                    restoreCanceledThisScroll = true
+                                                    bumpScrollRestoreGeneration()
+                                                    pendingScrollRestoreGlobalChar = null
+                                                    pendingScrollRestoreBookmarkPreview = null
+                                                    pendingScrollRestorePdfPageIndex = null
+                                                    pendingScrollRestoreAnchor = null
+                                                    pendingScrollRestoreSnapToLine = true
+                                                    coverUntilPositionRestore = false
+                                                    readerOpenDbg("cover=false reason=scrollCancelSnap")
+                                                    clearPendingSavedPositionSnap(readerTv)
+                                                }
+                                                val restoreBlocking = !restoreCanceledThisScroll &&
+                                                    (pendingScrollRestoreGlobalChar != null ||
+                                                        pendingScrollRestorePdfPageIndex != null)
+                                                if (readerTv != null &&
+                                                    readerTv.allowReaderScrollSideEffects &&
+                                                    !readerTv.shouldSuppressReaderScrollSideEffects() &&
+                                                    !windowExpandInFlight &&
+                                                    !restoreBlocking
+                                                ) {
+                                                    val now = System.currentTimeMillis()
+                                                    if (now - lastScrollProgressSaveMs >= 200L) {
+                                                        lastScrollProgressSaveMs = now
+                                                        // PDF 必须走页码反查；TXT/MD 用 currentTopGlobalChar 统一入口。
+                                                        val estimated = currentTopGlobalChar()
+                                                            ?: return@MarkdownReaderView
+                                                        lastScrollTopGlobalChar = estimated
+                                                        android.util.Log.d(
+                                                            "ReaderCoordDbg",
+                                                            "scrollTop estimated=$estimated scrollY=${readerTv.scrollY} " +
+                                                                "winStart=$displayWindowStartChar winEnd=$displayWindowEndChar " +
+                                                                "contentLen=${readerContent.length}",
+                                                        )
+                                                        val preview = if (isPdfBook) {
+                                                            null
+                                                        } else {
+                                                            previewPlainTextFromTextViewTop(readerTv)
+                                                        }
+                                                        viewModel.updateReadingProgressAtChar(
+                                                            estimated,
+                                                            preview,
+                                                        )
+                                                    }
+                                                }
+                                                if (readerTv?.allowReaderScrollSideEffects != true ||
+                                                    !readerTv.isUserVerticalScrollDrag() ||
+                                                    readerTv.shouldSuppressReaderScrollSideEffects() ||
+                                                    readerTv.isGestureOnDiagram() ||
+                                                    isViewportTopOnDiagramSpan(readerTv) ||
+                                                    windowExpandInFlight ||
+                                                    restoreBlocking
+                                                ) {
+                                                    return@MarkdownReaderView
+                                                }
+                                                val winStart = displayWindowStartChar
+                                                val winEnd = displayWindowEndChar
+                                                // 方向门控：目录置顶后 scrollY=0 且 winStart>0，若无方向判断，向下滑第一帧
+                                                // 也会因 shouldTriggerReaderExpandUp(scrollY<=0) 误触发向上扩窗 → 向上乱跳。
+                                                if (winStart > 0 &&
+                                                    readerTv.isDragTowardPrevious() &&
+                                                    shouldTriggerReaderExpandUp(readerTv) &&
+                                                    readerTv.consumeWindowExpandThisGesture()
+                                                ) {
+                                                    windowExpandInFlight = true
+                                                    expandWindowUpToken++
+                                                } else if (winEnd < readerContent.length &&
+                                                    readerTv.isDragTowardNext() &&
+                                                    shouldTriggerReaderExpandDown(readerTv) &&
+                                                    readerTv.consumeWindowExpandThisGesture()
+                                                ) {
+                                                    windowExpandInFlight = true
+                                                    expandWindowDownToken++
+                                                }
+                                            },
+                                            onReadingVerticalScroll = onReaderVerticalScroll,
+                                            onViewReady = { tv -> readerTextView.value = tv },
+                                            allowVerticalScroll = true,
+                                            onSwipeRightBookmark = onReaderSwipeBookmark,
+                                            onCenterTap = {
+                                                if (!readerTextSelectionActive) showTopBar = !showTopBar
+                                            },
+                                            onDiagramTap = { bitmap ->
+                                                showTopBar = false
+                                                diagramPreviewBitmap = bitmap
+                                            },
+                                            onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange,
+                                            pdfFullWidthImages = isPdfBook,
+                                            onOpenPositionReady = ::onReaderOpenPositionReady,
+                                        )
+                                    } else {
+                                        ReaderPagedMarkdownHost(
+                                            pages = pageSpecs,
+                                            pageTurnMode = pageTurnMode,
+                                            pagerState = pagerState,
+                                            theme = currentTheme,
+                                            fontSize = fontSize,
+                                            readerPaddingDp = readerPaddingDp,
+                                            readerPaddingHorizontalDp = readerHorizontalPaddingDp,
+                                            readerPaddingTopDp = readerPaddingTopDp,
+                                            readerLineSpacingMultiplier = readerBodyLineSpacing,
+                                            highlights = highlights,
+                                            pageTextViews = pageTextViews,
+                                            renderPlainText = renderPlainText,
+                                            modifier = Modifier.fillMaxSize(),
+                                            onHighlightMenuClick = onHighlightMenuClick,
+                                            resolveExistingHighlightId = ::resolveExistingHighlightId,
+                                            onRemoveHighlightClick = onRemoveHighlightClick,
+                                            onReadingVerticalScroll = onReaderVerticalScroll,
+                                            onSwipeDownBookmark = onReaderSwipeBookmark,
+                                            onCenterTap = {
+                                                if (!readerTextSelectionActive) showTopBar = !showTopBar
+                                            },
+                                            onDiagramTap = { bitmap ->
+                                                showTopBar = false
+                                                diagramPreviewBitmap = bitmap
+                                            },
+                                            onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange,
+                                            onPageTextViewReady = { pageIdx, tv ->
+                                                if (pageIdx == pagerState.currentPage) {
+                                                    readerTextView.value = tv
+                                                }
+                                            },
+                                            pdfFullWidthImages = isPdfBook,
+                                        )
+                                    }
+                                    // 打开书/书签定位完成前遮住正文，避免先露出窗口开头（更早章节）再跳回。
+                                    if (coverUntilPositionRestore) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .background(currentTheme.backgroundColor),
+                                        )
+                                    }
+                                }
+                            }
                         }
                     } else {
                         Box(

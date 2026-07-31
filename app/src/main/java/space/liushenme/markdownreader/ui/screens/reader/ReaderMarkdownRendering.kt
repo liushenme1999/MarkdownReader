@@ -206,6 +206,16 @@ internal fun applyReaderTextContent(
         highlightColorArgb = highlightColorArgb,
         sourceContentLength = content.length,
     )
+    val prevSig = textView.getTag(TAG_READER_RENDER_SIG) as? String
+    val prevComplete = textView.getTag(R.id.reader_markdown_render_complete) as? String
+    // 同签名已在渲染中或已完成：跳过，避免 AndroidView 误重建 / 周期重组触发全量 Markwon。
+    if (prevSig == renderSig) {
+        readerOpenDbg(
+            "markwonQueue skip sameSig complete=${prevComplete == renderSig} " +
+                "contentLen=${content.length}",
+        )
+        return
+    }
     textView.setTag(TAG_READER_RENDER_SIG, renderSig)
     // 正文异步渲染期间可能先刷过划线签名；清掉以免完成后被「已同步」挡住二次刷新。
     textView.setTag(TAG_READER_HIGHLIGHT_SIG, null)
@@ -267,10 +277,23 @@ internal fun applyMarkdownContent(
         // 打开书/书签 snap 次之：同帧滚到目标，避免 scrollY=0 先画一帧「别的章节」再跳回。
         // 扩窗滚动恢复交给 onLayout（首帧 draw 前）。此处若 layout 未就绪不要 post，
         // 否则会在 scrollY=0 先画一帧「开头」再跳回。
-        if (!applyReaderScrollToTopIfAny(textView, clearAfter = true)) {
-            if (!applyStashedSavedPositionSnapIfAny(textView)) {
-                applyStashedSourceScrollRestoreIfAny(textView, renderPlainText = false)
+        val positioned = when {
+            applyReaderScrollToTopIfAny(textView, clearAfter = true) -> {
+                (textView as? SafeReaderTextView)?.signalOpenPositionReady("finishScrollToTop")
+                true
             }
+            applyStashedSavedPositionSnapIfAny(textView) -> {
+                (textView as? SafeReaderTextView)?.signalOpenPositionReady("finishSnap")
+                true
+            }
+            else -> {
+                applyStashedSourceScrollRestoreIfAny(textView, renderPlainText = false)
+                false
+            }
+        }
+        if (!positioned && !isReaderTextViewLayoutReady(textView)) {
+            // 促发首帧 layout；onLayout 里会再 snap 并 signalOpenPositionReady。
+            textView.requestLayout()
         }
         val anchorIndex = textView.getTag(R.id.markdown_anchor_index) as? space.liushenme.markdownreader.markdown.MarkdownAnchorIndex
         if (anchorIndex != null) {
@@ -291,6 +314,7 @@ internal fun applyMarkdownContent(
     }
 
     textView.setTag(R.id.reader_markdown_render_complete, null)
+    (textView as? SafeReaderTextView)?.clearOpenPositionReadySignal()
     // prepareMarkdown / rewriteCachedUrls / toMarkdown 全部进后台，避免进页主线程卡顿。
     val appContext = textView.context.applicationContext
     val renderT0 = android.os.SystemClock.uptimeMillis()
@@ -362,6 +386,7 @@ internal fun MarkdownReaderView(
     onDiagramTap: (android.graphics.Bitmap) -> Unit = {},
     onReaderTextSelectionActiveChange: (Boolean) -> Unit = {},
     pdfFullWidthImages: Boolean = false,
+    onOpenPositionReady: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val pdfPagedLayout = pdfFullWidthImages && !allowVerticalScroll
@@ -370,9 +395,11 @@ internal fun MarkdownReaderView(
     }
     val touchState = remember { ReaderTouchState() }
     val slop = ViewConfiguration.get(context).scaledTouchSlop
+    val latestOpenPositionReady by rememberUpdatedState(onOpenPositionReady)
 
     AndroidView(
         factory = { ctx ->
+            readerOpenDbg("androidView factory contentLen=${content.length}")
             SafeReaderTextView(ctx).apply {
                 this.allowVerticalScroll = allowVerticalScroll
                 this.renderPlainTextBody = renderPlainText
@@ -392,6 +419,7 @@ internal fun MarkdownReaderView(
                 ReaderTableSpacing.lineSpacingMultiplier = readerLineSpacingMultiplier
                 setLineSpacing(0f, readerLineSpacingMultiplier)
                 setTag(TAG_READER_LINE_SPACING, readerLineSpacingMultiplier)
+                this.onOpenPositionReady = { latestOpenPositionReady() }
 
                 val sig0 = readerContentSignature(
                     content = content,
@@ -438,7 +466,10 @@ internal fun MarkdownReaderView(
         },
         update = { textView ->
             textView.allowVerticalScroll = allowVerticalScroll
-            (textView as? SafeReaderTextView)?.renderPlainTextBody = renderPlainText
+            (textView as? SafeReaderTextView)?.apply {
+                renderPlainTextBody = renderPlainText
+                this.onOpenPositionReady = { latestOpenPositionReady() }
+            }
             textView.onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange
             textView.onHighlightMenuClick = onHighlightMenuClick
             textView.resolveExistingHighlightId = resolveExistingHighlightId
@@ -471,6 +502,11 @@ internal fun MarkdownReaderView(
             val contentChanged = prevContentSig != contentSig
             val highlightsChanged = prevHighlightSig != highlightSig
             if (contentChanged) {
+                readerOpenDbg(
+                    "contentChanged prevNull=${prevContentSig == null} " +
+                        "len=${content.length} hash=${content.hashCode()} " +
+                        "prevTail=${prevContentSig?.takeLast(40)}",
+                )
                 if (pdfPagedLayout) {
                     PdfImageLayoutHelper.clearLayoutState(textView)
                 }
@@ -775,6 +811,25 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     var pendingHighlights: List<HighlightEntity> = emptyList()
     var pendingHighlightColorArgb: Int = 0
     var pendingHighlightSourceLength: Int = -1
+    /**
+     * 打开书/书签定位已落到正确 scroll 后回调（主线程）。
+     * 用于尽早揭开进页遮罩，不必再等 Compose await 轮询。
+     */
+    var onOpenPositionReady: (() -> Unit)? = null
+    /** 同一轮 Markdown 渲染只通知一次揭罩，避免 onLayout 重复 bump restore。 */
+    private var openPositionSignaledForRender: Any? = null
+
+    fun clearOpenPositionReadySignal() {
+        openPositionSignaledForRender = null
+    }
+
+    fun signalOpenPositionReady(reason: String) {
+        val complete = getTag(R.id.reader_markdown_render_complete) ?: return
+        if (openPositionSignaledForRender == complete) return
+        openPositionSignaledForRender = complete
+        readerOpenDbg("openPositionReady reason=$reason scrollY=$scrollY")
+        onOpenPositionReady?.invoke()
+    }
 
     override fun onDraw(canvas: Canvas) {
         // 纯色底画在文字下；下划线画在文字上。不用 LineBackgroundSpan，避免 ParagraphStyle 卡死布局。
@@ -901,7 +956,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     private fun currentSelectedText(): String {
         val range = currentSelectionRange() ?: return ""
-        return text?.subSequence(range.first, range.last + 1)?.toString().orEmpty()
+        val body = text ?: return ""
+        return extractReaderSelectionText(body, range.first, range.last + 1)
     }
 
     private fun currentSelectionRange(): IntRange? {
@@ -917,14 +973,14 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     private fun currentSelectionExistingHighlightId(): Long? {
         val range = currentSelectionRange() ?: return null
-        val selected = text?.subSequence(range.first, range.last + 1)?.toString().orEmpty()
-        if (selected.isEmpty()) return null
+        val selected = currentSelectedText()
+        if (selected.isBlank()) return null
         return resolveExistingHighlightId?.invoke(selected, range.first, range.last + 1)
     }
 
     /** 复制选区到剪贴板并结束选区。 */
     private fun copySelectionToClipboard(): Boolean {
-        val selected = currentSelectedText()
+        val selected = currentSelectedText().trim()
         if (selected.isEmpty()) return false
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
             ?: return false
@@ -940,8 +996,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
      */
     private fun handleHighlightMenuClick(mode: ActionMode?): Boolean {
         val range = currentSelectionRange() ?: return false
-        val selected = text?.subSequence(range.first, range.last + 1)?.toString().orEmpty()
-        if (selected.isEmpty()) return false
+        val selected = currentSelectedText()
+        if (selected.isBlank()) return false
         val existingId = resolveExistingHighlightId?.invoke(selected, range.first, range.last + 1)
         if (existingId != null) {
             onRemoveHighlightClick?.invoke(existingId)
@@ -954,8 +1010,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     /** 打开划线浮窗；不结束选区，保留系统复制/划线菜单。 */
     private fun requestHighlightFromSelection(): Boolean {
         val range = currentSelectionRange() ?: return false
-        val selected = text?.subSequence(range.first, range.last + 1)?.toString().orEmpty()
-        if (selected.isEmpty()) return false
+        val selected = currentSelectedText()
+        if (selected.isBlank()) return false
         val bounds = selectionBoundsInWindow(range.first, range.last + 1) ?: return false
         highlightStylePickerShowing = true
         onHighlightMenuClick?.invoke(selected, range.first, range.last + 1, bounds)
@@ -1261,10 +1317,23 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
      * 视口顶字符行锚点：随每次滚动更新；文本异步重排（表格测量、图片/图表占位符→实际高度、
      * 字号变化）导致锚点行位移时，在 onLayout（绘制前）按同一字符行重新定位，视口不动。
      * 若只按像素保留 scrollY，上方内容高度变化会把视口顶到更早的内容（表现为「过一会跳回前面」）。
+     *
+     * 手指拖动 / 惯性滑动期间禁止程序化 scrollTo，否则与 TouchScroller 争抢会抖。
      */
     private var viewportAnchorTextLen = -1
     private var viewportAnchorChar = -1
     private var viewportAnchorInLineOffset = 0
+    private var pointerDown = false
+    private var lastInteractiveScrollUptimeMs = 0L
+    private val settleViewportAfterScrollRunnable = Runnable {
+        if (pointerDown || isVerticalScrollDrag) return@Runnable
+        if (shouldSkipProgrammaticScrollCompensation()) return@Runnable
+        maintainViewportCharAnchorAfterLayout(
+            snapTextLen = viewportAnchorTextLen,
+            snapChar = viewportAnchorChar,
+            snapInLineOffset = viewportAnchorInLineOffset,
+        )
+    }
 
     private fun updateViewportCharAnchor() {
         if (!allowVerticalScroll) {
@@ -1284,8 +1353,26 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         viewportAnchorTextLen = len
     }
 
+    /**
+     * 用户正在拖动、手指仍按下，或松手后惯性窗口内：不要程序化改 scrollY。
+     * DiagramImageLoader 等异步纠偏也应遵守此门控。
+     */
+    fun shouldSkipProgrammaticScrollCompensation(): Boolean {
+        if (pointerDown || isVerticalScrollDrag) return true
+        return android.os.SystemClock.uptimeMillis() - lastInteractiveScrollUptimeMs < 160L
+    }
+
     override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
         super.onScrollChanged(l, t, oldl, oldt)
+        val now = android.os.SystemClock.uptimeMillis()
+        // 拖动或惯性滚动期间延续抑制窗口，避免松手后 fling 仍与 maintain scrollTo 争抢。
+        val inInteractiveWindow = pointerDown || isVerticalScrollDrag ||
+            now - lastInteractiveScrollUptimeMs < 160L
+        if (inInteractiveWindow && t != oldt) {
+            lastInteractiveScrollUptimeMs = now
+            removeCallbacks(settleViewportAfterScrollRunnable)
+            postDelayed(settleViewportAfterScrollRunnable, 180L)
+        }
         updateViewportCharAnchor()
     }
 
@@ -1298,6 +1385,11 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         if (!allowVerticalScroll) return false
         // 划词期间 Editor 可能自行 bringPointIntoView，不与其争抢滚动。
         if (selectionActive) return false
+        // 拖动/惯性中只刷新锚点，不 scrollTo，避免与手势叠加抖动。
+        if (shouldSkipProgrammaticScrollCompensation()) {
+            updateViewportCharAnchor()
+            return false
+        }
         val layout = layout ?: return false
         val len = text?.length ?: 0
         if (len == 0 || layout.text.length != len) return false
@@ -1335,14 +1427,20 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         if (scrollToTop) {
             // 不清意图：等 finishMarkdownRender 匹配新内容后再清，确保新窗口首帧也在顶部。
             if (scrollY != 0) super.scrollTo(0, 0)
+            signalOpenPositionReady("onLayoutScrollToTop")
             return
         }
         if (hasSnapStash) {
-            applyStashedSavedPositionSnapIfAny(this)
+            if (applyStashedSavedPositionSnapIfAny(this)) {
+                signalOpenPositionReady("onLayoutSnap")
+            }
             return
         }
         if (hasExpandStash) {
-            applyStashedSourceScrollRestoreIfAny(this, renderPlainText = renderPlainTextBody)
+            // 内容尚未替换时 restore 会失败并保留 stash；此时仍走 maintain，避免高度变化无补偿。
+            if (!applyStashedSourceScrollRestoreIfAny(this, renderPlainText = renderPlainTextBody)) {
+                maintainViewportCharAnchorAfterLayout(snapTextLen, snapChar, snapInLineOffset)
+            }
             return
         }
         maintainViewportCharAnchorAfterLayout(snapTextLen, snapChar, snapInLineOffset)
@@ -1410,6 +1508,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                removeCallbacks(settleViewportAfterScrollRunnable)
+                pointerDown = true
                 touchDownX = event.x
                 touchDownY = event.y
                 lastTouchX = event.x
@@ -1443,6 +1543,11 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 lastTouchX = event.x
                 lastTouchY = event.y
+                pointerDown = false
+                lastInteractiveScrollUptimeMs = android.os.SystemClock.uptimeMillis()
+                // 松手后等惯性结束，再补一次视口锚点补偿（拖动中跳过的异步重排）。
+                removeCallbacks(settleViewportAfterScrollRunnable)
+                postDelayed(settleViewportAfterScrollRunnable, 180L)
                 if (event.actionMasked == MotionEvent.ACTION_UP) {
                     val link = pendingLinkSpan
                     pendingLinkSpan = null

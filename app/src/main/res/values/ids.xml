@@ -3,6 +3,12 @@
     <item name="markdown_anchor_index" type="id" />
     <item name="markdown_anchor_rendered" type="id" />
     <item name="reader_markdown_render_complete" type="id" />
+    <!-- 正文内容签名（不含划线）；须用 R.id，避免魔法 int tag 与其它库冲突 -->
+    <item name="reader_render_sig" type="id" />
+    <item name="reader_highlight_sig" type="id" />
+    <item name="reader_line_spacing" type="id" />
+    <item name="reader_scroll_restore_gen" type="id" />
+    <item name="reader_pdf_layout_state" type="id" />
     <item name="reader_pending_scroll_char_offset" type="id" />
     <item name="reader_pending_scroll_reapply_gen" type="id" />
     <!-- 扩窗后与 setParsedMarkdown 同帧恢复：源码锚点 + 新窗口范围 -->

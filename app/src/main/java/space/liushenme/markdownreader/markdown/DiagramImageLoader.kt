@@ -303,6 +303,11 @@ internal object DiagramImageLoader {
             host.requestLayout()
             host.post {
                 try {
+                    // SafeReaderTextView.onLayout 已按视口字符锚点补偿；拖动中再 scrollTo 会与手势争抢导致抖动。
+                    if (host is SafeReaderTextView) {
+                        if (host.shouldSkipProgrammaticScrollCompensation()) return@post
+                        // 静止时若 onLayout 已补偿则 scrollY 已正确；此处仅作兜底。
+                    }
                     val layout = host.layout ?: return@post
                     val safeTopChar = topChar.coerceIn(0, (host.text?.length ?: 1).minus(1).coerceAtLeast(0))
                     val line = layout.getLineForOffset(safeTopChar)

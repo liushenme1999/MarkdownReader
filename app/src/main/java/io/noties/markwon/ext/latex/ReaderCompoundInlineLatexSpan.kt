@@ -20,6 +20,8 @@ internal class ReaderCompoundInlineLatexSpan(
     private val config: JLatexMathPlugin.Config,
     private val context: Context,
     textColor: Int,
+    /** 原始行内公式（不含外层 `$`），供选区复制/划线提取。 */
+    val sourceLatex: String = "",
 ) : ReplacementSpan() {
 
     private val density = context.resources.displayMetrics.density

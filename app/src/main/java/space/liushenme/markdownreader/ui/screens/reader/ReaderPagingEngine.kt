@@ -94,10 +94,14 @@ import io.noties.markwon.image.ImagesPlugin
 import io.noties.markwon.image.file.FileSchemeHandler
 import io.noties.markwon.inlineparser.MarkwonInlineParserPlugin
 import io.noties.markwon.linkify.LinkifyPlugin
+import android.view.ViewTreeObserver
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.resume
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -145,11 +149,11 @@ internal fun splitMarkdownToPages(content: String, targetChars: Int): List<Pair<
 /** 一次扩窗最少推进的字符数；同时也是无 TOC 时虚构边界的步长。 */
 internal const val READER_EXPAND_CHUNK_CHARS = 32 * 1024
 
-/** 进入阅读 / 跳转时目标位置之后的预读缓冲。 */
-internal const val READER_INITIAL_LOOKAHEAD_CHARS = 16 * 1024
+/** 进入阅读 / 跳转时目标位置之后的预读缓冲（偏小以加快首屏 Markwon；不足靠扩窗补）。 */
+internal const val READER_INITIAL_LOOKAHEAD_CHARS = 8 * 1024
 
 /** 进入阅读 / 跳转时目标位置之前的预读缓冲，便于跳章后仍能上滑回看上一章。 */
-internal const val READER_INITIAL_LOOKBEHIND_CHARS = 16 * 1024
+internal const val READER_INITIAL_LOOKBEHIND_CHARS = 8 * 1024
 
 /** 单窗口最大字符数，防止单章过长再次卡顿。 */
 internal const val READER_MAX_WINDOW_CHARS = 96 * 1024
@@ -956,7 +960,7 @@ internal fun isReaderTextViewLayoutReady(
  *
  * [expectedRenderSig] 必须与 [TAG_READER_RENDER_SIG] / `reader_markdown_render_complete` 一致，
  * 即 [readerContentSignature]（**不含划线**）。若误传 [readerRenderSignature]，签名永远对不上，
- * 会空等到约 maxAttempts×32ms 超时，进页遮罩长时间不揭开。
+ * 会空等到超时，进页遮罩长时间不揭开。
  */
 internal suspend fun awaitReaderMarkdownRenderReady(
     tvProvider: () -> TextView?,
@@ -976,19 +980,31 @@ internal suspend fun awaitReaderMarkdownRenderReady(
                     "match=${actual == expectedRenderSig} layoutReady=${tv?.let { isReaderTextViewLayoutReady(it) }}",
             )
         }
-        if (tv != null &&
-            actual == expectedRenderSig &&
-            isReaderTextViewLayoutReady(tv)
-        ) {
-            kotlinx.coroutines.delay(48)
-            if (tv.getTag(R.id.reader_markdown_render_complete) == expectedRenderSig &&
-                isReaderTextViewLayoutReady(tv)
-            ) {
+        if (tv != null && actual == expectedRenderSig) {
+            if (isReaderTextViewLayoutReady(tv)) {
                 readerOpenDbg("awaitMarkdown ready attempt=$attempt +${android.os.SystemClock.uptimeMillis() - t0}ms")
                 return tv
             }
+            // 签名已就绪：挂 PreDraw 等首帧 layout，比 32ms 轮询更快揭罩。
+            tv.requestLayout()
+            val laidOut = awaitTextViewNextLayoutReady(
+                tv = tv,
+                expectedRenderSig = expectedRenderSig,
+                timeoutMs = 2_500L,
+            )
+            if (laidOut) {
+                readerOpenDbg(
+                    "awaitMarkdown ready(layout) attempt=$attempt " +
+                        "+${android.os.SystemClock.uptimeMillis() - t0}ms",
+                )
+                return tv
+            }
+            readerOpenDbg(
+                "awaitMarkdown layoutWaitMiss attempt=$attempt " +
+                    "+${android.os.SystemClock.uptimeMillis() - t0}ms",
+            )
         }
-        kotlinx.coroutines.delay(32)
+        delay(16)
     }
     val timedOut = tvProvider()?.takeIf {
         it.getTag(R.id.reader_markdown_render_complete) == expectedRenderSig &&
@@ -1000,6 +1016,42 @@ internal suspend fun awaitReaderMarkdownRenderReady(
     )
     return timedOut
 }
+
+/** 等 TextView 下一次 PreDraw 时 layout 已与当前文本对齐。 */
+private suspend fun awaitTextViewNextLayoutReady(
+    tv: TextView,
+    expectedRenderSig: String,
+    timeoutMs: Long,
+): Boolean = withTimeoutOrNull(timeoutMs) {
+    if (tv.getTag(R.id.reader_markdown_render_complete) == expectedRenderSig &&
+        isReaderTextViewLayoutReady(tv)
+    ) {
+        return@withTimeoutOrNull true
+    }
+    suspendCancellableCoroutine { cont ->
+        val listener = object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                val matched = tv.getTag(R.id.reader_markdown_render_complete) == expectedRenderSig &&
+                    isReaderTextViewLayoutReady(tv)
+                if (!matched) return true
+                val obs = tv.viewTreeObserver
+                if (obs.isAlive) obs.removeOnPreDrawListener(this)
+                if (cont.isActive) cont.resume(true)
+                return true
+            }
+        }
+        val obs = tv.viewTreeObserver
+        if (!obs.isAlive) {
+            cont.resume(false)
+            return@suspendCancellableCoroutine
+        }
+        obs.addOnPreDrawListener(listener)
+        cont.invokeOnCancellation {
+            val o = tv.viewTreeObserver
+            if (o.isAlive) o.removeOnPreDrawListener(listener)
+        }
+    }
+} == true
 
 internal suspend fun awaitReaderTextViewLayout(
     tvProvider: () -> TextView?,
@@ -1412,6 +1464,15 @@ internal fun applyStashedSourceScrollRestoreIfAny(
         return true
     }
     if (anchorScrollY != null && anchorWindowStart != null && windowStart >= anchorWindowStart) {
+        // 向下扩窗是后缀追加：新显示长度应变长。未变说明 Markwon 尚未 setText，
+        // 此时若恢复会把用户正在滑的 scrollY 拽回 stash 时刻并清掉 stash → 滑动抖动/回弹。
+        if (oldDisplayedLen != null && len <= oldDisplayedLen) {
+            android.util.Log.d(
+                "ReaderRestoreDbg2",
+                "expandDown SKIP notReady len=$len oldDisplayedLen=$oldDisplayedLen",
+            )
+            return false
+        }
         scrollTextViewPreservingScrollY(tv, anchorScrollY)
         clearPendingSourceScrollRestore(tv)
         return true

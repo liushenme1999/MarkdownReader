@@ -6,6 +6,7 @@ import android.view.Gravity
 import android.view.ViewTreeObserver
 import android.widget.TextView
 import io.noties.markwon.image.AsyncDrawableSpan
+import space.liushenme.markdownreader.R
 
 /**
  * PDF 页图贴边：将 Markwon 图片 span 拉满内容区宽度；
@@ -13,7 +14,7 @@ import io.noties.markwon.image.AsyncDrawableSpan
  */
 internal object PdfImageLayoutHelper {
 
-    private const val TAG_PDF_LAYOUT_STATE = 0x4d445f50 // "MD_P"
+    private val TAG_PDF_LAYOUT_STATE = R.id.reader_pdf_layout_state
 
     private data class PdfLayoutState(
         val basePaddingTop: Int,
