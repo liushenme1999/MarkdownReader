@@ -31,7 +31,7 @@ class TableRowSpacingTest {
     fun table_usesReaderTableRowSpan() {
         val context: Context = RuntimeEnvironment.getApplication()
         val markwon = ReaderMarkwonFactory.create(context)
-        val prepared = ReaderMarkwonFactory.prepareMarkdown(tableMd)
+        val prepared = ReaderMarkwonFactory.prepareMarkdown(tableMd, context)
         val rendered = markwon.toMarkdown(prepared.text) as Spanned
         val rowSpans = rendered.getSpans(0, rendered.length, ReaderTableRowSpan::class.java)
         assertTrue("expected ReaderTableRowSpan, got ${rowSpans.size}", rowSpans.size >= 5)
@@ -67,7 +67,7 @@ class TableRowSpacingTest {
         """.trimIndent()
         val context: Context = RuntimeEnvironment.getApplication()
         val markwon = ReaderMarkwonFactory.create(context)
-        val prepared = ReaderMarkwonFactory.prepareMarkdown(compactTable)
+        val prepared = ReaderMarkwonFactory.prepareMarkdown(compactTable, context)
         val rendered = markwon.toMarkdown(prepared.text) as Spanned
         val rows = rendered.getSpans(0, rendered.length, ReaderTableRowSpan::class.java)
             .sortedBy { rendered.getSpanStart(it) }
@@ -155,7 +155,7 @@ class TableRowSpacingTest {
         val context: Context = RuntimeEnvironment.getApplication()
         ReaderTableSpacing.lineSpacingMultiplier = lineSpacing
         val markwon = ReaderMarkwonFactory.create(context)
-        val prepared = ReaderMarkwonFactory.prepareMarkdown(markdown)
+        val prepared = ReaderMarkwonFactory.prepareMarkdown(markdown, context)
         val rendered = markwon.toMarkdown(prepared.text) as Spanned
         val rows = rendered.getSpans(0, rendered.length, ReaderTableRowSpan::class.java)
             .sortedBy { rendered.getSpanStart(it) }

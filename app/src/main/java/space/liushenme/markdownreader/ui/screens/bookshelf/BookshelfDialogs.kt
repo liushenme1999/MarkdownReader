@@ -13,8 +13,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import space.liushenme.markdownreader.R
+
 @Composable
 internal fun BookshelfRemoveConfirmDialog(
     selectedCount: Int,
@@ -23,16 +26,18 @@ internal fun BookshelfRemoveConfirmDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("移出书架") },
-        text = { Text("确定将选中的 $selectedCount 本书从书架移除吗？") },
+        title = { Text(stringResource(R.string.dialog_remove_from_shelf_title)) },
+        text = {
+            Text(stringResource(R.string.dialog_remove_from_shelf_message, selectedCount))
+        },
         confirmButton = {
             TextButton(onClick = onConfirm) {
-                Text("移除", color = MaterialTheme.colorScheme.error)
+                Text(stringResource(R.string.action_remove), color = MaterialTheme.colorScheme.error)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(stringResource(R.string.action_cancel))
             }
         }
     )
@@ -47,25 +52,25 @@ internal fun BookshelfGroupDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("设置分组") },
+        title = { Text(stringResource(R.string.dialog_set_group_title)) },
         text = {
             OutlinedTextField(
                 value = groupInput,
                 onValueChange = onGroupInputChange,
-                label = { Text("分组名称") },
-                supportingText = { Text("留空则取消分组") },
+                label = { Text(stringResource(R.string.dialog_group_name_label)) },
+                supportingText = { Text(stringResource(R.string.dialog_group_name_hint)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
         },
         confirmButton = {
             TextButton(onClick = onConfirm) {
-                Text("确定")
+                Text(stringResource(R.string.action_confirm))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(stringResource(R.string.action_cancel))
             }
         }
     )
@@ -79,11 +84,11 @@ internal fun BookshelfImportMethodDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("导入书籍") },
+        title = { Text(stringResource(R.string.dialog_import_book_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    "支持 Markdown、TXT、PDF",
+                    stringResource(R.string.dialog_import_supported_formats),
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -91,19 +96,25 @@ internal fun BookshelfImportMethodDialog(
                     onClick = onLocalImport,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("从本地导入", modifier = Modifier.fillMaxWidth())
+                    Text(
+                        stringResource(R.string.dialog_import_from_local),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
                 TextButton(
                     onClick = onUrlImport,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("从网址导入", modifier = Modifier.fillMaxWidth())
+                    Text(
+                        stringResource(R.string.dialog_import_from_url),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             }
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(stringResource(R.string.action_cancel))
             }
         }
     )
@@ -118,12 +129,12 @@ internal fun BookshelfUrlImportDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("从网址导入") },
+        title = { Text(stringResource(R.string.dialog_url_import_title)) },
         text = {
             OutlinedTextField(
                 value = urlText,
                 onValueChange = onUrlTextChange,
-                label = { Text("文件下载地址（https://…）") },
+                label = { Text(stringResource(R.string.dialog_url_import_label)) },
                 singleLine = false,
                 minLines = 2,
                 modifier = Modifier.fillMaxWidth(),
@@ -132,12 +143,12 @@ internal fun BookshelfUrlImportDialog(
         },
         confirmButton = {
             TextButton(onClick = onConfirm) {
-                Text("导入")
+                Text(stringResource(R.string.action_import))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(stringResource(R.string.action_cancel))
             }
         }
     )

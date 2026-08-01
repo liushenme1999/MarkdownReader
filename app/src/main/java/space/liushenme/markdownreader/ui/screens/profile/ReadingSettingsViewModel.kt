@@ -3,15 +3,19 @@ package space.liushenme.markdownreader.ui.screens.profile
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
+import space.liushenme.markdownreader.model.AppLanguage
 import space.liushenme.markdownreader.model.AppThemeMode
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
+import space.liushenme.markdownreader.platform.AppLocaleController
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @HiltViewModel
 class ReadingSettingsViewModel @Inject constructor(
@@ -54,6 +58,12 @@ class ReadingSettingsViewModel @Inject constructor(
         initialValue = AppThemeMode.SYSTEM,
     )
 
+    val appLanguage = readerSettingsRepository.appLanguage.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = AppLanguage.DEFAULT,
+    )
+
     fun setTheme(theme: ReadingTheme) {
         viewModelScope.launch { readerSettingsRepository.setReadingTheme(theme) }
     }
@@ -79,5 +89,15 @@ class ReadingSettingsViewModel @Inject constructor(
 
     fun setAppThemeMode(mode: AppThemeMode) {
         viewModelScope.launch { readerSettingsRepository.setAppThemeMode(mode) }
+    }
+
+    fun setAppLanguage(language: AppLanguage) {
+        viewModelScope.launch {
+            readerSettingsRepository.setAppLanguage(language)
+            // setApplicationLocales 需在主线程，且依赖已创建的 AppCompatActivity
+            withContext(Dispatchers.Main.immediate) {
+                AppLocaleController.apply(language)
+            }
+        }
     }
 }

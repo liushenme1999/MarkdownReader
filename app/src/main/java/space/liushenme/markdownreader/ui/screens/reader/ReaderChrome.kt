@@ -48,6 +48,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
+import space.liushenme.markdownreader.R
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
@@ -158,35 +160,35 @@ internal fun ReaderImmersiveBottomBar(
             IconButton(onClick = onToc) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.Toc,
-                    contentDescription = "目录",
+                    contentDescription = stringResource(R.string.reader_chrome_toc_cd),
                     tint = iconTint
                 )
             }
             IconButton(onClick = onBookmarks) {
                 Icon(
                     imageVector = Icons.Default.Bookmark,
-                    contentDescription = "书签",
+                    contentDescription = stringResource(R.string.reader_chrome_bookmark_cd),
                     tint = iconTint
                 )
             }
             IconButton(onClick = onThemeBackground) {
                 Icon(
                     imageVector = Icons.Default.Palette,
-                    contentDescription = "阅读背景",
+                    contentDescription = stringResource(R.string.reader_chrome_theme_cd),
                     tint = iconTint
                 )
             }
             IconButton(onClick = onFont) {
                 Icon(
                     imageVector = Icons.Default.TextFields,
-                    contentDescription = "字体",
+                    contentDescription = stringResource(R.string.reader_chrome_font_cd),
                     tint = iconTint
                 )
             }
             IconButton(onClick = onPageTurn) {
                 Icon(
                     imageVector = Icons.Default.ImportContacts,
-                    contentDescription = "翻页设置",
+                    contentDescription = stringResource(R.string.reader_chrome_page_turn_cd),
                     tint = iconTint
                 )
             }
@@ -242,7 +244,10 @@ internal fun ReaderTopAppBar(
         },
         navigationIcon = {
             IconButton(onClick = onNavigateBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = stringResource(R.string.action_back_cd),
+                )
             }
         }
     )

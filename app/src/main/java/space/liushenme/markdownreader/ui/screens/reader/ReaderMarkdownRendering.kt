@@ -323,7 +323,7 @@ internal fun applyMarkdownContent(
     readerOpenDbg("markwonQueue contentLen=${content.length} sigTail=${renderSig.takeLast(48)}")
     readerMarkwonRenderExecutor.execute {
         val tPrep0 = android.os.SystemClock.uptimeMillis()
-        val prepared = runCatching { ReaderMarkwonFactory.prepareMarkdown(content) }
+        val prepared = runCatching { ReaderMarkwonFactory.prepareMarkdown(content, appContext) }
             .getOrElse { PreparedMarkdown(text = content, anchorIndex = MarkdownAnchorIndex()) }
         val markdown = NetworkImageCache.rewriteCachedUrls(appContext, prepared.text)
         val tPrep1 = android.os.SystemClock.uptimeMillis()
@@ -772,7 +772,7 @@ internal fun previewPlainTextFromTextViewTop(tv: TextView): String {
     return text.substring(start, end)
         .replace('\n', ' ')
         .trim()
-        .ifEmpty { "书签" }
+        .ifEmpty { tv.context.getString(R.string.bookmark_default_preview) }
         .take(100)
 }
 
@@ -1000,14 +1000,24 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     private fun populateSelectionMenu(menu: Menu?) {
         menu ?: return
         menu.clear()
-        menu.add(Menu.NONE, MENU_ID_COPY, 0, "复制")
+        menu.add(Menu.NONE, MENU_ID_COPY, 0, context.getString(R.string.selection_menu_copy))
         // 划线 / 取消划线必须用不同 itemId：MIUI FloatingToolbar 按 id 缓存芯片文案，
         // 同 id 只改 title 时界面仍显示「划线」。
         val showCancel = shouldShowCancelHighlightTitle()
         if (showCancel) {
-            menu.add(Menu.NONE, MENU_ID_CANCEL_HIGHLIGHT, 1, "取消划线")
+            menu.add(
+                Menu.NONE,
+                MENU_ID_CANCEL_HIGHLIGHT,
+                1,
+                context.getString(R.string.selection_menu_cancel_highlight),
+            )
         } else {
-            menu.add(Menu.NONE, MENU_ID_HIGHLIGHT, 1, "划线")
+            menu.add(
+                Menu.NONE,
+                MENU_ID_HIGHLIGHT,
+                1,
+                context.getString(R.string.selection_menu_highlight),
+            )
         }
         appliedMenuShowsCancel = showCancel
         // 若系统/ROM 在 clear 之后又塞回「搜索」，立刻剔除
@@ -1116,7 +1126,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     private fun currentSelectedText(): String {
         val range = currentSelectionRange() ?: return ""
         val body = text ?: return ""
-        return extractReaderSelectionText(body, range.first, range.last + 1)
+        return extractReaderSelectionText(body, range.first, range.last + 1, context)
     }
 
     private fun currentSelectionRange(): IntRange? {

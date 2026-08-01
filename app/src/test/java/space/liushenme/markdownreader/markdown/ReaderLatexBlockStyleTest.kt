@@ -34,7 +34,7 @@ class ReaderLatexBlockStyleTest {
             ${'$'}${'$'}\\text{Score}(Q_i, K_j) = Q_i \\cdot K_j${'$'}${'$'}
             </div>
         """.trimIndent()
-        val prepared = ReaderMarkwonFactory.prepareMarkdown(md)
+        val prepared = ReaderMarkwonFactory.prepareMarkdown(md, context)
         assertFalse(
             "single-line block should be expanded",
             prepared.text.contains("${'$'}${'$'}\\text{Score}"),

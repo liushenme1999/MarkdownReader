@@ -54,7 +54,7 @@ class TocJumpStuckAt174Test {
         val slice = markdown.substring(winStart, winEnd)
         val context: Context = RuntimeEnvironment.getApplication()
         val markwon = ReaderMarkwonFactory.create(context)
-        val prepared = ReaderMarkwonFactory.prepareMarkdown(slice)
+        val prepared = ReaderMarkwonFactory.prepareMarkdown(slice, context)
         val rendered = markwon.toMarkdown(prepared.text).toString()
         val headingLines = markdownHeadingSpanStarts(markwon.toMarkdown(prepared.text))
             .map { lineAt(rendered, it) }
@@ -104,7 +104,7 @@ class TocJumpStuckAt174Test {
             )
             layout(0, 0, 1080, 2400)
         }
-        val prepared = ReaderMarkwonFactory.prepareMarkdown(slice)
+        val prepared = ReaderMarkwonFactory.prepareMarkdown(slice, context)
         markwon.setMarkdown(tv, prepared.text)
         tv.measure(
             android.view.View.MeasureSpec.makeMeasureSpec(1080, android.view.View.MeasureSpec.EXACTLY),

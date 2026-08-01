@@ -58,6 +58,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -74,6 +75,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.widget.TextViewCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
+import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
@@ -121,7 +123,7 @@ internal fun ReaderThemeSheet(
                 .padding(horizontal = 24.dp, vertical = 8.dp)
         ) {
             Text(
-                text = "阅读主题",
+                text = stringResource(R.string.reader_sheet_reading_theme),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
@@ -188,13 +190,13 @@ internal fun ReaderFontSheet(
                 .verticalScroll(rememberScrollState())
         ) {
             Text(
-                text = "字体设置",
+                text = stringResource(R.string.reader_sheet_font_settings),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
             Spacer(modifier = Modifier.height(20.dp))
             ReaderWideSliderRow(
-                label = "字体大小",
+                label = stringResource(R.string.reader_font_size),
                 valueText = "${fontSize} sp",
                 value = fontSize.toFloat(),
                 onValueChange = { v ->
@@ -205,7 +207,7 @@ internal fun ReaderFontSheet(
             )
             Spacer(modifier = Modifier.height(28.dp))
             ReaderWideSliderRow(
-                label = "页边距",
+                label = stringResource(R.string.reader_page_margin),
                 valueText = "${readerPaddingDp} dp",
                 value = readerPaddingDp.toFloat(),
                 onValueChange = { v ->
@@ -216,8 +218,11 @@ internal fun ReaderFontSheet(
             )
             Spacer(modifier = Modifier.height(28.dp))
             ReaderWideSliderRow(
-                label = "行距",
-                valueText = "%.2f 倍".format(readerLineSpacingMultiplier),
+                label = stringResource(R.string.reader_line_spacing),
+                valueText = stringResource(
+                    R.string.reader_line_spacing_value,
+                    readerLineSpacingMultiplier,
+                ),
                 value = readerLineSpacingMultiplier,
                 onValueChange = onLineSpacingChange,
                 valueRange = 1f..2.5f,
@@ -269,7 +274,7 @@ internal fun BookmarksSheet(
                 .padding(24.dp)
         ) {
             Text(
-                "书签与划线",
+                stringResource(R.string.reader_marks_sheet_title),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
@@ -282,14 +287,14 @@ internal fun BookmarksSheet(
                     onClick = { selectedTab = ReaderMarksSheetTab.Bookmarks },
                     shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
                 ) {
-                    Text("书签")
+                    Text(stringResource(R.string.reader_marks_tab_bookmarks))
                 }
                 SegmentedButton(
                     selected = selectedTab == ReaderMarksSheetTab.Highlights,
                     onClick = { selectedTab = ReaderMarksSheetTab.Highlights },
                     shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
                 ) {
-                    Text("划线")
+                    Text(stringResource(R.string.reader_marks_tab_highlights))
                 }
             }
 
@@ -312,7 +317,7 @@ internal fun BookmarksSheet(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    "暂无书签",
+                                    stringResource(R.string.reader_no_bookmarks),
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                                 )
                             }
@@ -348,7 +353,7 @@ internal fun BookmarksSheet(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    "暂无划线",
+                                    stringResource(R.string.reader_no_highlights),
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                                 )
                             }
@@ -416,7 +421,7 @@ internal fun TocSheet(
                 .padding(horizontal = 24.dp, vertical = 8.dp)
         ) {
             Text(
-                "目录",
+                stringResource(R.string.reader_toc_sheet_title),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
@@ -545,7 +550,7 @@ internal fun BookmarkItem(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Delete,
-                        contentDescription = "删除",
+                        contentDescription = stringResource(R.string.action_delete),
                         modifier = Modifier.size(28.dp),
                         tint = deleteIconTint
                     )
@@ -683,7 +688,7 @@ internal fun HighlightListItem(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Delete,
-                        contentDescription = "删除",
+                        contentDescription = stringResource(R.string.action_delete),
                         modifier = Modifier.size(28.dp),
                         tint = deleteIconTint
                     )

@@ -39,9 +39,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.repository.UserProfile
 import space.liushenme.markdownreader.data.repository.UserProfileRepository
 
@@ -87,7 +89,7 @@ fun ProfileHeaderSection(
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = Icons.Default.CameraAlt,
-                        contentDescription = "更换头像",
+                        contentDescription = stringResource(R.string.profile_change_avatar_cd),
                         modifier = Modifier.size(13.dp),
                         tint = MaterialTheme.colorScheme.onPrimary,
                     )
@@ -115,9 +117,9 @@ fun ProfileHeaderSection(
 
     if (showNicknameDialog) {
         ProfileTextEditDialog(
-            title = "编辑昵称",
+            title = stringResource(R.string.profile_edit_nickname_title),
             initialValue = profile.nickname,
-            placeholder = UserProfileRepository.DEFAULT_NICKNAME,
+            placeholder = stringResource(R.string.profile_default_nickname),
             maxLength = UserProfileRepository.MAX_NICKNAME_LENGTH,
             onDismiss = { showNicknameDialog = false },
             onConfirm = { value ->
@@ -129,9 +131,9 @@ fun ProfileHeaderSection(
 
     if (showSignatureDialog) {
         ProfileTextEditDialog(
-            title = "编辑签名",
+            title = stringResource(R.string.profile_edit_signature_title),
             initialValue = profile.signature,
-            placeholder = UserProfileRepository.DEFAULT_SIGNATURE,
+            placeholder = stringResource(R.string.profile_default_signature),
             maxLength = UserProfileRepository.MAX_SIGNATURE_LENGTH,
             singleLine = false,
             onDismiss = { showSignatureDialog = false },
@@ -164,7 +166,7 @@ private fun ProfileAvatar(
             if (bitmap != null) {
                 Image(
                     bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "用户头像",
+                    contentDescription = stringResource(R.string.profile_avatar_cd),
                     modifier = Modifier
                         .fillMaxSize()
                         .clip(CircleShape),
@@ -173,7 +175,7 @@ private fun ProfileAvatar(
             } else {
                 Icon(
                     imageVector = Icons.Default.Person,
-                    contentDescription = "用户头像",
+                    contentDescription = stringResource(R.string.profile_avatar_cd),
                     modifier = Modifier.size(38.dp),
                     tint = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
@@ -253,12 +255,12 @@ private fun ProfileTextEditDialog(
         },
         confirmButton = {
             TextButton(onClick = { onConfirm(text) }) {
-                Text("保存")
+                Text(stringResource(R.string.action_save))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(stringResource(R.string.action_cancel))
             }
         },
     )

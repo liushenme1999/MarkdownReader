@@ -24,8 +24,8 @@ class ProfileViewModel @Inject constructor(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = UserProfile(
-            nickname = UserProfileRepository.DEFAULT_NICKNAME,
-            signature = UserProfileRepository.DEFAULT_SIGNATURE,
+            nickname = userProfileRepository.defaultNickname,
+            signature = userProfileRepository.defaultSignature,
             avatarPath = null,
         ),
     )

@@ -1,5 +1,6 @@
 package space.liushenme.markdownreader.importing
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -9,6 +10,7 @@ import android.os.ParcelFileDescriptor
 import android.util.Log
 import java.io.ByteArrayOutputStream
 import java.io.File
+import space.liushenme.markdownreader.R
 
 /**
  * 用 Android 自带 [PdfRenderer] 把 PDF 每一页栅格化成 PNG，并把生成的资源 id 串成
@@ -32,21 +34,25 @@ internal object PdfBookExtractor {
     /** PNG 压缩质量：PNG 是无损，参数对体积影响有限，保留默认。 */
     private const val PNG_QUALITY = 100
 
-    fun extract(file: File): ExtractedBookText? {
+    fun extract(context: Context, file: File): ExtractedBookText? {
         if (!file.isFile || file.length() <= 0) return null
         return runCatching {
             ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
                 PdfRenderer(pfd).use { renderer ->
                     val pageCount = renderer.pageCount.coerceAtMost(MAX_PAGES)
                     if (pageCount <= 0) return null
-                    renderPagesToMarkdown(renderer, pageCount)
+                    renderPagesToMarkdown(context, renderer, pageCount)
                 }
             }
         }.onFailure { Log.w(TAG, "PDF extract failed: ${file.absolutePath}", it) }
             .getOrNull()
     }
 
-    private fun renderPagesToMarkdown(renderer: PdfRenderer, pageCount: Int): ExtractedBookText {
+    private fun renderPagesToMarkdown(
+        context: Context,
+        renderer: PdfRenderer,
+        pageCount: Int,
+    ): ExtractedBookText {
         val assets = LinkedHashMap<String, ByteArray>(pageCount)
         val body = StringBuilder()
         val toc = mutableListOf<ImportedTocEntry>()
@@ -59,7 +65,7 @@ internal object PdfBookExtractor {
             } ?: continue
             assets[pageId] = rendered.png
 
-            val title = "第 ${i + 1} 页"
+            val title = context.getString(R.string.pdf_page_title, i + 1)
             val sourceOffset = body.length
             if (i > 0) body.append('\n')
             body.append(

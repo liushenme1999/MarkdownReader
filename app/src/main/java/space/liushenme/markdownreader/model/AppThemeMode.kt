@@ -1,7 +1,13 @@
 package space.liushenme.markdownreader.model
 
-enum class AppThemeMode(val label: String, val hint: String) {
-    SYSTEM("跟随系统", "根据系统浅色/深色自动切换"),
-    LIGHT("浅色模式", "书架与底部导航栏始终为浅色"),
-    DARK("深色模式", "书架与底部导航栏始终为深色"),
+import androidx.annotation.StringRes
+import space.liushenme.markdownreader.R
+
+enum class AppThemeMode(
+    @StringRes val labelRes: Int,
+    @StringRes val hintRes: Int,
+) {
+    SYSTEM(R.string.theme_mode_system_label, R.string.theme_mode_system_hint),
+    LIGHT(R.string.theme_mode_light_label, R.string.theme_mode_light_hint),
+    DARK(R.string.theme_mode_dark_label, R.string.theme_mode_dark_hint),
 }

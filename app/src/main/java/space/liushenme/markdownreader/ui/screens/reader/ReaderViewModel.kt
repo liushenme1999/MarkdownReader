@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.data.local.entity.BookmarkEntity
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
@@ -25,6 +26,7 @@ import space.liushenme.markdownreader.model.ReaderPageTurnMode
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
 import androidx.compose.ui.graphics.toArgb
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -42,6 +44,7 @@ import kotlin.math.roundToInt
 
 @HiltViewModel
 class ReaderViewModel @Inject constructor(
+    @ApplicationContext private val appContext: Context,
     private val bookRepository: BookRepository,
     private val bookmarkRepository: BookmarkRepository,
     private val highlightRepository: HighlightRepository,
@@ -169,7 +172,7 @@ class ReaderViewModel @Inject constructor(
             if (bookEntity == null) {
                 loadedBookId = null
                 _content.value = ""
-                _loadError.value = "找不到该书，可能已被删除。"
+                _loadError.value = appContext.getString(R.string.reader_error_book_not_found)
                 _readerLoadEpoch.value = _readerLoadEpoch.value + 1L
                 readerOpenDbg("loadBook missing bookId=$bookId +${android.os.SystemClock.uptimeMillis() - t0}ms")
                 return@launch
@@ -211,8 +214,7 @@ class ReaderViewModel @Inject constructor(
             )
 
             if (text.isEmpty()) {
-                _loadError.value =
-                    "无法读取正文（文件权限失效或路径无效）。请返回书架删除该书后，使用「导入」重新选择文件。"
+                _loadError.value = appContext.getString(R.string.reader_error_cannot_read_body)
             }
 
             beginSessionSegmentIfNeeded()
@@ -367,7 +369,7 @@ class ReaderViewModel @Inject constructor(
                     bookId = book.id,
                     position = pos,
                     previewText = normalizeReadingPreviewText(previewText)
-                        .ifEmpty { "书签" },
+                        .ifEmpty { appContext.getString(R.string.bookmark_default_preview) },
                     note = note,
                     createTime = Date()
                 )
@@ -397,12 +399,13 @@ class ReaderViewModel @Inject constructor(
         if (raw.isEmpty()) return null
 
         val pos = (positionForAdd ?: lastKnownReadingCharPos).coerceIn(0, raw.length)
+        val bookmarkFallback = appContext.getString(R.string.bookmark_default_preview)
         val preview = normalizeReadingPreviewText(previewForAdd).ifEmpty {
             val from = (pos - 60).coerceAtLeast(0)
             val to = (pos + 80).coerceAtMost(raw.length)
             normalizeReadingPreviewText(
-                raw.substring(from, to).ifEmpty { "书签" },
-            ).ifEmpty { "书签" }
+                raw.substring(from, to).ifEmpty { bookmarkFallback },
+            ).ifEmpty { bookmarkFallback }
         }
         lastKnownReadingCharPos = pos
         lastKnownProgressPreview = preview
@@ -602,7 +605,7 @@ class ReaderViewModel @Inject constructor(
         }
         if (ImportedBookFormat.isRemovedStoredKey(book.importFormat)) {
             return ExtractedBookText.plainBody(
-                BookContentLoader.removedFormatPlaceholder(book.importFormat)
+                BookContentLoader.removedFormatPlaceholder(context, book.importFormat)
             )
         }
         val path = book.filePath
@@ -613,6 +616,7 @@ class ReaderViewModel @Inject constructor(
             ) {
                 val result = UrlBookDownloader.download(path)
                 BookContentLoader.loadExtractedFromUrlBytes(
+                    context,
                     result.bytes,
                     format,
                     result.charsetFromHeader

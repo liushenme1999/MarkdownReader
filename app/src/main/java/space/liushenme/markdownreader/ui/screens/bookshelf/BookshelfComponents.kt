@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -46,6 +47,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.ui.components.AppSearchField
 import space.liushenme.markdownreader.importing.BookImportSupport
 import space.liushenme.markdownreader.ui.components.shelfStylePageBackground
@@ -129,13 +131,13 @@ internal fun EmptyBookshelf(
         )
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            text = "书架空空如也",
+            text = stringResource(R.string.bookshelf_empty_title),
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "支持 Markdown、TXT、PDF，点击下方导入",
+            text = stringResource(R.string.bookshelf_empty_subtitle),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
             textAlign = TextAlign.Center
@@ -203,13 +205,13 @@ internal fun ImportBookCard(
             ) {
                 Icon(
                     imageVector = Icons.Default.Add,
-                    contentDescription = "导入书籍",
+                    contentDescription = stringResource(R.string.bookshelf_import_cd),
                     modifier = Modifier.size(28.dp),
                     tint = primaryColor
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "导入",
+                    text = stringResource(R.string.bookshelf_import),
                     style = MaterialTheme.typography.labelSmall,
                     color = primaryColor.copy(alpha = 0.8f)
                 )
@@ -252,11 +254,12 @@ internal fun BookCard(
         }
     }
     val dateFormat = SimpleDateFormat("MM-dd", Locale.getDefault())
+    val unreadLabel = stringResource(R.string.bookshelf_unread)
     val subtitle = when {
         book.shelfGroup.isNotBlank() -> book.shelfGroup
         book.author != null -> book.author
         book.lastReadTime != null -> dateFormat.format(book.lastReadTime)
-        else -> "未读"
+        else -> unreadLabel
     }
     val borderColor = MaterialTheme.colorScheme.primary
     val shape = RoundedCornerShape(10.dp)
@@ -414,7 +417,7 @@ internal fun BookCard(
             if (book.isPinned && !selectionMode) {
                 Icon(
                     imageVector = Icons.Default.PushPin,
-                    contentDescription = "已置顶",
+                    contentDescription = stringResource(R.string.bookshelf_pinned_cd),
                     tint = Color.White.copy(alpha = 0.95f),
                     modifier = Modifier
                         .align(Alignment.BottomEnd)

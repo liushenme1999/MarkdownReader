@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.calculateEndPadding
@@ -35,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -57,7 +59,7 @@ import space.liushenme.markdownreader.ui.theme.resolveDarkTheme
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
 
     private val appSettingsViewModel: AppSettingsViewModel by viewModels()
 
@@ -172,7 +174,7 @@ private fun MainAppContent(
                                     }
                                 },
                                 icon = Icons.AutoMirrored.Filled.MenuBook,
-                                label = "书架",
+                                label = stringResource(R.string.nav_bookshelf),
                             )
                             CompactMainBottomNavItem(
                                 selected = currentRoute == AppRoutes.PROFILE,
@@ -186,7 +188,7 @@ private fun MainAppContent(
                                     }
                                 },
                                 icon = Icons.Default.Person,
-                                label = "我的",
+                                label = stringResource(R.string.nav_profile),
                             )
                         }
                     }
@@ -240,13 +242,13 @@ private fun MainBottomNavigationPreview() {
                         selected = true,
                         onClick = { },
                         icon = Icons.AutoMirrored.Filled.MenuBook,
-                        label = "书架",
+                        label = stringResource(R.string.nav_bookshelf),
                     )
                     CompactMainBottomNavItem(
                         selected = false,
                         onClick = { },
                         icon = Icons.Default.Person,
-                        label = "我的",
+                        label = stringResource(R.string.nav_profile),
                     )
                 }
             },

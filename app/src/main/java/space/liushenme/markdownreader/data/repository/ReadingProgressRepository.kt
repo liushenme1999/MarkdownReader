@@ -1,7 +1,9 @@
 package space.liushenme.markdownreader.data.repository
 
+import android.content.Context
 import space.liushenme.markdownreader.data.local.dao.ReadingProgressDao
 import space.liushenme.markdownreader.data.local.entity.ReadingProgressEntity
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.util.Calendar
@@ -11,7 +13,8 @@ import javax.inject.Singleton
 
 @Singleton
 class ReadingProgressRepository @Inject constructor(
-    private val progressDao: ReadingProgressDao
+    private val progressDao: ReadingProgressDao,
+    @ApplicationContext private val context: Context,
 ) {
     fun getProgressByBookId(bookId: Long): Flow<List<ReadingProgressEntity>> =
         progressDao.getProgressByBookId(bookId)
@@ -53,7 +56,7 @@ class ReadingProgressRepository @Inject constructor(
     fun observeLast7DaysTrend(): Flow<List<DailyReadingTrendDay>> {
         val (startDate, endDate) = ReadingTrendAggregator.last7DaysRange()
         return progressDao.getProgressByDateRange(startDate, endDate).map { records ->
-            ReadingTrendAggregator.buildLast7DaysTrend(records)
+            ReadingTrendAggregator.buildLast7DaysTrend(records, context)
         }
     }
 

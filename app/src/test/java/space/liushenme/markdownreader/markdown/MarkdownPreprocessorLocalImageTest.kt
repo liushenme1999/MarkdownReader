@@ -1,11 +1,22 @@
 package space.liushenme.markdownreader.markdown
 
+import android.content.Context
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28])
 class MarkdownPreprocessorLocalImageTest {
+
+    private val context: Context
+        get() = RuntimeEnvironment.getApplication()
+
 
     @Test
     fun stripLocalRelativeImages_replacesMarkdownWithAlt() {
@@ -39,7 +50,7 @@ class MarkdownPreprocessorLocalImageTest {
     @Test
     fun prepare_stripsLocalImageInPipeline() {
         val md = "## 7.3\n![本地](static/images/demo.jpg)\n"
-        val out = MarkdownPreprocessor.prepare(md)
+        val out = MarkdownPreprocessor.prepare(md, context)
         assertFalse(out.contains("static/images/demo.jpg"))
         assertTrue(out.contains("本地"))
     }

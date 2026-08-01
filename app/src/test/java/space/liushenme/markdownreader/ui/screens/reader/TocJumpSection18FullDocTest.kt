@@ -31,7 +31,7 @@ class TocJumpSection18FullDocTest {
                 contentLen = markdown.length,
             )
             val slice = markdown.substring(winStart, winEnd)
-            val prepared = ReaderMarkwonFactory.prepareMarkdown(slice)
+            val prepared = ReaderMarkwonFactory.prepareMarkdown(slice, context)
             val rendered = markwon.toMarkdown(prepared.text)
             val resolved = resolveDisplayedCharOffset(
                 sourceContent = markdown,

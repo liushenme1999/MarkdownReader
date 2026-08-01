@@ -39,8 +39,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.model.AppThemeMode
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
 import space.liushenme.markdownreader.ui.theme.MainNavTabSelectedTint
@@ -189,7 +191,7 @@ fun ReadingThemeCardOption(
                 if (!compact) {
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "预览",
+                        text = stringResource(R.string.reading_theme_preview),
                         style = MaterialTheme.typography.labelSmall,
                         color = theme.secondaryTextColor,
                     )
@@ -216,7 +218,7 @@ fun ReadingThemeCardOption(
         }
         Spacer(modifier = Modifier.height(6.dp))
         Text(
-            text = theme.name,
+            text = stringResource(theme.nameRes),
             style = MaterialTheme.typography.labelSmall,
             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
             color = if (isSelected) accent else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
@@ -292,10 +294,10 @@ fun ReaderWideSliderRow(
 @Composable
 fun ReaderSettingsChoiceOption(
     title: String,
-    hint: String,
     icon: ImageVector,
     selected: Boolean,
     onClick: () -> Unit,
+    hint: String = "",
     showDividerBelow: Boolean = false,
 ) {
     val accent = MainNavTabSelectedTint
@@ -383,11 +385,10 @@ fun ReaderPageTurnModeOption(
     onClick: () -> Unit,
     showDividerBelow: Boolean = false,
 ) {
-    val (icon, hint) = pageTurnModePresentation(mode)
     ReaderSettingsChoiceOption(
-        title = mode.label,
-        hint = hint,
-        icon = icon,
+        title = stringResource(mode.labelRes),
+        hint = stringResource(mode.hintRes),
+        icon = pageTurnModeIcon(mode),
         selected = selected,
         onClick = onClick,
         showDividerBelow = showDividerBelow,
@@ -403,8 +404,8 @@ fun AppThemeModeOption(
     showDividerBelow: Boolean = false,
 ) {
     ReaderSettingsChoiceOption(
-        title = mode.label,
-        hint = mode.hint,
+        title = stringResource(mode.labelRes),
+        hint = stringResource(mode.hintRes),
         icon = appThemeModeIcon(mode),
         selected = selected,
         onClick = onClick,
@@ -418,10 +419,9 @@ private fun appThemeModeIcon(mode: AppThemeMode): ImageVector = when (mode) {
     AppThemeMode.DARK -> Icons.Default.DarkMode
 }
 
-private fun pageTurnModePresentation(mode: ReaderPageTurnMode): Pair<ImageVector, String> =
-    when (mode) {
-        ReaderPageTurnMode.VerticalScroll -> Icons.Default.SwapVert to "连续滚动，适合长文与 Markdown"
-        ReaderPageTurnMode.HorizontalSwipe -> Icons.AutoMirrored.Filled.ViewList to "左右滑动翻页"
-        ReaderPageTurnMode.SimulationPageTurn -> Icons.AutoMirrored.Filled.MenuBook to "仿真卷曲翻页效果"
-        ReaderPageTurnMode.CoverPageTurn -> Icons.Default.ViewCarousel to "新页覆盖旧页"
-    }
+private fun pageTurnModeIcon(mode: ReaderPageTurnMode): ImageVector = when (mode) {
+    ReaderPageTurnMode.VerticalScroll -> Icons.Default.SwapVert
+    ReaderPageTurnMode.HorizontalSwipe -> Icons.AutoMirrored.Filled.ViewList
+    ReaderPageTurnMode.SimulationPageTurn -> Icons.AutoMirrored.Filled.MenuBook
+    ReaderPageTurnMode.CoverPageTurn -> Icons.Default.ViewCarousel
+}

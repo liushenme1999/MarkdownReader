@@ -22,7 +22,7 @@ class TocJumpSection20ExtraHeadingTest {
         val md = "# 二十、长文本滚动测试\n$body"
         val context: Context = RuntimeEnvironment.getApplication()
         val markwon = ReaderMarkwonFactory.create(context)
-        val prepared = ReaderMarkwonFactory.prepareMarkdown(md)
+        val prepared = ReaderMarkwonFactory.prepareMarkdown(md, context)
         val rendered = markwon.toMarkdown(prepared.text)
         val headingStarts = markdownHeadingSpanStarts(rendered)
         val lines = headingStarts.map { lineAt(rendered.toString(), it) }
@@ -42,7 +42,7 @@ class TocJumpSection20ExtraHeadingTest {
         val md = full.substring(start)
         val context: Context = RuntimeEnvironment.getApplication()
         val markwon = ReaderMarkwonFactory.create(context)
-        val prepared = ReaderMarkwonFactory.prepareMarkdown(md)
+        val prepared = ReaderMarkwonFactory.prepareMarkdown(md, context)
         val rendered = markwon.toMarkdown(prepared.text)
         val headingStarts = markdownHeadingSpanStarts(rendered)
         val lines = headingStarts.map { lineAt(rendered.toString(), it) }

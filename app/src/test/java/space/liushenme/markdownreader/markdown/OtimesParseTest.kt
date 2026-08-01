@@ -31,7 +31,7 @@ class OtimesParseTest {
         val md = """
             * <strong>工作原理：</strong> 它将前馈网络（FFN）的第一个线性层的输出 ${'$'}X${'$'} 分成两部分， ${'$'}A${'$'} 和 ${'$'}B${'$'} 。然后通过公式 ${'$'}Swish(A) \otimes B${'$'} 计算输出，其中 ${'$'}Swish(x) = x \cdot \sigma(x)${'$'} ， ${'$'}\sigma${'$'} 是Sigmoid函数， ${'$'}\otimes${'$'} 是逐元素相乘。
         """.trimIndent()
-        val rendered = markwon.toMarkdown(ReaderMarkwonFactory.prepareMarkdown(md).text) as Spanned
+        val rendered = markwon.toMarkdown(ReaderMarkwonFactory.prepareMarkdown(md, context).text) as Spanned
         assertTrue(rendered.contains("\u2297"))
         assertEquals(1, rendered.getSpans(0, rendered.length, ReaderMathSymbolSpan::class.java).size)
         assertEquals(1, rendered.getSpans(0, rendered.length, ReaderCompoundInlineLatexSpan::class.java).size)
@@ -43,7 +43,7 @@ class OtimesParseTest {
         val context: Context = RuntimeEnvironment.getApplication()
         val markwon = ReaderMarkwonFactory.create(context)
         val md = "符号 ${'$'}\\otimes${'$'} 结束"
-        val rendered = markwon.toMarkdown(ReaderMarkwonFactory.prepareMarkdown(md).text) as Spanned
+        val rendered = markwon.toMarkdown(ReaderMarkwonFactory.prepareMarkdown(md, context).text) as Spanned
         assertTrue(rendered.getSpans(0, rendered.length, ReaderMathSymbolSpan::class.java).isNotEmpty())
     }
 
@@ -52,7 +52,7 @@ class OtimesParseTest {
         val context: Context = RuntimeEnvironment.getApplication()
         val markwon = ReaderMarkwonFactory.create(context)
         val md = "公式 ${'$'}Swish(A) \\otimes B${'$'} 结束"
-        val rendered = markwon.toMarkdown(ReaderMarkwonFactory.prepareMarkdown(md).text) as Spanned
+        val rendered = markwon.toMarkdown(ReaderMarkwonFactory.prepareMarkdown(md, context).text) as Spanned
         val compound = rendered.getSpans(0, rendered.length, ReaderCompoundInlineLatexSpan::class.java)
         assertEquals(1, compound.size)
         assertEquals(0, rendered.getSpans(0, rendered.length, AsyncDrawableSpan::class.java).size)

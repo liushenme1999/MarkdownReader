@@ -29,7 +29,7 @@ class FootnoteFooterSetextHeadingTest {
         """.trimIndent()
         val context: Context = RuntimeEnvironment.getApplication()
         val markwon = ReaderMarkwonFactory.create(context)
-        val prepared = ReaderMarkwonFactory.prepareMarkdown(md)
+        val prepared = ReaderMarkwonFactory.prepareMarkdown(md, context)
         val rendered = markwon.toMarkdown(prepared.text)
         val lines = markdownHeadingSpanStarts(rendered).map {
             space.liushenme.markdownreader.ui.screens.reader.lineAt(rendered.toString(), it)

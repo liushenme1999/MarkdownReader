@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -31,6 +32,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import space.liushenme.markdownreader.BuildConfig
+import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.navigation.AppRoutes
 import space.liushenme.markdownreader.ui.components.ShelfStyleTopBarBackground
 import space.liushenme.markdownreader.ui.components.shelfStylePageBackground
@@ -67,20 +69,20 @@ fun ProfileScreen(
             },
             title = {
                 Text(
-                    "关于 MD阅读器",
+                    stringResource(R.string.about_dialog_title),
                     fontWeight = FontWeight.Bold
                 )
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("版本号：${BuildConfig.VERSION_NAME}")
+                    Text(stringResource(R.string.about_version, BuildConfig.VERSION_NAME))
                     HorizontalDivider()
-                    Text("支持的文件格式：")
-                    Text("  - Markdown (.md)", style = MaterialTheme.typography.bodySmall)
-                    Text("  - 文本文件 (.txt)", style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.about_supported_formats))
+                    Text(stringResource(R.string.about_format_md), style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.about_format_txt), style = MaterialTheme.typography.bodySmall)
                     HorizontalDivider()
                     Text(
-                        "一款轻量级的 Markdown 阅读器，支持阅读统计、笔记管理等功能。",
+                        stringResource(R.string.about_description),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                     )
@@ -88,7 +90,7 @@ fun ProfileScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showAboutDialog = false }) {
-                    Text("确定")
+                    Text(stringResource(R.string.action_confirm))
                 }
             }
         )
@@ -107,31 +109,34 @@ fun ProfileScreen(
             },
             title = {
                 Text(
-                    "清理缓存",
+                    stringResource(R.string.clear_cache_dialog_title),
                     fontWeight = FontWeight.Bold
                 )
             },
             text = {
-                Text("将清理网络图片等缓存数据，不影响书架与阅读进度。此操作不可撤销。")
+                Text(stringResource(R.string.clear_cache_dialog_message))
             },
             confirmButton = {
                 TextButton(onClick = {
                     showClearCacheDialog = false
                     viewModel.clearCache { bytesFreed ->
                         val message = if (bytesFreed > 0) {
-                            "缓存已清理（${formatCacheBytes(bytesFreed)}）"
+                            context.getString(
+                                R.string.toast_cache_cleared_with_size,
+                                formatCacheBytes(bytesFreed),
+                            )
                         } else {
-                            "缓存已清理"
+                            context.getString(R.string.toast_cache_cleared)
                         }
                         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                     }
                 }) {
-                    Text("确定", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.action_confirm), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showClearCacheDialog = false }) {
-                    Text("取消")
+                    Text(stringResource(R.string.action_cancel))
                 }
             }
         )
@@ -146,7 +151,7 @@ fun ProfileScreen(
                 windowInsets = WindowInsets(),
                 title = {
                     Text(
-                        "我的",
+                        stringResource(R.string.profile_title),
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontFamily = FontFamily.SansSerif,
                             fontWeight = FontWeight.Black
@@ -211,8 +216,8 @@ fun ProfileScreen(
                     // 今日阅读时长
                     OverviewDataItem(
                         value = "${todayReadingMinutes}",
-                        unit = "分钟",
-                        label = "今日阅读",
+                        unit = stringResource(R.string.profile_unit_minutes),
+                        label = stringResource(R.string.profile_today_reading),
                         icon = Icons.Default.Schedule,
                         modifier = Modifier.widthIn(min = 92.dp)
                     )
@@ -228,8 +233,8 @@ fun ProfileScreen(
                     // 累计阅读天数
                     OverviewDataItem(
                         value = "${totalReadingDays}",
-                        unit = "天",
-                        label = "累计阅读",
+                        unit = stringResource(R.string.profile_unit_days),
+                        label = stringResource(R.string.profile_total_reading_days),
                         icon = Icons.Default.CalendarMonth,
                         modifier = Modifier.widthIn(min = 92.dp)
                     )
@@ -245,8 +250,8 @@ fun ProfileScreen(
                     // 连续阅读天数
                     OverviewDataItem(
                         value = "${continuousReadingDays}",
-                        unit = "天",
-                        label = "连续阅读",
+                        unit = stringResource(R.string.profile_unit_days),
+                        label = stringResource(R.string.profile_streak_days),
                         icon = Icons.Default.LocalFireDepartment,
                         modifier = Modifier.widthIn(min = 92.dp)
                     )
@@ -274,8 +279,8 @@ fun ProfileScreen(
                     // 笔记管理
                     ProfileMenuItem(
                         icon = Icons.Default.EditNote,
-                        title = "笔记管理",
-                        subtitle = "管理阅读笔记与标注",
+                        title = stringResource(R.string.profile_menu_notes),
+                        subtitle = stringResource(R.string.profile_menu_notes_subtitle),
                         onClick = { navController.navigate(AppRoutes.NOTES) }
                     )
                     HorizontalDivider(
@@ -286,8 +291,8 @@ fun ProfileScreen(
                     // 阅读设置
                     ProfileMenuItem(
                         icon = Icons.Default.Settings,
-                        title = "阅读设置",
-                        subtitle = "外观、主题、字体、行距、翻页",
+                        title = stringResource(R.string.profile_menu_reading_settings),
+                        subtitle = stringResource(R.string.profile_menu_reading_settings_subtitle),
                         onClick = { navController.navigate(AppRoutes.READING_SETTINGS) }
                     )
                 }
@@ -313,8 +318,8 @@ fun ProfileScreen(
                     // 关于应用
                     ProfileMenuItem(
                         icon = Icons.Default.Info,
-                        title = "关于应用",
-                        subtitle = "版本信息与支持格式",
+                        title = stringResource(R.string.profile_menu_about),
+                        subtitle = stringResource(R.string.profile_menu_about_subtitle),
                         onClick = { showAboutDialog = true }
                     )
                     HorizontalDivider(
@@ -325,8 +330,8 @@ fun ProfileScreen(
                     // 清理缓存
                     ProfileMenuItem(
                         icon = Icons.Default.DeleteSweep,
-                        title = "清理缓存",
-                        subtitle = "释放存储空间",
+                        title = stringResource(R.string.profile_menu_clear_cache),
+                        subtitle = stringResource(R.string.profile_menu_clear_cache_subtitle),
                         onClick = { showClearCacheDialog = true }
                     )
                 }
@@ -350,7 +355,7 @@ fun ProfileScreen(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    "MD阅读器 v${BuildConfig.VERSION_NAME}",
+                    stringResource(R.string.profile_app_version_footer, BuildConfig.VERSION_NAME),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
                 )

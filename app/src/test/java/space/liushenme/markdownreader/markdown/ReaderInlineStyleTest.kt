@@ -35,7 +35,7 @@ class ReaderInlineStyleTest {
         val context: Context = RuntimeEnvironment.getApplication()
         val markwon = ReaderMarkwonFactory.create(context)
         val md = "遵循`Pre-train -> Fine-tune`的流程。"
-        val rendered = markwon.toMarkdown(ReaderMarkwonFactory.prepareMarkdown(md).text)
+        val rendered = markwon.toMarkdown(ReaderMarkwonFactory.prepareMarkdown(md, context).text)
         val codeSpans = rendered.getSpans(0, rendered.length, ReaderInlineCodeSpan::class.java)
         assertTrue(
             "expected ReaderInlineCodeSpan, got ${
@@ -54,7 +54,7 @@ class ReaderInlineStyleTest {
         val markwon = ReaderMarkwonFactory.create(context)
         val md =
             "函数执行完毕后，会返回一个结果（例如，`{\"temperature\": 32, \"condition\": \"sunny\"}`）。"
-        val rendered = markwon.toMarkdown(ReaderMarkwonFactory.prepareMarkdown(md).text)
+        val rendered = markwon.toMarkdown(ReaderMarkwonFactory.prepareMarkdown(md, context).text)
         val text = rendered.toString()
         assertTrue(text.contains("\"temperature\""))
         assertTrue(text.contains("sunny"))
@@ -74,7 +74,7 @@ class ReaderInlineStyleTest {
         val markwon = ReaderMarkwonFactory.create(context)
         val md =
             "* 结果（例如，`{\"temperature\": 32, \"condition\": \"sunny\"}`）。"
-        val rendered = markwon.toMarkdown(ReaderMarkwonFactory.prepareMarkdown(md).text)
+        val rendered = markwon.toMarkdown(ReaderMarkwonFactory.prepareMarkdown(md, context).text)
         assertTrue(
             rendered.getSpans(0, rendered.length, ReaderInlineCodeSpan::class.java).isNotEmpty(),
         )
@@ -90,7 +90,7 @@ class ReaderInlineStyleTest {
         val markwon = ReaderMarkwonFactory.create(context)
         val d = "$"
         val md = "共 ${d}N${d} 个头"
-        val rendered = markwon.toMarkdown(ReaderMarkwonFactory.prepareMarkdown(md).text)
+        val rendered = markwon.toMarkdown(ReaderMarkwonFactory.prepareMarkdown(md, context).text)
         val spans = rendered.getSpans(0, rendered.length, AsyncDrawableSpan::class.java)
         assertTrue(
             "expected ReaderInlineLatexSpan, got ${spans.map { it.javaClass.name }}",

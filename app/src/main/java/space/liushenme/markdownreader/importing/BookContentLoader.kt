@@ -9,6 +9,7 @@ import java.io.InputStream
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 import space.liushenme.markdownreader.BuildConfig
+import space.liushenme.markdownreader.R
 
 private const val MAX_TEXT_SCAN_BYTES = 8 * 1024 * 1024
 private const val MAX_URL_BYTES = 15 * 1024 * 1024
@@ -29,8 +30,8 @@ object BookContentLoader {
             ImportedBookFormat.PDF -> {
                 val file = copyUriToCacheFile(context, uri, ".pdf") ?: return ExtractedBookText.plainBody("")
                 try {
-                    PdfBookExtractor.extract(file)
-                        ?: ExtractedBookText.plainBody(placeholder(format))
+                    PdfBookExtractor.extract(context, file)
+                        ?: ExtractedBookText.plainBody(placeholder(context, format))
                 } finally {
                     file.delete()
                 }
@@ -39,12 +40,14 @@ object BookContentLoader {
     }
 
     fun loadFromUrlBytes(
+        context: Context,
         bytes: ByteArray,
         format: ImportedBookFormat,
         httpCharsetName: String?
-    ): String = loadExtractedFromUrlBytes(bytes, format, httpCharsetName).body
+    ): String = loadExtractedFromUrlBytes(context, bytes, format, httpCharsetName).body
 
     fun loadExtractedFromUrlBytes(
+        context: Context,
         bytes: ByteArray,
         format: ImportedBookFormat,
         httpCharsetName: String?
@@ -57,8 +60,8 @@ object BookContentLoader {
                 val tmp = File.createTempFile("pdf_", ".pdf")
                 try {
                     tmp.writeBytes(bytes)
-                    PdfBookExtractor.extract(tmp)
-                        ?: ExtractedBookText.plainBody(placeholder(format))
+                    PdfBookExtractor.extract(context, tmp)
+                        ?: ExtractedBookText.plainBody(placeholder(context, format))
                 } finally {
                     tmp.delete()
                 }
@@ -67,28 +70,29 @@ object BookContentLoader {
     }
 
     /** 书架中仍保存旧格式书籍、且本地无解析包时的提示正文。 */
-    fun removedFormatPlaceholder(storedKey: String?): String {
-        val label = storedKey?.uppercase()?.trim().orEmpty().ifBlank { "该格式" }
+    fun removedFormatPlaceholder(context: Context, storedKey: String?): String {
+        val label = storedKey?.uppercase()?.trim().orEmpty()
+            .ifBlank { context.getString(R.string.format_label_default) }
         return buildString {
-            appendLine("# 已不再支持此格式")
+            appendLine(context.getString(R.string.format_removed_title))
             appendLine()
-            appendLine("当前版本已移除对 **$label**（EPUB、DOC、DOCX、MOBI、AZW3 等）的直接导入与解析。")
+            appendLine(context.getString(R.string.format_removed_body, label))
             appendLine()
-            appendLine("请将书籍转换为 **Markdown**、**TXT** 或 **PDF** 后重新导入。")
+            appendLine(context.getString(R.string.format_removed_hint))
         }
     }
 
-    fun placeholder(format: ImportedBookFormat): String {
+    fun placeholder(context: Context, format: ImportedBookFormat): String {
         val label = when (format) {
             ImportedBookFormat.PDF -> "PDF"
             else -> format.name
         }
         return buildString {
-            appendLine("# 暂不支持直接阅读此格式")
+            appendLine(context.getString(R.string.format_unsupported_title))
             appendLine()
-            appendLine("当前版本未能解析 **$label** 正文，书架已保存该书以便后续处理。")
+            appendLine(context.getString(R.string.format_unsupported_body, label))
             appendLine()
-            appendLine("建议：将内容另存为 **Markdown** 或 **TXT** 后再导入。")
+            appendLine(context.getString(R.string.format_unsupported_hint))
         }
     }
 
@@ -173,7 +177,7 @@ object UrlBookDownloader {
 
     fun download(urlStr: String): Result {
         require(BookImportSupport.isAllowedDownloadUrl(urlStr)) {
-            "仅支持 http 或 https 链接"
+            "Only http or https URLs are supported"
         }
         val conn = java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection
         conn.connectTimeout = 20_000

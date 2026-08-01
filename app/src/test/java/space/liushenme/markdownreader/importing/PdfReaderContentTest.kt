@@ -1,10 +1,21 @@
 package space.liushenme.markdownreader.importing
 
+import android.content.Context
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28])
 class PdfReaderContentTest {
+
+    private val context: Context
+        get() = RuntimeEnvironment.getApplication()
+
 
     @Test
     fun sanitizeStoredBody_removesLegacyPageHeadings() {
@@ -31,7 +42,7 @@ class PdfReaderContentTest {
             append(PdfReaderContent.buildPageImgTag("book-asset://pdf_page_003.png"))
         }
         val pages = PdfReaderContent.splitToPages(body)
-        val toc = PdfReaderContent.tocEntriesFromBody(body)
+        val toc = PdfReaderContent.tocEntriesFromBody(body, context)
         assertEquals(pages.size, toc.size)
         toc.forEachIndexed { index, entry ->
             assertEquals(index, PdfReaderContent.pageIndexForSourceOffset(body, entry.sourceOffset))

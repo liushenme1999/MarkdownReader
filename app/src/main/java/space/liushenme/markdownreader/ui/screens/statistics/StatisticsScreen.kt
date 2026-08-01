@@ -24,16 +24,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import androidx.navigation.compose.rememberNavController
+import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.entity.BookEntity
-import space.liushenme.markdownreader.data.repository.ReadingSessionStats
 import space.liushenme.markdownreader.data.repository.ReadingTrendAggregator
 import space.liushenme.markdownreader.ui.components.ShelfStyleTopBarBackground
 import space.liushenme.markdownreader.ui.components.ShelfStyleTopAppBar
@@ -58,7 +60,7 @@ fun StatisticsScreen(
         topBar = {
             ShelfStyleTopBarBackground(pageBg) {
                 ShelfStyleTopAppBar(
-                    title = "阅读统计",
+                    title = stringResource(R.string.statistics_title),
                     onNavigateBack = { navController.navigateUp() }
                 )
             }
@@ -92,10 +94,10 @@ private fun StatisticsOverview(stats: ReadingStatistics) {
         )
     ) {
         Column(
-            modifier = Modifier.padding(24.dp)
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 20.dp)
         ) {
             Text(
-                "阅读总览",
+                stringResource(R.string.statistics_overview),
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontWeight = FontWeight.Bold
                 )
@@ -105,22 +107,25 @@ private fun StatisticsOverview(stats: ReadingStatistics) {
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 StatItem(
                     icon = Icons.AutoMirrored.Filled.MenuBook,
                     value = "${stats.totalBooks}",
-                    label = "书籍总数"
+                    label = stringResource(R.string.statistics_total_books),
+                    modifier = Modifier.weight(1f),
                 )
                 StatItem(
                     icon = Icons.Default.CheckCircle,
                     value = "${stats.finishedBooks}",
-                    label = "已读完"
+                    label = stringResource(R.string.statistics_finished_books),
+                    modifier = Modifier.weight(1f),
                 )
                 StatItem(
                     icon = Icons.Default.Schedule,
-                    value = ReadingSessionStats.formatReadDuration(stats.totalReadMinutes),
-                    label = "阅读时长"
+                    value = formatReadDuration(stats.totalReadMinutes),
+                    label = stringResource(R.string.statistics_reading_duration),
+                    modifier = Modifier.weight(1f),
                 )
             }
 
@@ -128,22 +133,25 @@ private fun StatisticsOverview(stats: ReadingStatistics) {
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 StatItem(
                     icon = Icons.Default.TextFields,
                     value = formatNumber(stats.totalReadChars),
-                    label = "阅读字数"
+                    label = stringResource(R.string.statistics_reading_chars),
+                    modifier = Modifier.weight(1f),
                 )
                 StatItem(
                     icon = Icons.Default.Bookmark,
                     value = "${stats.totalBookmarks}",
-                    label = "书签数"
+                    label = stringResource(R.string.statistics_bookmarks_count),
+                    modifier = Modifier.weight(1f),
                 )
                 StatItem(
                     icon = Icons.Default.Highlight,
                     value = "${stats.totalHighlights}",
-                    label = "划线数"
+                    label = stringResource(R.string.statistics_highlights_count),
+                    modifier = Modifier.weight(1f),
                 )
             }
         }
@@ -154,39 +162,56 @@ private fun StatisticsOverview(stats: ReadingStatistics) {
 private fun StatItem(
     icon: ImageVector,
     value: String,
-    label: String
+    label: String,
+    modifier: Modifier = Modifier,
 ) {
+    val valueSize = when {
+        value.length >= 8 -> 15.sp
+        value.length >= 6 -> 17.sp
+        else -> 20.sp
+    }
     Column(
-        horizontalAlignment = Alignment.CenterHorizontally
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
             modifier = Modifier
-                .size(48.dp)
+                .size(44.dp)
                 .background(
                     color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-                    shape = CircleShape
+                    shape = CircleShape,
                 ),
-            contentAlignment = Alignment.Center
+            contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(26.dp)
+                modifier = Modifier.size(24.dp),
             )
         }
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Text(
             text = value,
-            style = MaterialTheme.typography.titleLarge.copy(
+            style = MaterialTheme.typography.titleMedium.copy(
                 fontWeight = FontWeight.Bold,
-                fontSize = 22.sp
-            )
+                fontSize = valueSize,
+            ),
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
         )
+        Spacer(modifier = Modifier.height(2.dp))
         Text(
             text = label,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }
@@ -229,18 +254,25 @@ private fun WeeklyReadingGoalCard(trend: List<DailyReading>) {
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    "本周阅读目标",
+                    stringResource(R.string.statistics_weekly_goal),
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Bold
-                    )
+                    ),
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(modifier = Modifier.weight(1f))
                 Text(
-                    text = "$completedDays / $goalDays 天",
+                    text = stringResource(
+                        R.string.statistics_weekly_goal_progress,
+                        completedDays,
+                        goalDays,
+                    ),
                     style = MaterialTheme.typography.labelLarge.copy(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
-                    )
+                    ),
+                    maxLines = 1,
                 )
             }
 
@@ -322,16 +354,39 @@ private fun ReadingTrendCard(trend: List<DailyReading>) {
         Column(
             modifier = Modifier.padding(24.dp)
         ) {
-            Text(
-                "本周阅读趋势",
-                style = MaterialTheme.typography.titleMedium.copy(
-                    fontWeight = FontWeight.Bold
+            val hasReadingData = trend.any { it.minutes > 0 }
+            val avgMinutes = if (hasReadingData) {
+                trend.map { it.minutes }.average().toInt()
+            } else {
+                0
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    stringResource(R.string.statistics_weekly_trend),
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold
+                    ),
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-            )
+                if (hasReadingData && avgMinutes > 0) {
+                    Text(
+                        text = stringResource(R.string.statistics_avg_minutes, avgMinutes),
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.85f),
+                        ),
+                        maxLines = 1,
+                    )
+                }
+            }
 
             Spacer(modifier = Modifier.height(16.dp))
-
-            val hasReadingData = trend.any { it.minutes > 0 }
 
             if (trend.isEmpty()) {
                 // 优化后的空状态插图
@@ -378,12 +433,12 @@ private fun ReadingTrendCard(trend: List<DailyReading>) {
                         }
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            "暂无阅读数据",
+                            stringResource(R.string.statistics_no_data),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
                         )
                         Text(
-                            "开始阅读后将显示趋势图表",
+                            stringResource(R.string.statistics_no_data_chart_hint),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
                         )
@@ -391,7 +446,7 @@ private fun ReadingTrendCard(trend: List<DailyReading>) {
                 }
             } else {
                 val maxMinutes = trend.maxOfOrNull { it.minutes }?.coerceAtLeast(1) ?: 1
-                val avgMinutes = trend.map { it.minutes }.average().toFloat()
+                val avgMinutesFloat = trend.map { it.minutes }.average().toFloat()
                 val chartHeight = 132.dp
                 val minuteLabelHeight = 14.dp
                 val barAreaHeight = chartHeight - minuteLabelHeight
@@ -461,8 +516,8 @@ private fun ReadingTrendCard(trend: List<DailyReading>) {
                             }
                         }
 
-                        if (hasReadingData && avgMinutes > 0) {
-                            val avgFraction = (avgMinutes / maxMinutes).coerceIn(0f, 1f)
+                        if (hasReadingData && avgMinutesFloat > 0) {
+                            val avgFraction = (avgMinutesFloat / maxMinutes).coerceIn(0f, 1f)
                             val density = androidx.compose.ui.platform.LocalDensity.current
                             val lineHeightPx = with(density) {
                                 chartHeight.toPx() - minuteLabelHeight.toPx() -
@@ -481,17 +536,6 @@ private fun ReadingTrendCard(trend: List<DailyReading>) {
                                     ),
                                 )
                             }
-
-                            Text(
-                                text = "平均 ${avgMinutes.toInt()}分",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontSize = 10.sp,
-                                    color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.75f),
-                                ),
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .padding(top = 2.dp, end = 2.dp),
-                            )
                         }
                     }
 
@@ -518,7 +562,7 @@ private fun ReadingTrendCard(trend: List<DailyReading>) {
                     if (!hasReadingData) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "开始阅读后，将按每日阅读时长显示趋势",
+                            text = stringResource(R.string.statistics_trend_empty_hint),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
                             modifier = Modifier.fillMaxWidth(),
@@ -545,7 +589,7 @@ private fun RecentlyReadBooks(books: List<BookEntity>, navController: NavControl
             modifier = Modifier.padding(24.dp)
         ) {
             Text(
-                "最近阅读",
+                stringResource(R.string.statistics_recent_reading),
                 style = MaterialTheme.typography.titleMedium.copy(
                     fontWeight = FontWeight.Bold
                 )
@@ -561,7 +605,7 @@ private fun RecentlyReadBooks(books: List<BookEntity>, navController: NavControl
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        "还没有阅读记录",
+                        stringResource(R.string.statistics_no_recent_records),
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                     )
                 }
@@ -640,18 +684,34 @@ private fun BookProgressItem(book: BookEntity, onClick: () -> Unit) {
         // 点击提示箭头
         Icon(
             imageVector = Icons.Default.ChevronRight,
-            contentDescription = "打开阅读",
+            contentDescription = stringResource(R.string.statistics_open_reading_cd),
             tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
             modifier = Modifier.size(20.dp)
         )
     }
 }
 
+@Composable
 private fun formatNumber(number: Int): String {
     return when {
-        number >= 10000 -> "${number / 10000}万"
+        number >= 10000 -> stringResource(R.string.format_number_wan, number / 10000)
         number >= 1000 -> "${number / 1000}k"
         else -> number.toString()
+    }
+}
+
+@Composable
+private fun formatReadDuration(totalMinutes: Int): String {
+    val minutes = totalMinutes.coerceAtLeast(0)
+    if (minutes < 60) {
+        return stringResource(R.string.duration_minutes_only, minutes)
+    }
+    val hours = minutes / 60
+    val rem = minutes % 60
+    return if (rem == 0) {
+        stringResource(R.string.duration_hours_only, hours)
+    } else {
+        stringResource(R.string.duration_hours_and_minutes, hours, rem)
     }
 }
 
@@ -729,7 +789,7 @@ private fun StatisticsScreenPreviewImpl(navController: NavController) {
         topBar = {
             ShelfStyleTopBarBackground(pageBg) {
                 ShelfStyleTopAppBar(
-                    title = "阅读统计",
+                    title = stringResource(R.string.statistics_title),
                     onNavigateBack = { navController.navigateUp() }
                 )
             }

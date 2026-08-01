@@ -29,7 +29,7 @@ class TocJumpProgressRestoreVsTitleTest {
         val slice = markdown.substring(winStart, winEnd)
         val context: Context = RuntimeEnvironment.getApplication()
         val markwon = ReaderMarkwonFactory.create(context)
-        val prepared = ReaderMarkwonFactory.prepareMarkdown(slice)
+        val prepared = ReaderMarkwonFactory.prepareMarkdown(slice, context)
         val rendered = markwon.toMarkdown(prepared.text).toString()
 
         val titleOffset = resolveDisplayedCharOffset(

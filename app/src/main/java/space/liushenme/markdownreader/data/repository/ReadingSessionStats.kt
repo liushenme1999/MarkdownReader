@@ -1,5 +1,7 @@
 package space.liushenme.markdownreader.data.repository
 
+import android.content.Context
+import space.liushenme.markdownreader.R
 import java.util.Calendar
 import java.util.Date
 import kotlin.math.roundToInt
@@ -63,11 +65,17 @@ object ReadingSessionStats {
     }
 
     /** 总览时长文案：不足 1 小时显示分钟，否则「X小时」或「X小时Y分」。 */
-    fun formatReadDuration(totalMinutes: Int): String {
+    fun formatReadDuration(totalMinutes: Int, context: Context): String {
         val minutes = totalMinutes.coerceAtLeast(0)
-        if (minutes < 60) return "${minutes}分钟"
+        if (minutes < 60) {
+            return context.getString(R.string.duration_minutes_only, minutes)
+        }
         val hours = minutes / 60
         val rem = minutes % 60
-        return if (rem == 0) "${hours}小时" else "${hours}小时${rem}分"
+        return if (rem == 0) {
+            context.getString(R.string.duration_hours_only, hours)
+        } else {
+            context.getString(R.string.duration_hours_and_minutes, hours, rem)
+        }
     }
 }

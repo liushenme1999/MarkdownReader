@@ -1,11 +1,21 @@
 package space.liushenme.markdownreader.data.repository
 
+import android.content.Context
 import space.liushenme.markdownreader.data.local.entity.ReadingProgressEntity
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 import java.util.Calendar
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28])
 class ReadingTrendAggregatorTest {
+
+    private val context: Context
+        get() = RuntimeEnvironment.getApplication()
 
     @Test
     fun buildLast7DaysTrend_aggregatesMinutesPerDay_mondayFirst() {
@@ -25,10 +35,10 @@ class ReadingTrendAggregatorTest {
             ReadingProgressEntity(bookId = 1L, date = friday, readTimeMinutes = 5, readChars = 0),
         )
 
-        val trend = ReadingTrendAggregator.buildLast7DaysTrend(records, now)
+        val trend = ReadingTrendAggregator.buildLast7DaysTrend(records, context, now)
 
         assertEquals(7, trend.size)
-        assertEquals(listOf("一", "二", "三", "四", "五", "六", "日"), trend.map { it.weekdayLabel })
+        assertEquals(expectedWeekdayLabels(), trend.map { it.weekdayLabel })
         assertEquals(40, trend[5].minutes)
         assertEquals(5, trend[4].minutes)
         assertEquals(0, trend[0].minutes)
@@ -51,7 +61,7 @@ class ReadingTrendAggregatorTest {
             ),
         )
 
-        val trend = ReadingTrendAggregator.buildLast7DaysTrend(records, now)
+        val trend = ReadingTrendAggregator.buildLast7DaysTrend(records, context, now)
 
         assertEquals(60, trend[ReadingTrendAggregator.dayIndexInCurrentWeek(now)].minutes)
     }
@@ -62,10 +72,20 @@ class ReadingTrendAggregatorTest {
             set(2026, Calendar.MAY, 16, 12, 0, 0)
             set(Calendar.MILLISECOND, 0)
         }
-        val trend = ReadingTrendAggregator.buildLast7DaysTrend(emptyList(), now)
+        val trend = ReadingTrendAggregator.buildLast7DaysTrend(emptyList(), context, now)
 
-        assertEquals(listOf("一", "二", "三", "四", "五", "六", "日"), trend.map { it.weekdayLabel })
+        assertEquals(expectedWeekdayLabels(), trend.map { it.weekdayLabel })
     }
+
+    private fun expectedWeekdayLabels(): List<String> = listOf(
+        context.getString(space.liushenme.markdownreader.R.string.weekday_mon),
+        context.getString(space.liushenme.markdownreader.R.string.weekday_tue),
+        context.getString(space.liushenme.markdownreader.R.string.weekday_wed),
+        context.getString(space.liushenme.markdownreader.R.string.weekday_thu),
+        context.getString(space.liushenme.markdownreader.R.string.weekday_fri),
+        context.getString(space.liushenme.markdownreader.R.string.weekday_sat),
+        context.getString(space.liushenme.markdownreader.R.string.weekday_sun),
+    )
 
     @Test
     fun startOfWeekMonday_returnsMondayForSaturday() {

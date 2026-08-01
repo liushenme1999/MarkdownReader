@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -26,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import androidx.navigation.compose.rememberNavController
+import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.entity.BookmarkEntity
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.ui.components.AppSearchField
@@ -73,11 +75,14 @@ fun NotesScreen(
         topBar = {
             ShelfStyleTopBarBackground(pageBg) {
                 ShelfStyleTopAppBar(
-                    title = "笔记管理",
+                    title = stringResource(R.string.notes_title),
                     onNavigateBack = { navController.navigateUp() },
                     actions = {
                         IconButton(onClick = { showExportDialog = true }) {
-                            Icon(Icons.Default.Share, contentDescription = "导出")
+                            Icon(
+                                Icons.Default.Share,
+                                contentDescription = stringResource(R.string.notes_export_cd),
+                            )
                         }
                     }
                 )
@@ -94,11 +99,11 @@ fun NotesScreen(
                 query = searchQuery,
                 onQueryChange = { searchQuery = it },
                 placeholder = if (selectedTab == 0) {
-                    "搜索划线内容或书名..."
+                    stringResource(R.string.notes_search_highlights_placeholder)
                 } else {
-                    "搜索书签内容或书名..."
+                    stringResource(R.string.notes_search_bookmarks_placeholder)
                 },
-                clearContentDescription = "清除",
+                clearContentDescription = stringResource(R.string.notes_clear_cd),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp)
@@ -109,12 +114,20 @@ fun NotesScreen(
                 Tab(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
-                    text = { Text("划线笔记 (${filteredHighlights.size})") }
+                    text = {
+                        Text(
+                            stringResource(R.string.notes_tab_highlights, filteredHighlights.size)
+                        )
+                    }
                 )
                 Tab(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
-                    text = { Text("书签 (${filteredBookmarks.size})") }
+                    text = {
+                        Text(
+                            stringResource(R.string.notes_tab_bookmarks, filteredBookmarks.size)
+                        )
+                    }
                 )
             }
 
@@ -167,7 +180,7 @@ private fun HighlightsList(
 
     if (highlights.isEmpty()) {
         EmptyState(
-            message = "还没有划线笔记",
+            message = stringResource(R.string.notes_empty_highlights),
             modifier = Modifier.fillMaxSize()
         )
     } else {
@@ -206,7 +219,7 @@ private fun BookmarksList(
 
     if (bookmarks.isEmpty()) {
         EmptyState(
-            message = "还没有书签",
+            message = stringResource(R.string.notes_empty_bookmarks),
             modifier = Modifier.fillMaxSize()
         )
     } else {
@@ -278,13 +291,13 @@ private fun HighlightCard(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
                             imageVector = Icons.Default.Delete,
-                            contentDescription = "删除",
+                            contentDescription = stringResource(R.string.notes_delete_cd),
                             modifier = Modifier.size(28.dp),
                             tint = deleteIconTint
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "删除",
+                            text = stringResource(R.string.action_delete),
                             style = MaterialTheme.typography.labelSmall,
                             color = deleteIconTint
                         )
@@ -386,7 +399,10 @@ private fun HighlightCard(
                     if (!highlight.highlight.note.isNullOrEmpty()) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "笔记: ${highlight.highlight.note}",
+                            text = stringResource(
+                                R.string.notes_note_prefix,
+                                highlight.highlight.note.orEmpty(),
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                         )
@@ -444,13 +460,13 @@ private fun BookmarkCard(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
                             imageVector = Icons.Default.Delete,
-                            contentDescription = "删除",
+                            contentDescription = stringResource(R.string.notes_delete_cd),
                             modifier = Modifier.size(28.dp),
                             tint = deleteIconTint
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "删除",
+                            text = stringResource(R.string.action_delete),
                             style = MaterialTheme.typography.labelSmall,
                             color = deleteIconTint
                         )
@@ -534,7 +550,10 @@ private fun BookmarkCard(
                     if (!bookmark.bookmark.note.isNullOrEmpty()) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "笔记: ${bookmark.bookmark.note}",
+                            text = stringResource(
+                                R.string.notes_note_prefix,
+                                bookmark.bookmark.note.orEmpty(),
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                             modifier = Modifier
@@ -644,14 +663,14 @@ private fun ExportDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("导出笔记") },
+        title = { Text(stringResource(R.string.export_dialog_title)) },
         text = {
             Column {
-                Text("选择导出格式:")
+                Text(stringResource(R.string.export_dialog_choose_format))
                 Spacer(modifier = Modifier.height(16.dp))
                 ListItem(
-                    headlineContent = { Text("导出为 Markdown") },
-                    supportingContent = { Text("适合导入其他笔记软件") },
+                    headlineContent = { Text(stringResource(R.string.export_as_markdown)) },
+                    supportingContent = { Text(stringResource(R.string.export_markdown_hint)) },
                     leadingContent = {
                         Icon(Icons.Default.Description, contentDescription = null)
                     },
@@ -661,8 +680,8 @@ private fun ExportDialog(
                     }
                 )
                 ListItem(
-                    headlineContent = { Text("导出为 JSON") },
-                    supportingContent = { Text("包含完整数据信息") },
+                    headlineContent = { Text(stringResource(R.string.export_as_json)) },
+                    supportingContent = { Text(stringResource(R.string.export_json_hint)) },
                     leadingContent = {
                         Icon(Icons.Default.Code, contentDescription = null)
                     },
@@ -676,7 +695,7 @@ private fun ExportDialog(
         confirmButton = {},
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(stringResource(R.string.action_cancel))
             }
         }
     )
@@ -773,11 +792,14 @@ private fun NotesScreenPreviewImpl(navController: NavController) {
         topBar = {
             ShelfStyleTopBarBackground(pageBg) {
                 ShelfStyleTopAppBar(
-                    title = "笔记管理",
+                    title = stringResource(R.string.notes_title),
                     onNavigateBack = { navController.navigateUp() },
                     actions = {
                         IconButton(onClick = { showExportDialog = true }) {
-                            Icon(Icons.Default.Share, contentDescription = "导出")
+                            Icon(
+                                Icons.Default.Share,
+                                contentDescription = stringResource(R.string.notes_export_cd),
+                            )
                         }
                     }
                 )
@@ -794,11 +816,11 @@ private fun NotesScreenPreviewImpl(navController: NavController) {
                 query = searchQuery,
                 onQueryChange = { searchQuery = it },
                 placeholder = if (selectedTab == 0) {
-                    "搜索划线内容或书名..."
+                    stringResource(R.string.notes_search_highlights_placeholder)
                 } else {
-                    "搜索书签内容或书名..."
+                    stringResource(R.string.notes_search_bookmarks_placeholder)
                 },
-                clearContentDescription = "清除",
+                clearContentDescription = stringResource(R.string.notes_clear_cd),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp)
@@ -808,12 +830,20 @@ private fun NotesScreenPreviewImpl(navController: NavController) {
                 Tab(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
-                    text = { Text("划线笔记 (${filteredHighlights.size})") }
+                    text = {
+                        Text(
+                            stringResource(R.string.notes_tab_highlights, filteredHighlights.size)
+                        )
+                    }
                 )
                 Tab(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
-                    text = { Text("书签 (${filteredBookmarks.size})") }
+                    text = {
+                        Text(
+                            stringResource(R.string.notes_tab_bookmarks, filteredBookmarks.size)
+                        )
+                    }
                 )
             }
 

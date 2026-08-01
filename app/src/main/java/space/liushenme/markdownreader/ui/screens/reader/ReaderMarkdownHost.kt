@@ -48,6 +48,8 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.res.stringResource
+import space.liushenme.markdownreader.R
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.lerp
@@ -220,13 +222,13 @@ internal fun ReaderPageTurnSheet(
                 .padding(horizontal = 24.dp, vertical = 16.dp)
         ) {
             Text(
-                text = "翻页方式",
+                text = stringResource(R.string.reader_page_turn_section),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "横向模式按段落估算分页，复杂排版可能与上下滚动略有差异。左右滑动/仿真/覆盖翻页时：仅可左右翻页，向下滑动添加书签，再次滑动取消书签。",
+                text = stringResource(R.string.reader_page_turn_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -252,7 +254,7 @@ internal fun ReaderPageTurnSheet(
                     Spacer(modifier = Modifier.width(8.dp))
                     Column {
                         Text(
-                            text = mode.label,
+                            text = stringResource(mode.labelRes),
                             style = MaterialTheme.typography.bodyLarge
                         )
                     }

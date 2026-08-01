@@ -1,5 +1,6 @@
 package space.liushenme.markdownreader.ui.screens.reader
 
+import android.content.Context
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.ReplacementSpan
@@ -12,11 +13,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class ReaderSelectionTextTest {
+
+    private val context: Context
+        get() = RuntimeEnvironment.getApplication()
 
     @Test
     fun prepareInlineLatexPlaceholder_keepsCopyableSource() {
@@ -28,14 +33,14 @@ class ReaderSelectionTextTest {
     @Test
     fun extract_plainText_unchanged() {
         val body = "你好世界"
-        assertEquals("好世", extractReaderSelectionText(body, 1, 3))
+        assertEquals("好世", extractReaderSelectionText(body, 1, 3, context))
     }
 
     @Test
     fun extract_skipsOrphanObjectReplacement() {
         val body = "前\uFFFC后"
-        assertEquals("前后", extractReaderSelectionText(body, 0, body.length))
-        assertFalse(readerSelectionHasActionableText("\uFFFC", 0, 1))
+        assertEquals("前后", extractReaderSelectionText(body, 0, body.length, context))
+        assertFalse(readerSelectionHasActionableText("\uFFFC", 0, 1, context))
     }
 
     @Test
@@ -66,8 +71,8 @@ class ReaderSelectionTextTest {
             ) = Unit
         }, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
 
-        assertEquals("\$\\otimes\$", extractReaderSelectionText(body, start, end))
-        assertTrue(readerSelectionHasActionableText(body, start, end))
+        assertEquals("\$\\otimes\$", extractReaderSelectionText(body, start, end, context))
+        assertTrue(readerSelectionHasActionableText(body, start, end, context))
     }
 
     @Test

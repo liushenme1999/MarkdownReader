@@ -3,24 +3,28 @@ package space.liushenme.markdownreader.ui.screens.profile
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
+import space.liushenme.markdownreader.R
+import space.liushenme.markdownreader.model.AppLanguage
 import space.liushenme.markdownreader.model.AppThemeMode
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
 import space.liushenme.markdownreader.ui.components.AppThemeModeOption
 import space.liushenme.markdownreader.ui.components.ReaderPageTurnModeOption
+import space.liushenme.markdownreader.ui.components.ReaderSettingsChoiceOption
 import space.liushenme.markdownreader.ui.components.ReaderSettingsGroupCard
 import space.liushenme.markdownreader.ui.components.ReaderSettingsHintBanner
 import space.liushenme.markdownreader.ui.components.ReaderSettingsSectionTitle
@@ -44,15 +48,17 @@ fun ReadingSettingsScreen(
     val lineSpacing by viewModel.readerLineSpacingMultiplier.collectAsState()
     val pageTurnMode by viewModel.pageTurnMode.collectAsState()
     val appThemeMode by viewModel.appThemeMode.collectAsState()
+    val appLanguage by viewModel.appLanguage.collectAsState()
     val pageTurnModes = ReaderPageTurnMode.entries
     val appThemeModes = AppThemeMode.entries
+    val appLanguages = AppLanguage.entries
 
     Scaffold(
         containerColor = pageBg,
         topBar = {
             ShelfStyleTopBarBackground(pageBg) {
                 ShelfStyleTopAppBar(
-                    title = "阅读设置",
+                    title = stringResource(R.string.reading_settings_title),
                     onNavigateBack = { navController.navigateUp() },
                 )
             }
@@ -69,11 +75,31 @@ fun ReadingSettingsScreen(
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             ReaderSettingsHintBanner(
-                text = "以下设置将应用于全部书籍，与阅读页内快捷面板实时同步。",
+                text = stringResource(R.string.reading_settings_sync_hint),
             )
 
             Column {
-                ReaderSettingsSectionTitle("外观主题")
+                ReaderSettingsSectionTitle(stringResource(R.string.reading_settings_section_language))
+                ReaderSettingsGroupCard {
+                    Column(
+                        modifier = Modifier.padding(vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        appLanguages.forEachIndexed { index, language ->
+                            ReaderSettingsChoiceOption(
+                                title = stringResource(language.labelRes),
+                                icon = Icons.Default.Language,
+                                selected = language == appLanguage,
+                                onClick = { viewModel.setAppLanguage(language) },
+                                showDividerBelow = index < appLanguages.lastIndex,
+                            )
+                        }
+                    }
+                }
+            }
+
+            Column {
+                ReaderSettingsSectionTitle(stringResource(R.string.reading_settings_section_appearance))
                 ReaderSettingsGroupCard {
                     Column(
                         modifier = Modifier.padding(vertical = 10.dp),
@@ -92,7 +118,7 @@ fun ReadingSettingsScreen(
             }
 
             Column {
-                ReaderSettingsSectionTitle("阅读主题")
+                ReaderSettingsSectionTitle(stringResource(R.string.reading_settings_section_reading_theme))
                 ReaderSettingsGroupCard {
                     ReadingThemeGrid(
                         themes = ReadingTheme.allThemes(),
@@ -104,10 +130,10 @@ fun ReadingSettingsScreen(
             }
 
             Column {
-                ReaderSettingsSectionTitle("字体与排版")
+                ReaderSettingsSectionTitle(stringResource(R.string.reading_settings_section_typography))
                 ReaderSettingsGroupCard {
                     ReaderWideSliderRow(
-                        label = "字体大小",
+                        label = stringResource(R.string.reader_font_size),
                         valueText = "${fontSize} sp",
                         value = fontSize.toFloat(),
                         onValueChange = { v ->
@@ -118,7 +144,7 @@ fun ReadingSettingsScreen(
                         showDividerBelow = true,
                     )
                     ReaderWideSliderRow(
-                        label = "页边距",
+                        label = stringResource(R.string.reader_page_margin),
                         valueText = "${readerPaddingDp} dp",
                         value = readerPaddingDp.toFloat(),
                         onValueChange = { v ->
@@ -129,8 +155,8 @@ fun ReadingSettingsScreen(
                         showDividerBelow = true,
                     )
                     ReaderWideSliderRow(
-                        label = "行距",
-                        valueText = "%.2f 倍".format(lineSpacing),
+                        label = stringResource(R.string.reader_line_spacing),
+                        valueText = stringResource(R.string.reader_line_spacing_value, lineSpacing),
                         value = lineSpacing,
                         onValueChange = viewModel::setReaderLineSpacingMultiplier,
                         valueRange = 1f..2.5f,
@@ -141,7 +167,7 @@ fun ReadingSettingsScreen(
             }
 
             Column {
-                ReaderSettingsSectionTitle("翻页方式")
+                ReaderSettingsSectionTitle(stringResource(R.string.reading_settings_section_page_turn))
                 ReaderSettingsGroupCard {
                     Column(
                         modifier = Modifier.padding(vertical = 10.dp),

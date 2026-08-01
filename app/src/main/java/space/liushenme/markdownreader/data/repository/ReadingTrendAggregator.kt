@@ -1,5 +1,7 @@
 package space.liushenme.markdownreader.data.repository
 
+import android.content.Context
+import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.entity.ReadingProgressEntity
 import java.util.Calendar
 import java.util.Date
@@ -17,16 +19,25 @@ object ReadingTrendAggregator {
     const val CHARS_PER_HOUR = 20_000
     const val WEEKLY_GOAL_MINUTES = 15
 
-    private val WEEKDAY_LABELS_MON_FIRST = listOf("一", "二", "三", "四", "五", "六", "日")
+    private val WEEKDAY_LABEL_RES_MON_FIRST = listOf(
+        R.string.weekday_mon,
+        R.string.weekday_tue,
+        R.string.weekday_wed,
+        R.string.weekday_thu,
+        R.string.weekday_fri,
+        R.string.weekday_sat,
+        R.string.weekday_sun,
+    )
 
     fun buildLast7DaysTrend(
         records: List<ReadingProgressEntity>,
+        context: Context,
         now: Calendar = Calendar.getInstance(),
     ): List<DailyReadingTrendDay> {
         val grouped = records.groupBy { startOfDayMillis(it.date) }
         val weekStart = startOfWeekMonday(now)
 
-        return WEEKDAY_LABELS_MON_FIRST.mapIndexed { index, label ->
+        return WEEKDAY_LABEL_RES_MON_FIRST.mapIndexed { index, labelRes ->
             val day = (weekStart.clone() as Calendar).apply {
                 add(Calendar.DAY_OF_YEAR, index)
             }
@@ -39,7 +50,7 @@ object ReadingTrendAggregator {
                 estimateMinutesFromChars(chars)
             }
             DailyReadingTrendDay(
-                weekdayLabel = label,
+                weekdayLabel = context.getString(labelRes),
                 minutes = minutes,
             )
         }

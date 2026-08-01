@@ -48,7 +48,7 @@ class LatexInHtmlDivTest {
                 </div>
                 4.  <strong>Softmax：</strong> 后续正文不应是等宽代码块。
         """.trimIndent()
-        val prepared = ReaderMarkwonFactory.prepareMarkdown(md)
+        val prepared = ReaderMarkwonFactory.prepareMarkdown(md, context)
         assertFalse(prepared.text.contains("\n    4.  <strong>Softmax"))
         val rendered = markwon.toMarkdown(prepared.text)
         val monoRanges = (rendered as? android.text.Spanned)
@@ -69,7 +69,7 @@ class LatexInHtmlDivTest {
     fun blockLatexInsideHtmlDiv_doesNotBreakFollowingOrderedListItems() {
         val context: Context = RuntimeEnvironment.getApplication()
         val markwon = ReaderMarkwonFactory.create(context)
-        val prepared = ReaderMarkwonFactory.prepareMarkdown(blockInDivWithFollowingItems)
+        val prepared = ReaderMarkwonFactory.prepareMarkdown(blockInDivWithFollowingItems, context)
         assertTrue(prepared.text.contains("\n4.  <strong>下一步"))
         assertFalse(
             "following list items should not stay indented after block latex",
@@ -85,7 +85,7 @@ class LatexInHtmlDivTest {
     fun blockLatexInsideHtmlDiv_rendersAfterPreprocessorUnwrapsDiv() {
         val context: Context = RuntimeEnvironment.getApplication()
         val markwon = ReaderMarkwonFactory.create(context)
-        val prepared = ReaderMarkwonFactory.prepareMarkdown(blockInDiv)
+        val prepared = ReaderMarkwonFactory.prepareMarkdown(blockInDiv, context)
         assertFalse(
             "preprocessor should unwrap div around block latex",
             prepared.text.contains("<div align=\"center\">", ignoreCase = true),
@@ -99,7 +99,7 @@ class LatexInHtmlDivTest {
         val context: Context = RuntimeEnvironment.getApplication()
         val markwon = ReaderMarkwonFactory.create(context)
         val inline = "因子 ${'$'}\\sqrt{d_k}${'$'} 与 ${'$'}d_k${'$'}"
-        val prepared = ReaderMarkwonFactory.prepareMarkdown(inline)
+        val prepared = ReaderMarkwonFactory.prepareMarkdown(inline, context)
         val rendered = markwon.toMarkdown(prepared.text).toString()
         assertFalse("inline latex should render: $rendered", rendered.contains("${'$'}\\sqrt"))
     }
@@ -108,7 +108,7 @@ class LatexInHtmlDivTest {
     fun blockLatexOnOwnLines_rendersWithoutRawBlockDelimiters() {
         val context: Context = RuntimeEnvironment.getApplication()
         val markwon = ReaderMarkwonFactory.create(context)
-        val prepared = ReaderMarkwonFactory.prepareMarkdown(blockPlain)
+        val prepared = ReaderMarkwonFactory.prepareMarkdown(blockPlain, context)
         val rendered = markwon.toMarkdown(prepared.text).toString()
         assertFalse("should not keep raw $$ delimiters: $rendered", rendered.contains("$$"))
     }

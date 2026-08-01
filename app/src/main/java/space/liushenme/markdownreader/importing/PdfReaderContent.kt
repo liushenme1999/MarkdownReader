@@ -1,5 +1,8 @@
 package space.liushenme.markdownreader.importing
 
+import android.content.Context
+import space.liushenme.markdownreader.R
+
 /**
  * PDF 导入正文的规范化与分页（阅读器侧复用）。
  */
@@ -47,12 +50,12 @@ object PdfReaderContent {
         }
     }
 
-    fun tocEntriesFromBody(body: String): List<ImportedTocEntry> {
+    fun tocEntriesFromBody(body: String, context: Context): List<ImportedTocEntry> {
         val sanitized = sanitizeStoredBody(body)
         return pageImageMatches(sanitized).mapIndexed { index, match ->
             ImportedTocEntry(
                 level = 2,
-                title = "第 ${index + 1} 页",
+                title = context.getString(R.string.pdf_page_title, index + 1),
                 sourceOffset = match.range.first,
             )
         }

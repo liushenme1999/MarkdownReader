@@ -1,13 +1,16 @@
 package space.liushenme.markdownreader.ui.screens.notes
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.entity.BookmarkEntity
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.data.repository.BookRepository
 import space.liushenme.markdownreader.data.repository.BookmarkRepository
 import space.liushenme.markdownreader.data.repository.HighlightRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -16,7 +19,8 @@ import javax.inject.Inject
 class NotesViewModel @Inject constructor(
     private val highlightRepository: HighlightRepository,
     private val bookmarkRepository: BookmarkRepository,
-    private val bookRepository: BookRepository
+    private val bookRepository: BookRepository,
+    @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
 
     private val _allHighlights = MutableStateFlow<List<HighlightWithBook>>(emptyList())
@@ -38,7 +42,7 @@ class NotesViewModel @Inject constructor(
                         val book = books.find { it.id == highlight.bookId }
                         HighlightWithBook(
                             highlight = highlight,
-                            bookTitle = book?.title ?: "未知书籍"
+                            bookTitle = book?.title ?: appContext.getString(R.string.unknown_book)
                         )
                     }
                 }
@@ -53,7 +57,7 @@ class NotesViewModel @Inject constructor(
                         val book = books.find { it.id == bookmark.bookId }
                         BookmarkWithBook(
                             bookmark = bookmark,
-                            bookTitle = book?.title ?: "未知书籍"
+                            bookTitle = book?.title ?: appContext.getString(R.string.unknown_book)
                         )
                     }
                 }
@@ -75,33 +79,37 @@ class NotesViewModel @Inject constructor(
 
     fun exportToMarkdown(): String {
         val sb = StringBuilder()
-        sb.appendLine("# 阅读笔记导出")
+        sb.appendLine(appContext.getString(R.string.export_md_title))
         sb.appendLine()
-        sb.appendLine("导出时间: ${java.util.Date()}")
+        sb.appendLine(appContext.getString(R.string.export_md_time, java.util.Date().toString()))
         sb.appendLine()
 
         // 导出划线笔记
-        sb.appendLine("## 划线笔记")
+        sb.appendLine(appContext.getString(R.string.export_md_highlights_section))
         sb.appendLine()
         _allHighlights.value.forEach { item ->
             sb.appendLine("### ${item.bookTitle}")
             sb.appendLine("> ${item.highlight.highlightedText}")
             if (!item.highlight.note.isNullOrEmpty()) {
                 sb.appendLine()
-                sb.appendLine("**笔记:** ${item.highlight.note}")
+                sb.appendLine(
+                    appContext.getString(R.string.export_md_note_label, item.highlight.note)
+                )
             }
             sb.appendLine()
         }
 
         // 导出书签
-        sb.appendLine("## 书签")
+        sb.appendLine(appContext.getString(R.string.export_md_bookmarks_section))
         sb.appendLine()
         _allBookmarks.value.forEach { item ->
             sb.appendLine("### ${item.bookTitle}")
             sb.appendLine("> ${item.bookmark.previewText}")
             if (!item.bookmark.note.isNullOrEmpty()) {
                 sb.appendLine()
-                sb.appendLine("**笔记:** ${item.bookmark.note}")
+                sb.appendLine(
+                    appContext.getString(R.string.export_md_note_label, item.bookmark.note)
+                )
             }
             sb.appendLine()
         }

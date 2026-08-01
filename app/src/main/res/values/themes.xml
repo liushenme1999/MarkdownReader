@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.MarkdownReader" parent="android:Theme.Material.Light.NoActionBar">
+    <!-- AppCompat 主题：setApplicationLocales 依赖 AppCompatActivity + AppCompat theme -->
+    <style name="Theme.MarkdownReader" parent="Theme.AppCompat.Light.NoActionBar">
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
     </style>
 </resources>

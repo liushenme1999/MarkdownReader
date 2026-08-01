@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import space.liushenme.markdownreader.data.preferences.readerPreferencesDataStore
+import space.liushenme.markdownreader.model.AppLanguage
 import space.liushenme.markdownreader.model.AppThemeMode
 import space.liushenme.markdownreader.model.HighlightStyle
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
@@ -14,6 +15,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 @Singleton
@@ -25,6 +27,10 @@ class ReaderSettingsRepository @Inject constructor(
     val pageTurnMode: Flow<ReaderPageTurnMode> = dataStore.data.map { prefs ->
         val raw = prefs[KEY_PAGE_TURN_MODE]
         ReaderPageTurnMode.entries.find { it.name == raw } ?: ReaderPageTurnMode.VerticalScroll
+    }
+
+    val appLanguage: Flow<AppLanguage> = dataStore.data.map { prefs ->
+        AppLanguage.fromStored(prefs[KEY_APP_LANGUAGE])
     }
 
     val appThemeMode: Flow<AppThemeMode> = dataStore.data.map { prefs ->
@@ -69,6 +75,14 @@ class ReaderSettingsRepository @Inject constructor(
         }
     }
 
+    suspend fun setAppLanguage(language: AppLanguage) {
+        dataStore.edit { prefs ->
+            prefs[KEY_APP_LANGUAGE] = language.name
+        }
+    }
+
+    suspend fun currentAppLanguage(): AppLanguage = appLanguage.first()
+
     suspend fun setReadingTheme(theme: ReadingTheme) {
         dataStore.edit { prefs ->
             prefs[KEY_READING_THEME] = themeToStoredName(theme)
@@ -107,6 +121,7 @@ class ReaderSettingsRepository @Inject constructor(
         const val DEFAULT_HIGHLIGHT_COLOR_ARGB = 0xFFFFFF00.toInt()
 
         private val KEY_PAGE_TURN_MODE = stringPreferencesKey("reader_page_turn_mode")
+        private val KEY_APP_LANGUAGE = stringPreferencesKey("app_language")
         private val KEY_APP_THEME_MODE = stringPreferencesKey("app_theme_mode")
         private val KEY_READING_THEME = stringPreferencesKey("reader_reading_theme")
 

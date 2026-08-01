@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.data.repository.BookRepository
 import space.liushenme.markdownreader.importing.BookContentLoader
@@ -61,11 +62,12 @@ class BookshelfViewModel @Inject constructor(
                 } catch (_: SecurityException) {
                     // 部分来源不支持持久权限，仍尝试当前会话内读取
                 }
-                val fileName = BookImportSupport.displayNameFromUri(context, uri) ?: "未命名书籍"
+                val fileName = BookImportSupport.displayNameFromUri(context, uri)
+                    ?: appContext.getString(R.string.book_untitled)
                 val mime = context.contentResolver.getType(uri)
                 if (BookImportSupport.isRemovedFormat(fileName, mime)) {
                     toastChannel.trySend(
-                        "不支持 EPUB、DOC、DOCX、MOBI、AZW3，请使用 Markdown、TXT 或 PDF。"
+                        appContext.getString(R.string.toast_import_unsupported_format)
                     )
                     return@launch
                 }
@@ -74,7 +76,7 @@ class BookshelfViewModel @Inject constructor(
                     BookContentLoader.loadExtractedFromUri(context, uri, format)
                 }
                 if (extracted.body.isBlank() && format.hasBuiltInTextExtract) {
-                    toastChannel.trySend("未能解析出正文，请确认文件未损坏。")
+                    toastChannel.trySend(appContext.getString(R.string.toast_import_parse_failed))
                 }
                 val bookId = persistImportedBook(
                     importContext = context,
@@ -87,7 +89,12 @@ class BookshelfViewModel @Inject constructor(
                     readerOpenRequestChannel.trySend(bookId)
                 }
             } catch (e: Exception) {
-                toastChannel.trySend("导入失败：${e.message ?: "未知错误"}")
+                toastChannel.trySend(
+                    appContext.getString(
+                        R.string.toast_import_failed,
+                        e.message ?: appContext.getString(R.string.error_unknown),
+                    )
+                )
             }
         }
     }
@@ -96,8 +103,11 @@ class BookshelfViewModel @Inject constructor(
         val url = BookImportSupport.normalizeImportUrl(urlRaw)
         if (url == null) {
             toastChannel.trySend(
-                if (urlRaw.trim().isEmpty()) "请输入有效的网址。"
-                else "仅支持 http 或 https 链接。"
+                if (urlRaw.trim().isEmpty()) {
+                    appContext.getString(R.string.toast_import_url_empty)
+                } else {
+                    appContext.getString(R.string.toast_import_url_invalid_scheme)
+                }
             )
             return
         }
@@ -107,30 +117,38 @@ class BookshelfViewModel @Inject constructor(
                 val name = result.suggestedFileName ?: url.substringAfterLast('/').substringBefore('?')
                 if (BookImportSupport.isRemovedFormat(name, result.contentType)) {
                     toastChannel.trySend(
-                        "不支持 EPUB、DOC、DOCX、MOBI、AZW3，请使用 Markdown、TXT 或 PDF。"
+                        appContext.getString(R.string.toast_import_unsupported_format)
                     )
                     return@launch
                 }
                 val format = BookImportSupport.detectFormat(name, result.contentType)
                 val extracted = withContext(Dispatchers.IO) {
                     BookContentLoader.loadExtractedFromUrlBytes(
+                        appContext,
                         result.bytes,
                         format,
                         result.charsetFromHeader
                     )
                 }
                 if (extracted.body.isBlank() && format.hasBuiltInTextExtract) {
-                    toastChannel.trySend("下载成功但未解析出正文。")
+                    toastChannel.trySend(appContext.getString(R.string.toast_import_download_empty))
                 }
                 persistImportedBook(
                     importContext = appContext,
-                    title = BookImportSupport.stripKnownExtension(name.ifBlank { "网络书籍" }),
+                    title = BookImportSupport.stripKnownExtension(
+                        name.ifBlank { appContext.getString(R.string.book_from_network) }
+                    ),
                     extracted = extracted,
                     filePath = url,
                     format = format
                 )
             } catch (e: Exception) {
-                toastChannel.trySend("从网址导入失败：${e.message ?: "网络错误"}")
+                toastChannel.trySend(
+                    appContext.getString(
+                        R.string.toast_import_from_url_failed,
+                        e.message ?: appContext.getString(R.string.error_network),
+                    )
+                )
             }
         }
     }
@@ -147,7 +165,7 @@ class BookshelfViewModel @Inject constructor(
         val content = enrichedForStore.body
         val author = BookImportSupport.extractAuthorFromContent(content)
         val book = BookEntity(
-            title = title.ifBlank { "未命名书籍" },
+            title = title.ifBlank { appContext.getString(R.string.book_untitled) },
             author = author,
             filePath = filePath,
             importFormat = format.storedKey,
@@ -157,7 +175,7 @@ class BookshelfViewModel @Inject constructor(
         )
         val id = bookRepository.addBook(book)
         if (id <= 0L) {
-            toastChannel.trySend("导入失败：无法写入书架。")
+            toastChannel.trySend(appContext.getString(R.string.toast_import_write_failed))
             return 0L
         }
         val writeOk = withContext(Dispatchers.IO) {
@@ -189,8 +207,11 @@ class BookshelfViewModel @Inject constructor(
             true
         }
         toastChannel.trySend(
-            if (writeOk) "已导入「${book.title}」"
-            else "「${book.title}」已加入书架，但解析缓存写入失败；阅读时将尝试从原文件重新解析。"
+            if (writeOk) {
+                appContext.getString(R.string.toast_import_success, book.title)
+            } else {
+                appContext.getString(R.string.toast_import_cache_write_failed, book.title)
+            }
         )
         return id
     }
@@ -203,7 +224,7 @@ class BookshelfViewModel @Inject constructor(
         if (format.usesReaderPlainBody) {
             return extracted.copy(body = MarkdownPreprocessor.stripLocalRelativeImages(extracted.body))
         }
-        var body = MarkdownPreprocessor.prepare(extracted.body)
+        var body = MarkdownPreprocessor.prepare(extracted.body, appContext)
         withContext(Dispatchers.IO) {
             NetworkImageCache.preloadFromMarkdown(appContext, body)
         }

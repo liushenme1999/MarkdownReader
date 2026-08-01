@@ -1,6 +1,8 @@
 package space.liushenme.markdownreader.ui.theme
 
+import androidx.annotation.StringRes
 import androidx.compose.ui.graphics.Color
+import space.liushenme.markdownreader.R
 
 /** 书架页浅灰背景（浅色模式） */
 val BookshelfPageBackground = Color(0xFFF2F2F4)
@@ -25,7 +27,7 @@ val Pink40 = Color(0xFF7D5260)
 
 // 阅读主题
 sealed class ReadingTheme(
-    val name: String,
+    @StringRes val nameRes: Int,
     val backgroundColor: Color,
     val textColor: Color,
     val secondaryTextColor: Color,
@@ -33,7 +35,7 @@ sealed class ReadingTheme(
     val bookmarkColor: Color
 ) {
     object Paper : ReadingTheme(
-        name = "纸质书",
+        nameRes = R.string.reading_theme_paper,
         backgroundColor = Color(0xFFF5F0E1),
         textColor = Color(0xFF2C2C2C),
         secondaryTextColor = Color(0xFF666666),
@@ -42,7 +44,7 @@ sealed class ReadingTheme(
     )
 
     object Dark : ReadingTheme(
-        name = "夜间模式",
+        nameRes = R.string.reading_theme_dark,
         backgroundColor = Color(0xFF1A1A1A),
         textColor = Color(0xFFE0E0E0),
         secondaryTextColor = Color(0xFF999999),
@@ -51,7 +53,7 @@ sealed class ReadingTheme(
     )
 
     object White : ReadingTheme(
-        name = "纯净白",
+        nameRes = R.string.reading_theme_white,
         backgroundColor = Color(0xFFFFFFFF),
         textColor = Color(0xFF333333),
         secondaryTextColor = Color(0xFF666666),
@@ -60,7 +62,7 @@ sealed class ReadingTheme(
     )
 
     object Green : ReadingTheme(
-        name = "护眼绿",
+        nameRes = R.string.reading_theme_green,
         backgroundColor = Color(0xFFE8F5E9),
         textColor = Color(0xFF1B5E20),
         secondaryTextColor = Color(0xFF4CAF50),
@@ -69,7 +71,7 @@ sealed class ReadingTheme(
     )
 
     object Sepia : ReadingTheme(
-        name = "复古棕",
+        nameRes = R.string.reading_theme_sepia,
         backgroundColor = Color(0xFFF4ECD8),
         textColor = Color(0xFF5B4636),
         secondaryTextColor = Color(0xFF8B7355),

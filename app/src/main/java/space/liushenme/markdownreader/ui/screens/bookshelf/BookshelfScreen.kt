@@ -41,6 +41,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -48,6 +49,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.ui.components.AppSearchField
 import space.liushenme.markdownreader.importing.BookImportSupport
 import space.liushenme.markdownreader.ui.components.ShelfStyleTopBarBackground
@@ -167,8 +169,11 @@ fun BookshelfScreen(
                     windowInsets = WindowInsets(),
                     title = {
                         Text(
-                            if (selectionMode) "已选 ${selectedIds.size} 本"
-                            else "书架 (${books.size})",
+                            if (selectionMode) {
+                                stringResource(R.string.bookshelf_selected_count, selectedIds.size)
+                            } else {
+                                stringResource(R.string.bookshelf_title, books.size)
+                            },
                             style = MaterialTheme.typography.titleLarge.copy(
                                 fontFamily = FontFamily.SansSerif,
                                 fontWeight = FontWeight.Black
@@ -178,7 +183,10 @@ fun BookshelfScreen(
                     navigationIcon = {
                         if (selectionMode) {
                             IconButton(onClick = { exitSelection() }) {
-                                Icon(Icons.Default.Close, contentDescription = "退出管理")
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = stringResource(R.string.bookshelf_exit_management_cd),
+                                )
                             }
                         }
                     },
@@ -194,7 +202,7 @@ fun BookshelfScreen(
                     AppSearchField(
                         query = searchQuery,
                         onQueryChange = { searchQuery = it },
-                        placeholder = "搜索书名或作者...",
+                        placeholder = stringResource(R.string.bookshelf_search_placeholder),
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp)
@@ -240,13 +248,13 @@ fun BookshelfScreen(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "未找到匹配的书籍",
+                        text = stringResource(R.string.bookshelf_no_results),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "尝试其他关键词",
+                        text = stringResource(R.string.bookshelf_try_other_keywords),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
                     )
@@ -320,17 +328,17 @@ fun BookshelfScreen(
                     ) {
                         ManagementBarButton(
                             icon = Icons.Default.DeleteOutline,
-                            label = "移出书架",
+                            label = stringResource(R.string.bookshelf_action_remove),
                             onClick = { showRemoveConfirm = true }
                         )
                         ManagementBarButton(
                             icon = Icons.Default.PushPin,
-                            label = "置顶",
+                            label = stringResource(R.string.bookshelf_action_pin),
                             onClick = { viewModel.togglePinForSelection(selectedIds) }
                         )
                         ManagementBarButton(
                             icon = Icons.Default.FavoriteBorder,
-                            label = "收藏",
+                            label = stringResource(R.string.bookshelf_action_favorite),
                             onClick = {
                                 filteredBooks
                                     .filter { it.id in selectedIds }
@@ -339,7 +347,7 @@ fun BookshelfScreen(
                         )
                         ManagementBarButton(
                             icon = Icons.Default.FolderSpecial,
-                            label = "分组",
+                            label = stringResource(R.string.bookshelf_action_group),
                             onClick = {
                                 groupInput = ""
                                 showGroupDialog = true

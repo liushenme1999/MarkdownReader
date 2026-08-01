@@ -1,5 +1,7 @@
 package space.liushenme.markdownreader.markdown
 
+import android.content.Context
+import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.importing.ImageAssetUtils
 
 /**
@@ -44,14 +46,14 @@ object MarkdownPreprocessor {
     /** 单行 `$$…$$`：Markwon 块解析器要求 `$$` 独占一行，否则走 InlineProcessor。 */
     private val SINGLE_LINE_BLOCK_LATEX = Regex("""^\s*\$\$(.+)\$\$\s*$""")
 
-    fun prepare(markdown: String): String {
+    fun prepare(markdown: String, context: Context): String {
         if (markdown.isEmpty()) return markdown
         var out = expandHighlight(markdown)
         out = unwrapCenteredLatexDivs(out)
         out = expandSingleLineBlockLatex(out)
         out = normalizeBlockLatexSurroundings(out)
         out = ReaderLatexPreprocessor.preprocessBlockLatexInMarkdown(out)
-        out = expandFootnotes(out)
+        out = expandFootnotes(out, context)
         out = expandDiagramFences(out)
         out = ensureBlankLineBeforeTables(out)
         out = stripLocalRelativeImages(out)
@@ -345,7 +347,7 @@ object MarkdownPreprocessor {
      * GFM 脚注：引用 `[^id]`，定义 `[^id]: text`（支持续行缩进）。
      * 转为 HTML，由 [io.noties.markwon.html.HtmlPlugin] 渲染。
      */
-    internal fun expandFootnotes(markdown: String): String {
+    internal fun expandFootnotes(markdown: String, context: Context): String {
         val lines = markdown.split('\n')
         val definitions = linkedMapOf<String, String>()
         val defLineIndices = mutableSetOf<Int>()
@@ -406,7 +408,7 @@ object MarkdownPreprocessor {
             appendLine()
             appendLine()
             appendLine("---")
-            appendLine("**脚注**")
+            appendLine(context.getString(R.string.footnote_section_heading))
             appendLine("<ol>")
             reordered.forEachIndexed { idx, id ->
                 val n = idx + 1

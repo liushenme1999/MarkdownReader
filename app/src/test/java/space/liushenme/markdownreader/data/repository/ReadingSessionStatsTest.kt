@@ -1,10 +1,21 @@
 package space.liushenme.markdownreader.data.repository
 
+import android.content.Context
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 import java.util.Calendar
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28])
 class ReadingSessionStatsTest {
+
+    private val context: Context
+        get() = RuntimeEnvironment.getApplication()
+
 
     @Test
     fun elapsedMillisToMinutes_ignoresVeryShortSegments() {
@@ -70,11 +81,26 @@ class ReadingSessionStatsTest {
 
     @Test
     fun formatReadDuration_adaptsUnits() {
-        assertEquals("0分钟", ReadingSessionStats.formatReadDuration(0))
-        assertEquals("45分钟", ReadingSessionStats.formatReadDuration(45))
-        assertEquals("1小时", ReadingSessionStats.formatReadDuration(60))
-        assertEquals("1小时5分", ReadingSessionStats.formatReadDuration(65))
-        assertEquals("2小时", ReadingSessionStats.formatReadDuration(120))
+        assertEquals(
+            context.getString(space.liushenme.markdownreader.R.string.duration_minutes_only, 0),
+            ReadingSessionStats.formatReadDuration(0, context),
+        )
+        assertEquals(
+            context.getString(space.liushenme.markdownreader.R.string.duration_minutes_only, 45),
+            ReadingSessionStats.formatReadDuration(45, context),
+        )
+        assertEquals(
+            context.getString(space.liushenme.markdownreader.R.string.duration_hours_only, 1),
+            ReadingSessionStats.formatReadDuration(60, context),
+        )
+        assertEquals(
+            context.getString(space.liushenme.markdownreader.R.string.duration_hours_and_minutes, 1, 5),
+            ReadingSessionStats.formatReadDuration(65, context),
+        )
+        assertEquals(
+            context.getString(space.liushenme.markdownreader.R.string.duration_hours_only, 2),
+            ReadingSessionStats.formatReadDuration(120, context),
+        )
     }
 
     private fun day(year: Int, month: Int, dayOfMonth: Int): Long =

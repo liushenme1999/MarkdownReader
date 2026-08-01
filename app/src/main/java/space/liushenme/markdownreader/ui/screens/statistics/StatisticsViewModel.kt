@@ -1,5 +1,6 @@
 package space.liushenme.markdownreader.ui.screens.statistics
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import space.liushenme.markdownreader.data.local.entity.BookEntity
@@ -9,12 +10,14 @@ import space.liushenme.markdownreader.data.repository.HighlightRepository
 import space.liushenme.markdownreader.data.repository.ReadingProgressRepository
 import space.liushenme.markdownreader.data.repository.ReadingTrendAggregator
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
 class StatisticsViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val bookRepository: BookRepository,
     private val bookmarkRepository: BookmarkRepository,
     private val highlightRepository: HighlightRepository,
@@ -25,7 +28,7 @@ class StatisticsViewModel @Inject constructor(
     val statistics: StateFlow<ReadingStatistics> = _statistics.asStateFlow()
 
     private val _readingTrend = MutableStateFlow(
-        ReadingTrendAggregator.buildLast7DaysTrend(emptyList()).map {
+        ReadingTrendAggregator.buildLast7DaysTrend(emptyList(), context).map {
             DailyReading(dayOfWeek = it.weekdayLabel, minutes = it.minutes)
         },
     )

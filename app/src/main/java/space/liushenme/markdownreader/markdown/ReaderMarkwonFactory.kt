@@ -66,9 +66,9 @@ object ReaderMarkwonFactory {
             .build()
     }
 
-    fun prepareMarkdown(source: String): PreparedMarkdown {
+    fun prepareMarkdown(source: String, context: Context): PreparedMarkdown {
         val anchorIndex = MarkdownAnchorIndex.build(source)
-        val text = MarkdownPreprocessor.prepare(source)
+        val text = MarkdownPreprocessor.prepare(source, context)
         return PreparedMarkdown(text = text, anchorIndex = anchorIndex)
     }
 }

@@ -182,9 +182,15 @@ class SafeReaderTextViewSelectionTest {
         textView.populateSelectionMenuForTest(menu)
         assertEquals(2, menu.size())
         assertEquals(SafeReaderTextView.MENU_ID_COPY, menu.getItem(0).itemId)
-        assertEquals("复制", menu.getItem(0).title.toString())
+        assertEquals(
+            textView.context.getString(space.liushenme.markdownreader.R.string.selection_menu_copy),
+            menu.getItem(0).title.toString(),
+        )
         assertEquals(SafeReaderTextView.MENU_ID_HIGHLIGHT, menu.getItem(1).itemId)
-        assertEquals("划线", menu.getItem(1).title.toString())
+        assertEquals(
+            textView.context.getString(space.liushenme.markdownreader.R.string.selection_menu_highlight),
+            menu.getItem(1).title.toString(),
+        )
     }
 
     @Test
@@ -231,7 +237,10 @@ class SafeReaderTextViewSelectionTest {
         val menu = PopupMenu(textView.context, textView).menu
         textView.populateSelectionMenuForTest(menu)
         assertEquals(SafeReaderTextView.MENU_ID_CANCEL_HIGHLIGHT, menu.getItem(1).itemId)
-        assertEquals("取消划线", menu.getItem(1).title.toString())
+        assertEquals(
+            textView.context.getString(space.liushenme.markdownreader.R.string.selection_menu_cancel_highlight),
+            menu.getItem(1).title.toString(),
+        )
     }
 
     @Test
@@ -249,7 +258,10 @@ class SafeReaderTextViewSelectionTest {
         val menu = PopupMenu(textView.context, textView).menu
         textView.populateSelectionMenuForTest(menu)
         assertEquals(SafeReaderTextView.MENU_ID_HIGHLIGHT, menu.getItem(1).itemId)
-        assertEquals("划线", menu.getItem(1).title.toString())
+        assertEquals(
+            textView.context.getString(space.liushenme.markdownreader.R.string.selection_menu_highlight),
+            menu.getItem(1).title.toString(),
+        )
     }
 
     @Test
@@ -259,12 +271,18 @@ class SafeReaderTextViewSelectionTest {
         val menu = PopupMenu(textView.context, textView).menu
         textView.populateSelectionMenuForTest(menu)
         assertEquals(SafeReaderTextView.MENU_ID_HIGHLIGHT, menu.getItem(1).itemId)
-        assertEquals("划线", menu.getItem(1).title.toString())
+        assertEquals(
+            textView.context.getString(space.liushenme.markdownreader.R.string.selection_menu_highlight),
+            menu.getItem(1).title.toString(),
+        )
 
         textView.bindSelectionHighlightId(11L, 2, 4)
         textView.populateSelectionMenuForTest(menu)
         assertEquals(SafeReaderTextView.MENU_ID_CANCEL_HIGHLIGHT, menu.getItem(1).itemId)
-        assertEquals("取消划线", menu.getItem(1).title.toString())
+        assertEquals(
+            textView.context.getString(space.liushenme.markdownreader.R.string.selection_menu_cancel_highlight),
+            menu.getItem(1).title.toString(),
+        )
 
         var removedId: Long? = null
         textView.onRemoveHighlightClick = { removedId = it }
@@ -274,6 +292,9 @@ class SafeReaderTextViewSelectionTest {
         assertEquals(11L, removedId)
         textView.populateSelectionMenuForTest(menu)
         assertEquals(SafeReaderTextView.MENU_ID_HIGHLIGHT, menu.getItem(1).itemId)
-        assertEquals("划线", menu.getItem(1).title.toString())
+        assertEquals(
+            textView.context.getString(space.liushenme.markdownreader.R.string.selection_menu_highlight),
+            menu.getItem(1).title.toString(),
+        )
     }
 }

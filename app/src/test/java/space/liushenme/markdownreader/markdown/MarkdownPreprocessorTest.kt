@@ -1,16 +1,26 @@
 package space.liushenme.markdownreader.markdown
 
+import android.content.Context
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28])
 class MarkdownPreprocessorTest {
+
+    private val context: Context
+        get() = RuntimeEnvironment.getApplication()
 
     @Test
     fun prepare_leavesTocPlaceholderUntouched() {
         val md = "# Alpha\n\n[TOC]\n\n## Beta\n"
-        val out = MarkdownPreprocessor.prepare(md)
+        val out = MarkdownPreprocessor.prepare(md, context)
         assertTrue(out.contains("[TOC]"))
     }
 
@@ -24,7 +34,7 @@ class MarkdownPreprocessorTest {
             # 二十、末章
             最后一行正文
         """.trimIndent()
-        val out = MarkdownPreprocessor.expandFootnotes(md)
+        val out = MarkdownPreprocessor.expandFootnotes(md, context)
         assertTrue(
             "footnote footer must be separated from last paragraph by a blank line",
             out.contains("最后一行正文\n\n---"),
@@ -38,11 +48,18 @@ class MarkdownPreprocessorTest {
 
             [^note]: Foot body
         """.trimIndent()
-        val out = MarkdownPreprocessor.expandFootnotes(md)
+        val out = MarkdownPreprocessor.expandFootnotes(md, context)
         assertFalse(out.contains("[^note]:"))
         assertTrue(out.contains("Foot body"))
         assertTrue(out.contains("<sup"))
-        assertTrue(out.contains("脚注"))
+        assertTrue(
+            out.contains(
+                context.getString(space.liushenme.markdownreader.R.string.footnote_section_heading)
+                    .replace("**", ""),
+            ) || out.contains(
+                context.getString(space.liushenme.markdownreader.R.string.footnote_section_heading),
+            ),
+        )
         assertTrue(out.contains("↩"))
     }
 
@@ -142,7 +159,7 @@ class MarkdownPreprocessorTest {
             </div>
                 4. next item
         """.trimIndent()
-        val out = MarkdownPreprocessor.prepare(md)
+        val out = MarkdownPreprocessor.prepare(md, context)
         assertFalse(out.contains("<div", ignoreCase = true))
         assertTrue(out.contains("\n4. next item"))
         assertFalse(out.contains("\n    4. next item"))
@@ -157,7 +174,7 @@ class MarkdownPreprocessorTest {
             ${d}${d}\\text{Score}(Q_i, K_j) = Q_i \\cdot K_j${d}${d}
             </div>
         """.trimIndent()
-        val out = MarkdownPreprocessor.prepare(md)
+        val out = MarkdownPreprocessor.prepare(md, context)
         assertFalse(out.contains("<div", ignoreCase = true))
         assertFalse("single-line block should be expanded: $out", out.contains("${d}${d}\\text{Score}"))
         val lines = out.lines().map { it.trim() }.filter { it.isNotEmpty() }
@@ -227,7 +244,7 @@ class MarkdownPreprocessorTest {
     fun prepare_keepsInlineLatexSingleDollar() {
         val d = "$"
         val input = "上标：${d}x^2${d}\n下标：${d}y_1${d}"
-        val out = MarkdownPreprocessor.prepare(input)
+        val out = MarkdownPreprocessor.prepare(input, context)
         assertTrue(out.contains("上标：${d}x^2${d}"))
         assertTrue(out.contains("下标：${d}y_1${d}"))
         assertFalse(out.contains("${d}${d}"))
@@ -278,7 +295,7 @@ class MarkdownPreprocessorTest {
             |------|------|
             | 节点 | 说明 |
         """.trimIndent()
-        val out = MarkdownPreprocessor.prepare(md)
+        val out = MarkdownPreprocessor.prepare(md, context)
         assertTrue(out.contains("**核心概念：**\n\n| 概念 | 解释 |"))
     }
 }

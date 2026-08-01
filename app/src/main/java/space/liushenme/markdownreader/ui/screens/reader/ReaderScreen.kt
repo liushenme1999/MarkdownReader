@@ -64,6 +64,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -85,6 +86,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavController
+import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.importing.PdfReaderContent
@@ -182,9 +184,9 @@ fun ReaderScreen(
 
     val structuredToc by viewModel.structuredToc.collectAsState()
 
-    val tocEntries = remember(readerContent, renderPlainText, structuredToc, isPdfBook) {
+    val tocEntries = remember(readerContent, renderPlainText, structuredToc, isPdfBook, context) {
         if (isPdfBook) {
-            return@remember PdfReaderContent.tocEntriesFromBody(readerContent).map {
+            return@remember PdfReaderContent.tocEntriesFromBody(readerContent, context).map {
                 MarkdownTocEntry(level = it.level, title = it.title, sourceOffset = it.sourceOffset, rawTitle = it.rawTitle)
             }
         }
@@ -197,13 +199,15 @@ fun ReaderScreen(
             else -> emptyList()
         }
     }
-    val emptyTocMessage = remember(renderPlainText) {
-        if (renderPlainText) {
-            "未识别到章节。请将章节标题单独成行，例如：\n第一章 …、第1节 …、Chapter 1 …"
-        } else {
-            "未识别到标题。请使用 Markdown ATX 语法，例如：\n# 一级标题\n## 二级标题"
-        }
+    val emptyTocMessage = if (renderPlainText) {
+        stringResource(R.string.reader_toc_empty_plain_text)
+    } else {
+        stringResource(R.string.reader_toc_empty_markdown)
     }
+    val readingTitleFallback = stringResource(R.string.reader_title_reading)
+    val snackbarBookmarkAdded = stringResource(R.string.snackbar_bookmark_added)
+    val snackbarBookmarkRemoved = stringResource(R.string.snackbar_bookmark_removed)
+    val backToBookshelfLabel = stringResource(R.string.reader_back_to_bookshelf)
     val totalChars = book?.totalChars?.takeIf { it > 0 } ?: content.length.coerceAtLeast(1)
     val chapterEntry = remember(tocEntries, readingProgress, totalChars) {
         val e = currentChapterEntryForProgress(tocEntries, readingProgress, totalChars)
@@ -1120,7 +1124,7 @@ fun ReaderScreen(
         topBar = {
             if (!immersiveReading && !readerTextSelectionActive) {
                 ReaderTopAppBar(
-                    title = book?.title ?: "阅读中",
+                    title = book?.title ?: readingTitleFallback,
                     chapterTitle = chapterTitleRaw,
                     onNavigateBack = { navController.navigateUp() },
                     theme = currentTheme
@@ -1179,8 +1183,8 @@ fun ReaderScreen(
                                         positionForAdd = topChar,
                                     )
                                 ) {
-                                    true -> snackbarHostState.showBriefSnackbar("已添加书签")
-                                    false -> snackbarHostState.showBriefSnackbar("已取消书签")
+                                    true -> snackbarHostState.showBriefSnackbar(snackbarBookmarkAdded)
+                                    false -> snackbarHostState.showBriefSnackbar(snackbarBookmarkRemoved)
                                     null -> { }
                                 }
                             }
@@ -1400,7 +1404,7 @@ fun ReaderScreen(
                         )
                         Spacer(modifier = Modifier.height(20.dp))
                         Button(onClick = { navController.navigateUp() }) {
-                            Text("返回书架")
+                            Text(backToBookshelfLabel)
                         }
                     }
                 }
@@ -1464,7 +1468,7 @@ fun ReaderScreen(
                                 .windowInsetsTopHeight(WindowInsets.statusBars)
                         )
                         ReaderTopAppBar(
-                            title = book?.title ?: "阅读中",
+                            title = book?.title ?: readingTitleFallback,
                             chapterTitle = chapterTitleRaw,
                             onNavigateBack = { navController.navigateUp() },
                             theme = currentTheme,
@@ -1895,7 +1899,7 @@ private fun DiagramPreviewDialog(
         ) {
             Image(
                 bitmap = image,
-                contentDescription = "图表预览",
+                contentDescription = stringResource(R.string.reader_diagram_preview_cd),
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .fillMaxSize()
@@ -1915,7 +1919,7 @@ private fun DiagramPreviewDialog(
             )
 
             Text(
-                text = "双指缩放 / 拖动查看",
+                text = stringResource(R.string.reader_diagram_zoom_hint),
                 style = MaterialTheme.typography.labelMedium,
                 color = Color.White.copy(alpha = 0.72f),
                 modifier = Modifier
@@ -1934,7 +1938,7 @@ private fun DiagramPreviewDialog(
             ) {
                 Icon(
                     imageVector = Icons.Default.Close,
-                    contentDescription = "关闭图表预览",
+                    contentDescription = stringResource(R.string.reader_diagram_close_cd),
                     tint = Color.White,
                 )
             }

@@ -26,7 +26,7 @@ class TocJumpEscapedHeadingTest {
         """.trimIndent()
         val context: Context = RuntimeEnvironment.getApplication()
         val markwon = ReaderMarkwonFactory.create(context)
-        val prepared = ReaderMarkwonFactory.prepareMarkdown(md)
+        val prepared = ReaderMarkwonFactory.prepareMarkdown(md, context)
         val rendered = markwon.toMarkdown(prepared.text)
         val headingStarts = markdownHeadingSpanStarts(rendered)
         val lines = headingStarts.map { lineAt(rendered.toString(), it) }
@@ -56,7 +56,7 @@ class TocJumpEscapedHeadingTest {
         val toc = parseMarkdownToc(md)
         val context: Context = RuntimeEnvironment.getApplication()
         val markwon = ReaderMarkwonFactory.create(context)
-        val prepared = ReaderMarkwonFactory.prepareMarkdown(md)
+        val prepared = ReaderMarkwonFactory.prepareMarkdown(md, context)
         val rendered = markwon.toMarkdown(prepared.text)
         val headingStarts = markdownHeadingSpanStarts(rendered)
 
