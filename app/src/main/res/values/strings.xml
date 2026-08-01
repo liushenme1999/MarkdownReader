@@ -163,7 +163,12 @@
     <string name="about_supported_formats">支持的文件格式：</string>
     <string name="about_format_md">  - Markdown (.md)</string>
     <string name="about_format_txt">  - 文本文件 (.txt)</string>
+    <string name="about_format_pdf">  - PDF (.pdf)</string>
     <string name="about_description">一款轻量级的 Markdown 阅读器，支持阅读统计、笔记管理等功能。</string>
+    <!-- APP ICP 备案号（须可点击跳转工信部备案系统） -->
+    <string name="icp_filing_number" translatable="false">京ICP备2024097076号-3A</string>
+    <string name="icp_beian_url" translatable="false">https://beian.miit.gov.cn/</string>
+    <string name="icp_filing_hint">查询备案信息</string>
     <string name="clear_cache_dialog_title">清理缓存</string>
     <string name="clear_cache_dialog_message">将清理网络图片等缓存数据，不影响书架与阅读进度。此操作不可撤销。</string>
     <string name="toast_cache_cleared_with_size">缓存已清理（%1$s）</string>
@@ -178,7 +183,7 @@
     <string name="profile_menu_reading_settings">阅读设置</string>
     <string name="profile_menu_reading_settings_subtitle">语言、外观、主题、字体、行距、翻页</string>
     <string name="profile_menu_about">关于应用</string>
-    <string name="profile_menu_about_subtitle">版本信息与支持格式</string>
+    <string name="profile_menu_about_subtitle">版本、版权、备案与应用信息</string>
     <string name="profile_menu_clear_cache">清理缓存</string>
     <string name="profile_menu_clear_cache_subtitle">释放存储空间</string>
     <string name="profile_app_version_footer">MD阅读器 v%1$s</string>

@@ -153,7 +153,9 @@
     <string name="about_supported_formats">Supported formats:</string>
     <string name="about_format_md">  - Markdown (.md)</string>
     <string name="about_format_txt">  - Plain text (.txt)</string>
+    <string name="about_format_pdf">  - PDF (.pdf)</string>
     <string name="about_description">A lightweight Markdown reader with reading stats and note management.</string>
+    <string name="icp_filing_hint">View ICP filing</string>
     <string name="clear_cache_dialog_title">Clear cache</string>
     <string name="clear_cache_dialog_message">This clears cached network images and similar data. Your library and reading progress are not affected. This cannot be undone.</string>
     <string name="toast_cache_cleared_with_size">Cache cleared (%1$s)</string>
@@ -168,7 +170,7 @@
     <string name="profile_menu_reading_settings">Reading settings</string>
     <string name="profile_menu_reading_settings_subtitle">Language, appearance, theme, font, spacing, page turn</string>
     <string name="profile_menu_about">About</string>
-    <string name="profile_menu_about_subtitle">Version and supported formats</string>
+    <string name="profile_menu_about_subtitle">Version, copyright, ICP filing, and app info</string>
     <string name="profile_menu_clear_cache">Clear cache</string>
     <string name="profile_menu_clear_cache_subtitle">Free up storage</string>
     <string name="profile_app_version_footer">MD Reader v%1$s</string>

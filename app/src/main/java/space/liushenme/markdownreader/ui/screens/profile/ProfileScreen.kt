@@ -25,13 +25,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
-import space.liushenme.markdownreader.BuildConfig
 import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.navigation.AppRoutes
 import space.liushenme.markdownreader.ui.components.ShelfStyleTopBarBackground
@@ -52,49 +50,7 @@ fun ProfileScreen(
     val totalReadingDays by viewModel.totalReadingDays.collectAsState()
     val continuousReadingDays by viewModel.continuousReadingDays.collectAsState()
 
-    // 对话框状态
-    var showAboutDialog by remember { mutableStateOf(false) }
     var showClearCacheDialog by remember { mutableStateOf(false) }
-
-    // 关于应用对话框
-    if (showAboutDialog) {
-        AlertDialog(
-            onDismissRequest = { showAboutDialog = false },
-            icon = {
-                Icon(
-                    Icons.Default.Info,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            },
-            title = {
-                Text(
-                    stringResource(R.string.about_dialog_title),
-                    fontWeight = FontWeight.Bold
-                )
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(stringResource(R.string.about_version, BuildConfig.VERSION_NAME))
-                    HorizontalDivider()
-                    Text(stringResource(R.string.about_supported_formats))
-                    Text(stringResource(R.string.about_format_md), style = MaterialTheme.typography.bodySmall)
-                    Text(stringResource(R.string.about_format_txt), style = MaterialTheme.typography.bodySmall)
-                    HorizontalDivider()
-                    Text(
-                        stringResource(R.string.about_description),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showAboutDialog = false }) {
-                    Text(stringResource(R.string.action_confirm))
-                }
-            }
-        )
-    }
 
     // 清理缓存确认对话框
     if (showClearCacheDialog) {
@@ -315,51 +271,49 @@ fun ProfileScreen(
                 tonalElevation = 1.dp
             ) {
                 Column {
-                    // 关于应用
-                    ProfileMenuItem(
-                        icon = Icons.Default.Info,
-                        title = stringResource(R.string.profile_menu_about),
-                        subtitle = stringResource(R.string.profile_menu_about_subtitle),
-                        onClick = { showAboutDialog = true }
-                    )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(start = 56.dp, end = 16.dp),
-                        thickness = 0.5.dp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
-                    )
-                    // 清理缓存
                     ProfileMenuItem(
                         icon = Icons.Default.DeleteSweep,
                         title = stringResource(R.string.profile_menu_clear_cache),
                         subtitle = stringResource(R.string.profile_menu_clear_cache_subtitle),
                         onClick = { showClearCacheDialog = true }
                     )
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = 56.dp, end = 16.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                    )
+                    ProfileMenuItem(
+                        icon = Icons.Default.Description,
+                        title = stringResource(R.string.profile_menu_user_agreement),
+                        subtitle = stringResource(R.string.profile_menu_user_agreement_subtitle),
+                        onClick = { navController.navigate(AppRoutes.USER_AGREEMENT) }
+                    )
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = 56.dp, end = 16.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                    )
+                    ProfileMenuItem(
+                        icon = Icons.Default.PrivacyTip,
+                        title = stringResource(R.string.profile_menu_privacy_policy),
+                        subtitle = stringResource(R.string.profile_menu_privacy_policy_subtitle),
+                        onClick = { navController.navigate(AppRoutes.PRIVACY_POLICY) }
+                    )
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = 56.dp, end = 16.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                    )
+                    ProfileMenuItem(
+                        icon = Icons.Default.Info,
+                        title = stringResource(R.string.profile_menu_about),
+                        subtitle = stringResource(R.string.profile_menu_about_subtitle),
+                        onClick = { navController.navigate(AppRoutes.ABOUT) }
+                    )
                 }
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
-
-            // ========== 底部版本号 ==========
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp, bottom = 24.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    Icons.Default.Person,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    stringResource(R.string.profile_app_version_footer, BuildConfig.VERSION_NAME),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-                )
-            }
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }
