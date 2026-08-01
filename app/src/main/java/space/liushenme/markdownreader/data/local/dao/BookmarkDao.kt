@@ -27,6 +27,9 @@ interface BookmarkDao {
     @Query("DELETE FROM bookmarks WHERE bookId = :bookId")
     suspend fun deleteBookmarksByBookId(bookId: Long)
 
+    @Query("UPDATE bookmarks SET bookId = :newBookId WHERE bookId = :oldBookId")
+    suspend fun reassignBookId(oldBookId: Long, newBookId: Long)
+
     @Query("DELETE FROM bookmarks")
     suspend fun deleteAll()
 }

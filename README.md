@@ -18,9 +18,6 @@
 | 版本 | 下载 | 大小约 |
 |------|------|--------|
 | **1.0.3** | [MD阅读器_release_1.0.3.apk](app/release/MD阅读器_release_1.0.3.apk) | 14 MB |
-| 1.0.2 | [MD阅读器_release_1.0.2.apk](app/release/MD阅读器_release_1.0.2.apk) | 13 MB |
-| 1.0.1 | [MD阅读器_release_1.0.1.apk](app/release/MD阅读器_release_1.0.1.apk) | 13 MB |
-| 1.0 | [MD阅读器_release_1.0.apk](app/release/MD阅读器_release_1.0.apk) | 13 MB |
 
 安装说明：
 
@@ -77,7 +74,7 @@
 - 书籍总数、阅读时长、字数、书签/划线数量
 - 近 7 天阅读趋势图（Vico）
 - 应用主题（亮色 / 暗色 / 跟随系统）、缓存清理
-- **WebDAV 备份与恢复**（完整数据云备份、退出时按日自动备份、配置帮助页）
+- **WebDAV 备份与恢复**（元数据云备份、书籍正文独立同步、合并恢复、启动检测新备份、退出时按日自动备份）
 
 ## 技术栈
 

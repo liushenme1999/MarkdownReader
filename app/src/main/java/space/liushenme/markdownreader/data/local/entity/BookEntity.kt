@@ -1,10 +1,14 @@
 package space.liushenme.markdownreader.data.local.entity
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import java.util.Date
 
-@Entity(tableName = "books")
+@Entity(
+    tableName = "books",
+    indices = [Index(value = ["contentHash"], unique = true)],
+)
 data class BookEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
@@ -36,5 +40,10 @@ data class BookEntity(
     val shelfGroup: String = "",
     val isPinned: Boolean = false,
     /** 置顶排序，越大越靠前 */
-    val pinOrder: Long = 0L
+    val pinOrder: Long = 0L,
+    /**
+     * 跨设备稳定标识：正文 SHA-256 hex。
+     * WebDAV 正文与备份合并均按此字段对齐；本机主键仍为 [id]。
+     */
+    val contentHash: String = "",
 )

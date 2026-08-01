@@ -1,18 +1,26 @@
 package space.liushenme.markdownreader.data.repository
 
-import space.liushenme.markdownreader.data.local.dao.BookDao
-import space.liushenme.markdownreader.data.local.entity.BookEntity
-import space.liushenme.markdownreader.importing.ParsedBookStorage
-import kotlinx.coroutines.flow.Flow
 import java.io.File
 import java.util.Date
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
+import space.liushenme.markdownreader.data.backup.BookContentSync
+import space.liushenme.markdownreader.data.local.dao.BookDao
+import space.liushenme.markdownreader.data.local.entity.BookEntity
+import space.liushenme.markdownreader.importing.ParsedBookStorage
 
 @Singleton
 class BookRepository @Inject constructor(
-    private val bookDao: BookDao
+    private val bookDao: BookDao,
+    private val bookContentSync: BookContentSync,
 ) {
+    private val syncScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     fun getAllBooks(): Flow<List<BookEntity>> = bookDao.getAllBooks()
 
     fun getFavoriteBooks(): Flow<List<BookEntity>> = bookDao.getFavoriteBooks()
@@ -22,13 +30,28 @@ class BookRepository @Inject constructor(
     suspend fun getBookByFilePath(filePath: String): BookEntity? =
         bookDao.getBookByFilePath(filePath)
 
+    suspend fun getBookByContentHash(contentHash: String): BookEntity? =
+        bookDao.getBookByContentHash(contentHash)
+
     suspend fun addBook(book: BookEntity): Long = bookDao.insertBook(book)
 
     suspend fun updateBook(book: BookEntity) = bookDao.updateBook(book)
 
+    /** 正文落盘成功后调用，异步上传到 WebDAV books/ */
+    fun scheduleUploadBookContent(bookId: Long) {
+        syncScope.launch {
+            bookContentSync.uploadBookContent(bookId)
+        }
+    }
+
     suspend fun deleteBook(book: BookEntity) {
+        val id = book.id
+        val hash = book.contentHash
         deleteStoredAssets(book)
         bookDao.deleteBook(book)
+        syncScope.launch {
+            bookContentSync.deleteRemoteBookContent(hash, fallbackNumericId = id)
+        }
     }
 
     suspend fun updateReadingProgress(
@@ -48,10 +71,19 @@ class BookRepository @Inject constructor(
 
     suspend fun deleteBooksByIds(ids: Collection<Long>) {
         if (ids.isEmpty()) return
-        for (id in ids) {
-            bookDao.getBookById(id)?.let { deleteStoredAssets(it) }
+        val snapshots = ids.mapNotNull { bookDao.getBookById(it) }
+        for (book in snapshots) {
+            deleteStoredAssets(book)
         }
         bookDao.deleteBooksByIds(ids.toList())
+        syncScope.launch {
+            snapshots.forEach { book ->
+                bookContentSync.deleteRemoteBookContent(
+                    book.contentHash,
+                    fallbackNumericId = book.id,
+                )
+            }
+        }
     }
 
     private fun deleteStoredAssets(book: BookEntity) {

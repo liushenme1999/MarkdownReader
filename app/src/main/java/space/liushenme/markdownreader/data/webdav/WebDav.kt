@@ -160,6 +160,19 @@ class WebDav(
             webDavClient.newCall(request).execute().use { checkResult(it) }
         }
 
+    suspend fun delete(): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            val request = Request.Builder()
+                .url(httpUrl)
+                .method("DELETE", null)
+                .build()
+            webDavClient.newCall(request).execute().use { checkResult(it) }
+            true
+        }.onFailure {
+            currentCoroutineContext().ensureActive()
+        }.getOrDefault(false)
+    }
+
     private fun propFindResponse(depth: Int): String? {
         val request = Request.Builder()
             .url(httpUrl)

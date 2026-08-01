@@ -4,12 +4,15 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.view.MotionEvent
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.calculateEndPadding
@@ -63,6 +66,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import space.liushenme.markdownreader.R
 
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
@@ -98,6 +103,45 @@ class MainActivity : AppCompatActivity() {
                     onPendingOpenUriConsumed = { pendingOpenUri = null },
                 )
             }
+        }
+        if (savedInstanceState == null) {
+            checkRemoteBackupOnLaunch()
+        }
+    }
+
+    private fun checkRemoteBackupOnLaunch() {
+        lifecycleScope.launch {
+            val newer = withContext(Dispatchers.IO) {
+                backupManager.findNewerRemoteBackup()
+            } ?: return@launch
+            if (isFinishing) return@launch
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle(R.string.backup_new_remote_title)
+                .setMessage(getString(R.string.backup_new_remote_message, newer.displayName))
+                .setNegativeButton(R.string.action_cancel, null)
+                .setPositiveButton(R.string.backup_action_restore) { _, _ ->
+                    lifecycleScope.launch {
+                        Toast.makeText(
+                            this@MainActivity,
+                            R.string.backup_restoring,
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                        val result = withContext(Dispatchers.IO) {
+                            backupManager.restore(newer.displayName)
+                        }
+                        val msg = if (result.isSuccess) {
+                            getString(R.string.backup_toast_restore_success)
+                        } else {
+                            getString(
+                                R.string.backup_toast_restore_failed,
+                                result.exceptionOrNull()?.localizedMessage
+                                    ?: result.exceptionOrNull()?.toString().orEmpty(),
+                            )
+                        }
+                        Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
+                    }
+                }
+                .show()
         }
     }
 

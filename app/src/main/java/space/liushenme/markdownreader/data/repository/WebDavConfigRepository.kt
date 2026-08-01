@@ -20,6 +20,7 @@ data class WebDavConfig(
     val dir: String = WebDavConfigRepository.DEFAULT_WEBDAV_DIR,
     val deviceName: String = "",
     val onlyLatestBackup: Boolean = true,
+    val autoCheckNewBackup: Boolean = true,
     val lastBackupTime: Long = 0L,
 ) {
     val isConfigured: Boolean
@@ -40,6 +41,7 @@ class WebDavConfigRepository @Inject constructor(
             dir = prefs[KEY_DIR]?.trim()?.takeIf { it.isNotEmpty() } ?: DEFAULT_WEBDAV_DIR,
             deviceName = prefs[KEY_DEVICE_NAME].orEmpty(),
             onlyLatestBackup = prefs[KEY_ONLY_LATEST] ?: true,
+            autoCheckNewBackup = prefs[KEY_AUTO_CHECK] ?: true,
             lastBackupTime = prefs[KEY_LAST_BACKUP] ?: 0L,
         )
     }
@@ -53,6 +55,7 @@ class WebDavConfigRepository @Inject constructor(
         dir: String? = null,
         deviceName: String? = null,
         onlyLatestBackup: Boolean? = null,
+        autoCheckNewBackup: Boolean? = null,
     ) {
         dataStore.edit { prefs ->
             url?.let {
@@ -71,6 +74,7 @@ class WebDavConfigRepository @Inject constructor(
             }
             deviceName?.let { prefs[KEY_DEVICE_NAME] = it.trim() }
             onlyLatestBackup?.let { prefs[KEY_ONLY_LATEST] = it }
+            autoCheckNewBackup?.let { prefs[KEY_AUTO_CHECK] = it }
         }
     }
 
@@ -93,7 +97,7 @@ class WebDavConfigRepository @Inject constructor(
 
     companion object {
         const val DEFAULT_WEBDAV_URL = "https://dav.jianguoyun.com/dav/"
-        const val DEFAULT_WEBDAV_DIR = "MarkdownReader"
+        const val DEFAULT_WEBDAV_DIR = "MdReader"
 
         private val KEY_URL = stringPreferencesKey("webdav_url")
         private val KEY_ACCOUNT = stringPreferencesKey("webdav_account")
@@ -101,6 +105,7 @@ class WebDavConfigRepository @Inject constructor(
         private val KEY_DIR = stringPreferencesKey("webdav_dir")
         private val KEY_DEVICE_NAME = stringPreferencesKey("webdav_device_name")
         private val KEY_ONLY_LATEST = booleanPreferencesKey("webdav_only_latest_backup")
+        private val KEY_AUTO_CHECK = booleanPreferencesKey("webdav_auto_check_new_backup")
         private val KEY_LAST_BACKUP = longPreferencesKey("webdav_last_backup_time")
 
         /** 恢复偏好时跳过这些 WebDAV 相关键，避免覆盖当前机凭证 */
@@ -111,6 +116,7 @@ class WebDavConfigRepository @Inject constructor(
             "webdav_dir",
             "webdav_device_name",
             "webdav_only_latest_backup",
+            "webdav_auto_check_new_backup",
             "webdav_last_backup_time",
         )
     }

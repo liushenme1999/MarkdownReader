@@ -3,6 +3,7 @@ package space.liushenme.markdownreader
 import android.app.Activity
 import android.app.Application
 import android.os.Bundle
+import space.liushenme.markdownreader.data.local.BookContentHashBackfill
 import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
 import space.liushenme.markdownreader.markdown.DiagramWebViewRenderer
 import space.liushenme.markdownreader.platform.AppLocaleController
@@ -22,6 +23,9 @@ class MarkdownReaderApp : Application() {
     @Inject
     lateinit var readerSettingsRepository: ReaderSettingsRepository
 
+    @Inject
+    lateinit var bookContentHashBackfill: BookContentHashBackfill
+
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     @Volatile
@@ -34,6 +38,9 @@ class MarkdownReaderApp : Application() {
         MainThreadCrashGuard.install()
         registerActivityLifecycleCallbacks(ForegroundActivityTracker)
         registerActivityLifecycleCallbacks(LocaleSyncCallbacks())
+        appScope.launch(Dispatchers.IO) {
+            bookContentHashBackfill.runIfNeeded()
+        }
     }
 
     private fun startLocaleSyncIfNeeded() {

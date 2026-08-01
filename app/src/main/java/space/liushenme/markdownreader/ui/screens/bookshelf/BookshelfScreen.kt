@@ -53,6 +53,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -100,6 +101,7 @@ fun BookshelfScreen(
     val shelfGroups by viewModel.shelfGroups.collectAsState()
     val layoutMode by viewModel.layoutMode.collectAsState()
     val gridColumns by viewModel.gridColumns.collectAsState()
+    val isRefreshing by viewModel.isRefreshing.collectAsState()
     val context = LocalContext.current
     var selectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<Long>()) }
@@ -368,10 +370,14 @@ fun BookshelfScreen(
                 .fillMaxSize()
                 .background(shelfBg)
         ) {
-            Box(
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = {
+                    if (!selectionMode) viewModel.syncProgressWithCloud()
+                },
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(contentPadding)
+                    .padding(contentPadding),
             ) {
                 if (books.isEmpty()) {
                     EmptyBookshelf(onImportClick = { openImportChooser() })

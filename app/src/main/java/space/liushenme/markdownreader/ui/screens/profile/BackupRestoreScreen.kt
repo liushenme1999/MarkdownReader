@@ -92,6 +92,24 @@ fun BackupRestoreScreen(
                 context.getString(R.string.backup_toast_restore_success)
             is BackupUiEvent.RestoreFailed ->
                 context.getString(R.string.backup_toast_restore_failed, e.detail)
+            is BackupUiEvent.ContentBackupSuccess ->
+                context.getString(
+                    R.string.backup_toast_content_backup_success,
+                    e.result.success,
+                    e.result.skipped,
+                    e.result.failed,
+                )
+            is BackupUiEvent.ContentBackupFailed ->
+                context.getString(R.string.backup_toast_content_backup_failed, e.detail)
+            is BackupUiEvent.ContentRestoreSuccess ->
+                context.getString(
+                    R.string.backup_toast_content_restore_success,
+                    e.result.success,
+                    e.result.skipped,
+                    e.result.failed,
+                )
+            is BackupUiEvent.ContentRestoreFailed ->
+                context.getString(R.string.backup_toast_content_restore_failed, e.detail)
         }
         Toast.makeText(context, text, Toast.LENGTH_LONG).show()
         viewModel.clearEvent()
@@ -253,6 +271,35 @@ fun BackupRestoreScreen(
                                 enabled = !busy,
                             )
                         }
+                        HorizontalDivider(
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(R.string.backup_auto_check_title),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = stringResource(R.string.backup_auto_check_summary),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                                )
+                            }
+                            Switch(
+                                checked = config.autoCheckNewBackup,
+                                onCheckedChange = { viewModel.setAutoCheckNewBackup(it) },
+                                enabled = !busy,
+                            )
+                        }
                     }
                 }
 
@@ -279,6 +326,48 @@ fun BackupRestoreScreen(
                             enabled = !busy,
                             onClick = {
                                 viewModel.prepareRestore(url, account, password, dir, deviceName)
+                            },
+                        )
+                    }
+                }
+
+                Column {
+                    ReaderSettingsSectionTitle(
+                        title = stringResource(R.string.backup_content_section),
+                    )
+                    ReaderSettingsGroupCard {
+                        BackupActionRow(
+                            title = stringResource(R.string.backup_action_content_backup),
+                            subtitle = stringResource(R.string.backup_action_content_backup_summary),
+                            enabled = !busy,
+                            onClick = {
+                                viewModel.backupBookContents(
+                                    url,
+                                    account,
+                                    password,
+                                    dir,
+                                    deviceName,
+                                )
+                            },
+                        )
+                        HorizontalDivider(
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                        )
+                        BackupActionRow(
+                            title = stringResource(R.string.backup_action_content_restore),
+                            subtitle = stringResource(
+                                R.string.backup_action_content_restore_summary,
+                            ),
+                            enabled = !busy,
+                            onClick = {
+                                viewModel.restoreBookContents(
+                                    url,
+                                    account,
+                                    password,
+                                    dir,
+                                    deviceName,
+                                )
                             },
                         )
                         HorizontalDivider(

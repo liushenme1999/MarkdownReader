@@ -37,6 +37,9 @@ interface BookDao {
     @Query("SELECT * FROM books WHERE filePath = :filePath LIMIT 1")
     suspend fun getBookByFilePath(filePath: String): BookEntity?
 
+    @Query("SELECT * FROM books WHERE contentHash = :contentHash LIMIT 1")
+    suspend fun getBookByContentHash(contentHash: String): BookEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertBook(book: BookEntity): Long
 

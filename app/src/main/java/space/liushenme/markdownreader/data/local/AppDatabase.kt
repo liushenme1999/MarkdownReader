@@ -26,7 +26,7 @@ import space.liushenme.markdownreader.data.local.entity.ShelfGroupEntity
         ReadingProgressEntity::class,
         ShelfGroupEntity::class,
     ],
-    version = 11,
+    version = 12,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -173,6 +173,21 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE books ADD COLUMN contentHash TEXT NOT NULL DEFAULT ''",
+                )
+                db.execSQL(
+                    "UPDATE books SET contentHash = 'legacy_' || id",
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_books_contentHash` " +
+                        "ON `books` (`contentHash`)",
+                )
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -191,6 +206,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_8_9,
                         MIGRATION_9_10,
                         MIGRATION_10_11,
+                        MIGRATION_11_12,
                     )
                     .build()
                 INSTANCE = instance

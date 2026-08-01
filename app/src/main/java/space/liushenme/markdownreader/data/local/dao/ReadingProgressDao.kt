@@ -71,4 +71,24 @@ interface ReadingProgressDao {
 
     @Query("SELECT * FROM reading_progress WHERE bookId = :bookId AND date = :date")
     suspend fun getProgressByBookAndDate(bookId: Long, date: Date): ReadingProgressEntity?
+
+    /**
+     * 将 oldBookId 的日统计合并到 newBookId，再删除旧行。
+     * 同日冲突时累加字数与分钟。
+     */
+    @Transaction
+    suspend fun mergeReassignBookId(oldBookId: Long, newBookId: Long) {
+        if (oldBookId == newBookId) return
+        val rows = getProgressListByBookId(oldBookId)
+        for (row in rows) {
+            upsertAddProgress(newBookId, row.date, row.readChars, row.readTimeMinutes)
+        }
+        deleteByBookId(oldBookId)
+    }
+
+    @Query("SELECT * FROM reading_progress WHERE bookId = :bookId")
+    suspend fun getProgressListByBookId(bookId: Long): List<ReadingProgressEntity>
+
+    @Query("DELETE FROM reading_progress WHERE bookId = :bookId")
+    suspend fun deleteByBookId(bookId: Long)
 }

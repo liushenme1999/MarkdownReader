@@ -30,6 +30,9 @@ interface HighlightDao {
     @Query("DELETE FROM highlights WHERE bookId = :bookId")
     suspend fun deleteHighlightsByBookId(bookId: Long)
 
+    @Query("UPDATE highlights SET bookId = :newBookId WHERE bookId = :oldBookId")
+    suspend fun reassignBookId(oldBookId: Long, newBookId: Long)
+
     @Query("DELETE FROM highlights")
     suspend fun deleteAll()
 }

@@ -6,6 +6,8 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import space.liushenme.markdownreader.R
+import space.liushenme.markdownreader.data.backup.BackupManager
+import space.liushenme.markdownreader.data.local.BookContentHasher
 import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.data.local.entity.ShelfGroups
 import space.liushenme.markdownreader.data.repository.BookRepository
@@ -27,7 +29,10 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -42,6 +47,7 @@ class BookshelfViewModel @Inject constructor(
     private val bookRepository: BookRepository,
     private val shelfGroupRepository: ShelfGroupRepository,
     private val readerSettingsRepository: ReaderSettingsRepository,
+    private val backupManager: BackupManager,
     @ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
@@ -57,6 +63,9 @@ class BookshelfViewModel @Inject constructor(
     val gridColumns = readerSettingsRepository.bookshelfGridColumns
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), BookshelfGridColumns.DEFAULT)
 
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+
     private val toastChannel = Channel<String>(Channel.BUFFERED)
     val toastMessages = toastChannel.receiveAsFlow()
 
@@ -66,6 +75,46 @@ class BookshelfViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             shelfGroupRepository.syncFromBooks()
+        }
+    }
+
+    fun syncProgressWithCloud() {
+        if (_isRefreshing.value) return
+        viewModelScope.launch {
+            _isRefreshing.value = true
+            val result = withContext(Dispatchers.IO) {
+                backupManager.syncReadingProgress()
+            }
+            _isRefreshing.value = false
+            result.fold(
+                onSuccess = { sync ->
+                    val msg = when {
+                        sync.pulledCount > 0 && sync.pushed ->
+                            appContext.getString(
+                                R.string.bookshelf_toast_sync_pulled_and_pushed,
+                                sync.pulledCount,
+                            )
+                        sync.pulledCount > 0 ->
+                            appContext.getString(
+                                R.string.bookshelf_toast_sync_pulled,
+                                sync.pulledCount,
+                            )
+                        sync.pushed ->
+                            appContext.getString(R.string.bookshelf_toast_sync_pushed)
+                        else ->
+                            appContext.getString(R.string.bookshelf_toast_sync_uptodate)
+                    }
+                    toastChannel.trySend(msg)
+                },
+                onFailure = {
+                    toastChannel.trySend(
+                        appContext.getString(
+                            R.string.bookshelf_toast_sync_failed,
+                            it.localizedMessage ?: it.toString(),
+                        ),
+                    )
+                },
+            )
         }
     }
 
@@ -287,9 +336,24 @@ class BookshelfViewModel @Inject constructor(
         val enriched = BookTocEnricher.enrichIfEmpty(format, extracted)
         val enrichedForStore = prepareImportedContent(importContext, format, enriched)
         val content = enrichedForStore.body
+        val resolvedTitle = title.ifBlank { appContext.getString(R.string.book_untitled) }
+        val contentHash = BookContentHasher.hashForBook(
+            body = content,
+            importFormat = format.storedKey,
+            title = resolvedTitle,
+            filePath = filePath,
+        )
+        val existingByHash = bookRepository.getBookByContentHash(contentHash)
+        if (existingByHash != null) {
+            bookRepository.scheduleUploadBookContent(existingByHash.id)
+            if (notify) {
+                toastChannel.trySend(appContext.getString(R.string.toast_import_already_exists))
+            }
+            return existingByHash.id
+        }
         val author = BookImportSupport.extractAuthorFromContent(content)
         val book = BookEntity(
-            title = title.ifBlank { appContext.getString(R.string.book_untitled) },
+            title = resolvedTitle,
             author = author,
             filePath = filePath,
             importFormat = format.storedKey,
@@ -298,6 +362,7 @@ class BookshelfViewModel @Inject constructor(
             addTime = Date(),
             shelfGroup = shelfGroup,
             isFavorite = target.isFavorite,
+            contentHash = contentHash,
         )
         val id = bookRepository.addBook(book)
         if (id <= 0L) {
@@ -329,10 +394,14 @@ class BookshelfViewModel @Inject constructor(
                     id = id,
                     totalChars = content.length,
                     parsedBundlePath = dir.absolutePath,
-                    coverImagePath = coverFile?.absolutePath
+                    coverImagePath = coverFile?.absolutePath,
+                    contentHash = contentHash,
                 )
             )
             true
+        }
+        if (writeOk) {
+            bookRepository.scheduleUploadBookContent(id)
         }
         if (notify) {
             toastChannel.trySend(

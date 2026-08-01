@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import space.liushenme.markdownreader.R
+import space.liushenme.markdownreader.data.backup.BookContentSync
 import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.data.local.entity.BookmarkEntity
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
@@ -49,7 +50,8 @@ class ReaderViewModel @Inject constructor(
     private val bookmarkRepository: BookmarkRepository,
     private val highlightRepository: HighlightRepository,
     private val readingProgressRepository: ReadingProgressRepository,
-    private val readerSettingsRepository: ReaderSettingsRepository
+    private val readerSettingsRepository: ReaderSettingsRepository,
+    private val bookContentSync: BookContentSync,
 ) : ViewModel() {
 
     private val _book = MutableStateFlow<BookEntity?>(null)
@@ -181,6 +183,9 @@ class ReaderViewModel @Inject constructor(
             val extracted = withContext(Dispatchers.IO) {
                 loadFileExtracted(context, bookEntity)
             }
+            // 打开时可能已从 WebDAV 补齐正文并改写路径，重新取最新书籍记录
+            val latestBook = bookRepository.getBookById(bookId) ?: bookEntity
+            _book.value = latestBook
             val text = MarkdownPreprocessor.stripLocalRelativeImages(extracted.body)
             _content.value = text
             _structuredToc.value = extracted.toc
@@ -193,16 +198,16 @@ class ReaderViewModel @Inject constructor(
                     )
                 }
                 .takeIf { it.isNotEmpty() }
-            _readingProgress.value = bookEntity.readingProgress
+            _readingProgress.value = latestBook.readingProgress
             lastKnownReadingCharPos = resolveStoredCharPos(
-                currentPosition = bookEntity.currentPosition,
-                readingProgress = bookEntity.readingProgress,
+                currentPosition = latestBook.currentPosition,
+                readingProgress = latestBook.readingProgress,
                 contentLength = text.length,
-                totalChars = bookEntity.totalChars.coerceAtLeast(text.length.coerceAtLeast(1)),
+                totalChars = latestBook.totalChars.coerceAtLeast(text.length.coerceAtLeast(1)),
             )
-            lastKnownProgressPreview = bookEntity.progressPreviewText.trim()
-            if (text.isNotEmpty() && text.length != bookEntity.totalChars) {
-                val synced = bookEntity.copy(totalChars = text.length)
+            lastKnownProgressPreview = latestBook.progressPreviewText.trim()
+            if (text.isNotEmpty() && text.length != latestBook.totalChars) {
+                val synced = latestBook.copy(totalChars = text.length)
                 bookRepository.updateBook(synced)
                 _book.value = synced
             }
@@ -595,14 +600,35 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    private fun loadFileExtracted(context: Context, book: BookEntity): ExtractedBookText {
+    private suspend fun loadFileExtracted(context: Context, book: BookEntity): ExtractedBookText {
+        val canonical = ParsedBookStorage.bundleDir(appContext, book.id)
+        ParsedBookStorage.readBundle(canonical)
+            ?.takeIf { it.body.isNotEmpty() }
+            ?.let {
+                persistCanonicalPathsIfNeeded(book, canonical)
+                return it
+            }
+
         val bundlePath = book.parsedBundlePath
         if (!bundlePath.isNullOrBlank()) {
             val dir = File(bundlePath)
-            ParsedBookStorage.readBundle(dir)
-                ?.takeIf { it.body.isNotEmpty() }
-                ?.let { return it }
+            if (dir.absolutePath != canonical.absolutePath) {
+                ParsedBookStorage.readBundle(dir)
+                    ?.takeIf { it.body.isNotEmpty() }
+                    ?.let { return it }
+            }
         }
+
+        // 恢复后正文可能仅在 WebDAV books/{id}.zip，打开时再补拉一次
+        if (bookContentSync.ensureLocalBookContent(book.id)) {
+            ParsedBookStorage.readBundle(canonical)
+                ?.takeIf { it.body.isNotEmpty() }
+                ?.let {
+                    persistCanonicalPathsIfNeeded(book, canonical)
+                    return it
+                }
+        }
+
         if (ImportedBookFormat.isRemovedStoredKey(book.importFormat)) {
             return ExtractedBookText.plainBody(
                 BookContentLoader.removedFormatPlaceholder(context, book.importFormat)
@@ -621,13 +647,43 @@ class ReaderViewModel @Inject constructor(
                     format,
                     result.charsetFromHeader
                 )
-            } else {
+            } else if (path.startsWith("content://", ignoreCase = true)) {
                 val uri = Uri.parse(path)
                 BookContentLoader.loadExtractedFromUri(context, uri, format)
+            } else {
+                // 他机绝对路径 / 失效本地路径：不再误读
+                ExtractedBookText.plainBody("")
             }
         } catch (_: Exception) {
             ExtractedBookText.plainBody("")
         }
+    }
+
+    private suspend fun persistCanonicalPathsIfNeeded(book: BookEntity, canonical: File) {
+        val bodyFile = File(canonical, ParsedBookStorage.BODY_FILE)
+        if (!bodyFile.isFile) return
+        val cover = when {
+            File(canonical, ParsedBookStorage.COVER_JPG).isFile ->
+                File(canonical, ParsedBookStorage.COVER_JPG).absolutePath
+            File(canonical, ParsedBookStorage.COVER_PNG).isFile ->
+                File(canonical, ParsedBookStorage.COVER_PNG).absolutePath
+            else -> book.coverImagePath
+        }
+        val localBundle = canonical.absolutePath
+        val localBody = bodyFile.absolutePath
+        if (book.parsedBundlePath == localBundle &&
+            book.filePath == localBody &&
+            book.coverImagePath == cover
+        ) {
+            return
+        }
+        bookRepository.updateBook(
+            book.copy(
+                parsedBundlePath = localBundle,
+                filePath = localBody,
+                coverImagePath = cover,
+            ),
+        )
     }
 
     override fun onCleared() {
