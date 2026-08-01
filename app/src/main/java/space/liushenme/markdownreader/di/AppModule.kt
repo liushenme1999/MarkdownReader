@@ -6,6 +6,7 @@ import space.liushenme.markdownreader.data.local.dao.BookDao
 import space.liushenme.markdownreader.data.local.dao.BookmarkDao
 import space.liushenme.markdownreader.data.local.dao.HighlightDao
 import space.liushenme.markdownreader.data.local.dao.ReadingProgressDao
+import space.liushenme.markdownreader.data.local.dao.ShelfGroupDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -34,4 +35,7 @@ object AppModule {
 
     @Provides
     fun provideReadingProgressDao(database: AppDatabase): ReadingProgressDao = database.readingProgressDao()
+
+    @Provides
+    fun provideShelfGroupDao(database: AppDatabase): ShelfGroupDao = database.shelfGroupDao()
 }

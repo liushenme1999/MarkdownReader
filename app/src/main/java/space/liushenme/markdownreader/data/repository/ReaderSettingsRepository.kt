@@ -8,6 +8,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import space.liushenme.markdownreader.data.preferences.readerPreferencesDataStore
 import space.liushenme.markdownreader.model.AppLanguage
 import space.liushenme.markdownreader.model.AppThemeMode
+import space.liushenme.markdownreader.model.BookshelfGridColumns
+import space.liushenme.markdownreader.model.BookshelfLayoutMode
 import space.liushenme.markdownreader.model.HighlightStyle
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
@@ -63,6 +65,14 @@ class ReaderSettingsRepository @Inject constructor(
         HighlightStyle.fromStorageKey(prefs[KEY_LAST_HIGHLIGHT_STYLE])
     }
 
+    val bookshelfLayoutMode: Flow<BookshelfLayoutMode> = dataStore.data.map { prefs ->
+        BookshelfLayoutMode.fromStored(prefs[KEY_BOOKSHELF_LAYOUT_MODE])
+    }
+
+    val bookshelfGridColumns: Flow<Int> = dataStore.data.map { prefs ->
+        BookshelfGridColumns.coerce(prefs[KEY_BOOKSHELF_GRID_COLUMNS] ?: BookshelfGridColumns.DEFAULT)
+    }
+
     suspend fun setPageTurnMode(mode: ReaderPageTurnMode) {
         dataStore.edit { prefs ->
             prefs[KEY_PAGE_TURN_MODE] = mode.name
@@ -114,6 +124,18 @@ class ReaderSettingsRepository @Inject constructor(
         }
     }
 
+    suspend fun setBookshelfLayoutMode(mode: BookshelfLayoutMode) {
+        dataStore.edit { prefs ->
+            prefs[KEY_BOOKSHELF_LAYOUT_MODE] = mode.name
+        }
+    }
+
+    suspend fun setBookshelfGridColumns(columns: Int) {
+        dataStore.edit { prefs ->
+            prefs[KEY_BOOKSHELF_GRID_COLUMNS] = BookshelfGridColumns.coerce(columns)
+        }
+    }
+
     companion object {
         const val DEFAULT_FONT_SIZE = 16
         const val DEFAULT_PADDING_DP = 32
@@ -124,6 +146,8 @@ class ReaderSettingsRepository @Inject constructor(
         private val KEY_APP_LANGUAGE = stringPreferencesKey("app_language")
         private val KEY_APP_THEME_MODE = stringPreferencesKey("app_theme_mode")
         private val KEY_READING_THEME = stringPreferencesKey("reader_reading_theme")
+        private val KEY_BOOKSHELF_LAYOUT_MODE = stringPreferencesKey("bookshelf_layout_mode")
+        private val KEY_BOOKSHELF_GRID_COLUMNS = intPreferencesKey("bookshelf_grid_columns")
 
         private fun appThemeFromStored(raw: String?): AppThemeMode =
             AppThemeMode.entries.find { it.name == raw } ?: AppThemeMode.SYSTEM

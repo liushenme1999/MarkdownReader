@@ -5,6 +5,9 @@ import android.net.Uri
 /** 主导航路由常量，避免魔法字符串分散在各 Composable 中。 */
 object AppRoutes {
     const val BOOKSHELF = "bookshelf"
+    const val BOOKSHELF_SEARCH = "bookshelf_search"
+    const val BOOKSHELF_GROUPS = "bookshelf_groups"
+    const val BOOKSHELF_LAYOUT = "bookshelf_layout"
     const val PROFILE = "profile"
     const val NOTES = "notes"
     const val STATISTICS = "statistics"
@@ -18,6 +21,9 @@ object AppRoutes {
     /** 使用书架统一页面背景与状态栏配色的路由 */
     val shelfStyleRoutes = setOf(
         BOOKSHELF,
+        BOOKSHELF_SEARCH,
+        BOOKSHELF_GROUPS,
+        BOOKSHELF_LAYOUT,
         PROFILE,
         NOTES,
         STATISTICS,

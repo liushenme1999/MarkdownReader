@@ -7,12 +7,15 @@ import java.net.URI
 /** 书架导入相关的可测试工具（格式识别、文件名、作者元数据等）。 */
 object BookImportSupport {
 
+    /**
+     * 系统文件选择器 MIME 过滤：仅展示 Markdown / TXT / PDF。
+     * 不含 application/octet-stream，避免其它二进制文件混入列表；目录仍可正常浏览进入。
+     */
     val importMimeTypes: Array<String> = arrayOf(
         "text/markdown",
         "text/x-markdown",
         "text/plain",
         "application/pdf",
-        "application/octet-stream"
     )
 
     private val SUPPORTED_EXTENSIONS = setOf(

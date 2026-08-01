@@ -11,19 +11,22 @@ import space.liushenme.markdownreader.data.local.dao.BookDao
 import space.liushenme.markdownreader.data.local.dao.BookmarkDao
 import space.liushenme.markdownreader.data.local.dao.HighlightDao
 import space.liushenme.markdownreader.data.local.dao.ReadingProgressDao
+import space.liushenme.markdownreader.data.local.dao.ShelfGroupDao
 import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.data.local.entity.BookmarkEntity
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.data.local.entity.ReadingProgressEntity
+import space.liushenme.markdownreader.data.local.entity.ShelfGroupEntity
 
 @Database(
     entities = [
         BookEntity::class,
         BookmarkEntity::class,
         HighlightEntity::class,
-        ReadingProgressEntity::class
+        ReadingProgressEntity::class,
+        ShelfGroupEntity::class,
     ],
-    version = 8,
+    version = 11,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -32,6 +35,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun bookmarkDao(): BookmarkDao
     abstract fun highlightDao(): HighlightDao
     abstract fun readingProgressDao(): ReadingProgressDao
+    abstract fun shelfGroupDao(): ShelfGroupDao
 
     companion object {
         @Volatile
@@ -115,6 +119,60 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `shelf_groups` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `sortOrder` INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_shelf_groups_name` " +
+                        "ON `shelf_groups` (`name`)",
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `shelf_groups` (`name`, `sortOrder`)
+                    SELECT DISTINCT TRIM(`shelfGroup`), 0
+                    FROM `books`
+                    WHERE TRIM(`shelfGroup`) != ''
+                    """.trimIndent(),
+                )
+                db.execSQL("UPDATE `shelf_groups` SET `sortOrder` = `id`")
+            }
+        }
+
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `shelf_groups` ADD COLUMN `isVisible` INTEGER NOT NULL DEFAULT 1",
+                )
+                db.execSQL("UPDATE `shelf_groups` SET `sortOrder` = `sortOrder` + 1")
+                db.execSQL(
+                    """
+                    INSERT OR IGNORE INTO `shelf_groups` (`name`, `sortOrder`, `isVisible`)
+                    VALUES ('__all__', 0, 1)
+                    """.trimIndent(),
+                )
+            }
+        }
+
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    INSERT OR IGNORE INTO `shelf_groups` (`name`, `sortOrder`, `isVisible`)
+                    SELECT '__favorites__', COALESCE(MAX(`sortOrder`), -1) + 1, 1
+                    FROM `shelf_groups`
+                    """.trimIndent(),
+                )
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -130,6 +188,9 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_5_6,
                         MIGRATION_6_7,
                         MIGRATION_7_8,
+                        MIGRATION_8_9,
+                        MIGRATION_9_10,
+                        MIGRATION_10_11,
                     )
                     .build()
                 INSTANCE = instance

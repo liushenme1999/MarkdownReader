@@ -6,9 +6,13 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface BookDao {
+    /**
+     * 置顶优先；其余按「最近活动」倒序：
+     * 未读用导入时间，读过后用最近阅读时间，因此新导入与刚读过的书都会靠前。
+     */
     @Query(
         "SELECT * FROM books ORDER BY isPinned DESC, pinOrder DESC, " +
-            "lastReadTime IS NULL ASC, lastReadTime DESC, addTime DESC"
+            "COALESCE(lastReadTime, addTime) DESC, id DESC"
     )
     fun getAllBooks(): Flow<List<BookEntity>>
 
@@ -17,6 +21,9 @@ interface BookDao {
 
     @Query("SELECT * FROM books WHERE id = :id")
     suspend fun getBookById(id: Long): BookEntity?
+
+    @Query("SELECT * FROM books WHERE filePath = :filePath LIMIT 1")
+    suspend fun getBookByFilePath(filePath: String): BookEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertBook(book: BookEntity): Long
@@ -56,4 +63,16 @@ interface BookDao {
 
     @Query("UPDATE books SET shelfGroup = :groupName WHERE id IN (:ids)")
     suspend fun updateShelfGroupByIds(ids: List<Long>, groupName: String)
+
+    @Query(
+        "SELECT DISTINCT shelfGroup FROM books " +
+            "WHERE TRIM(shelfGroup) != '' ORDER BY shelfGroup ASC",
+    )
+    suspend fun getDistinctShelfGroups(): List<String>
+
+    @Query("UPDATE books SET shelfGroup = '' WHERE shelfGroup = :groupName")
+    suspend fun clearShelfGroupByName(groupName: String)
+
+    @Query("UPDATE books SET shelfGroup = :newName WHERE shelfGroup = :oldName")
+    suspend fun renameShelfGroup(oldName: String, newName: String)
 }

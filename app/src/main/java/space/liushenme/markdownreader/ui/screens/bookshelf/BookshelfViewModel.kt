@@ -7,7 +7,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.entity.BookEntity
+import space.liushenme.markdownreader.data.local.entity.ShelfGroups
 import space.liushenme.markdownreader.data.repository.BookRepository
+import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
+import space.liushenme.markdownreader.data.repository.ShelfGroupRepository
+import space.liushenme.markdownreader.model.BookshelfGridColumns
+import space.liushenme.markdownreader.model.BookshelfLayoutMode
 import space.liushenme.markdownreader.importing.BookContentLoader
 import space.liushenme.markdownreader.importing.BookImportSupport
 import space.liushenme.markdownreader.importing.BookTocEnricher
@@ -35,11 +40,22 @@ import kotlin.random.Random
 @HiltViewModel
 class BookshelfViewModel @Inject constructor(
     private val bookRepository: BookRepository,
+    private val shelfGroupRepository: ShelfGroupRepository,
+    private val readerSettingsRepository: ReaderSettingsRepository,
     @ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
     val books = bookRepository.getAllBooks()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val shelfGroups = shelfGroupRepository.observeGroups()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val layoutMode = readerSettingsRepository.bookshelfLayoutMode
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), BookshelfLayoutMode.Grid)
+
+    val gridColumns = readerSettingsRepository.bookshelfGridColumns
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), BookshelfGridColumns.DEFAULT)
 
     private val toastChannel = Channel<String>(Channel.BUFFERED)
     val toastMessages = toastChannel.receiveAsFlow()
@@ -47,48 +63,139 @@ class BookshelfViewModel @Inject constructor(
     private val readerOpenRequestChannel = Channel<Long>(Channel.BUFFERED)
     val readerOpenRequests = readerOpenRequestChannel.receiveAsFlow()
 
+    init {
+        viewModelScope.launch {
+            shelfGroupRepository.syncFromBooks()
+        }
+    }
+
+    fun importFromLocalUris(
+        context: Context,
+        uris: List<Uri>,
+        target: BookImportTarget = BookImportTarget.None,
+    ) {
+        if (uris.isEmpty()) return
+        if (uris.size == 1) {
+            importFromLocalUri(context, uris[0], target = target)
+            return
+        }
+        viewModelScope.launch {
+            var successCount = 0
+            var duplicateCount = 0
+            var failCount = 0
+            for (uri in uris) {
+                when (
+                    importLocalUriInternal(
+                        context = context,
+                        uri = uri,
+                        notify = false,
+                        target = target,
+                    )
+                ) {
+                    is LocalImportOutcome.Success -> successCount++
+                    is LocalImportOutcome.Duplicate -> duplicateCount++
+                    is LocalImportOutcome.Failed -> failCount++
+                }
+            }
+            val skippedCount = duplicateCount + failCount
+            toastChannel.trySend(
+                when {
+                    successCount > 0 && skippedCount == 0 ->
+                        appContext.getString(R.string.toast_import_batch_success, successCount)
+                    successCount > 0 ->
+                        appContext.getString(
+                            R.string.toast_import_batch_partial,
+                            successCount,
+                            skippedCount,
+                        )
+                    duplicateCount > 0 && failCount == 0 ->
+                        appContext.getString(R.string.toast_import_already_exists)
+                    else -> appContext.getString(R.string.toast_import_batch_failed)
+                }
+            )
+        }
+    }
+
     fun importFromLocalUri(
         context: Context,
         uri: Uri,
         openReaderWhenDone: Boolean = false,
+        target: BookImportTarget = BookImportTarget.None,
     ) {
         viewModelScope.launch {
-            try {
-                try {
-                    context.contentResolver.takePersistableUriPermission(
-                        uri,
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+            val outcome = importLocalUriInternal(
+                context = context,
+                uri = uri,
+                notify = true,
+                target = target,
+            )
+            if (openReaderWhenDone &&
+                outcome is LocalImportOutcome.Success &&
+                outcome.bookId > 0L
+            ) {
+                readerOpenRequestChannel.trySend(outcome.bookId)
+            }
+        }
+    }
+
+    private suspend fun importLocalUriInternal(
+        context: Context,
+        uri: Uri,
+        notify: Boolean,
+        target: BookImportTarget,
+    ): LocalImportOutcome {
+        return try {
+            val filePath = uri.toString()
+            if (bookRepository.getBookByFilePath(filePath) != null) {
+                if (notify) {
+                    toastChannel.trySend(
+                        appContext.getString(R.string.toast_import_already_exists)
                     )
-                } catch (_: SecurityException) {
-                    // 部分来源不支持持久权限，仍尝试当前会话内读取
                 }
-                val fileName = BookImportSupport.displayNameFromUri(context, uri)
-                    ?: appContext.getString(R.string.book_untitled)
-                val mime = context.contentResolver.getType(uri)
-                if (BookImportSupport.isRemovedFormat(fileName, mime)) {
+                return LocalImportOutcome.Duplicate
+            }
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: SecurityException) {
+                // 部分来源不支持持久权限，仍尝试当前会话内读取
+            }
+            val fileName = BookImportSupport.displayNameFromUri(context, uri)
+                ?: appContext.getString(R.string.book_untitled)
+            val mime = context.contentResolver.getType(uri)
+            if (BookImportSupport.isRemovedFormat(fileName, mime)) {
+                if (notify) {
                     toastChannel.trySend(
                         appContext.getString(R.string.toast_import_unsupported_format)
                     )
-                    return@launch
                 }
-                val format = BookImportSupport.detectFormat(fileName, mime)
-                val extracted = withContext(Dispatchers.IO) {
-                    BookContentLoader.loadExtractedFromUri(context, uri, format)
-                }
-                if (extracted.body.isBlank() && format.hasBuiltInTextExtract) {
-                    toastChannel.trySend(appContext.getString(R.string.toast_import_parse_failed))
-                }
-                val bookId = persistImportedBook(
-                    importContext = context,
-                    title = BookImportSupport.stripKnownExtension(fileName),
-                    extracted = extracted,
-                    filePath = uri.toString(),
-                    format = format,
-                )
-                if (openReaderWhenDone && bookId > 0L) {
-                    readerOpenRequestChannel.trySend(bookId)
-                }
-            } catch (e: Exception) {
+                return LocalImportOutcome.Failed
+            }
+            val format = BookImportSupport.detectFormat(fileName, mime)
+            val extracted = withContext(Dispatchers.IO) {
+                BookContentLoader.loadExtractedFromUri(context, uri, format)
+            }
+            if (notify && extracted.body.isBlank() && format.hasBuiltInTextExtract) {
+                toastChannel.trySend(appContext.getString(R.string.toast_import_parse_failed))
+            }
+            val bookId = persistImportedBook(
+                importContext = context,
+                title = BookImportSupport.stripKnownExtension(fileName),
+                extracted = extracted,
+                filePath = filePath,
+                format = format,
+                notify = notify,
+                target = target,
+            )
+            if (bookId > 0L) {
+                LocalImportOutcome.Success(bookId)
+            } else {
+                LocalImportOutcome.Failed
+            }
+        } catch (e: Exception) {
+            if (notify) {
                 toastChannel.trySend(
                     appContext.getString(
                         R.string.toast_import_failed,
@@ -96,10 +203,14 @@ class BookshelfViewModel @Inject constructor(
                     )
                 )
             }
+            LocalImportOutcome.Failed
         }
     }
 
-    fun importFromUrl(urlRaw: String) {
+    fun importFromUrl(
+        urlRaw: String,
+        target: BookImportTarget = BookImportTarget.None,
+    ) {
         val url = BookImportSupport.normalizeImportUrl(urlRaw)
         if (url == null) {
             toastChannel.trySend(
@@ -113,6 +224,12 @@ class BookshelfViewModel @Inject constructor(
         }
         viewModelScope.launch {
             try {
+                if (bookRepository.getBookByFilePath(url) != null) {
+                    toastChannel.trySend(
+                        appContext.getString(R.string.toast_import_already_exists)
+                    )
+                    return@launch
+                }
                 val result = withContext(Dispatchers.IO) { UrlBookDownloader.download(url) }
                 val name = result.suggestedFileName ?: url.substringAfterLast('/').substringBefore('?')
                 if (BookImportSupport.isRemovedFormat(name, result.contentType)) {
@@ -140,7 +257,8 @@ class BookshelfViewModel @Inject constructor(
                     ),
                     extracted = extracted,
                     filePath = url,
-                    format = format
+                    format = format,
+                    target = target,
                 )
             } catch (e: Exception) {
                 toastChannel.trySend(
@@ -159,7 +277,13 @@ class BookshelfViewModel @Inject constructor(
         extracted: ExtractedBookText,
         filePath: String,
         format: ImportedBookFormat,
+        notify: Boolean = true,
+        target: BookImportTarget = BookImportTarget.None,
     ): Long {
+        val shelfGroup = target.shelfGroup.trim()
+        if (shelfGroup.isNotEmpty()) {
+            shelfGroupRepository.ensureGroup(shelfGroup)
+        }
         val enriched = BookTocEnricher.enrichIfEmpty(format, extracted)
         val enrichedForStore = prepareImportedContent(importContext, format, enriched)
         val content = enrichedForStore.body
@@ -171,11 +295,15 @@ class BookshelfViewModel @Inject constructor(
             importFormat = format.storedKey,
             coverColor = Random.nextInt(BOOK_COVER_COLOR_COUNT),
             totalChars = content.length,
-            addTime = Date()
+            addTime = Date(),
+            shelfGroup = shelfGroup,
+            isFavorite = target.isFavorite,
         )
         val id = bookRepository.addBook(book)
         if (id <= 0L) {
-            toastChannel.trySend(appContext.getString(R.string.toast_import_write_failed))
+            if (notify) {
+                toastChannel.trySend(appContext.getString(R.string.toast_import_write_failed))
+            }
             return 0L
         }
         val writeOk = withContext(Dispatchers.IO) {
@@ -206,13 +334,15 @@ class BookshelfViewModel @Inject constructor(
             )
             true
         }
-        toastChannel.trySend(
-            if (writeOk) {
-                appContext.getString(R.string.toast_import_success, book.title)
-            } else {
-                appContext.getString(R.string.toast_import_cache_write_failed, book.title)
-            }
-        )
+        if (notify) {
+            toastChannel.trySend(
+                if (writeOk) {
+                    appContext.getString(R.string.toast_import_success, book.title)
+                } else {
+                    appContext.getString(R.string.toast_import_cache_write_failed, book.title)
+                }
+            )
+        }
         return id
     }
 
@@ -271,12 +401,37 @@ class BookshelfViewModel @Inject constructor(
         if (ids.isEmpty()) return
         viewModelScope.launch {
             val name = groupName.trim()
+            if (name.isNotEmpty()) {
+                shelfGroupRepository.ensureGroup(name)
+            }
             bookRepository.updateShelfGroupByIds(ids, name)
         }
+    }
+
+    private sealed class LocalImportOutcome {
+        data class Success(val bookId: Long) : LocalImportOutcome()
+        data object Duplicate : LocalImportOutcome()
+        data object Failed : LocalImportOutcome()
     }
 
     companion object {
         /** 封面颜色数量，与 [space.liushenme.markdownreader.ui.theme.BookCoverColors] 保持同步 */
         const val BOOK_COVER_COLOR_COUNT = 16
+    }
+}
+
+/** 导入时的归属：当前书架标签对应的分组 / 收藏。 */
+data class BookImportTarget(
+    val shelfGroup: String = "",
+    val isFavorite: Boolean = false,
+) {
+    companion object {
+        val None = BookImportTarget()
+
+        fun fromSelectedGroup(selectedGroup: String?): BookImportTarget = when (selectedGroup) {
+            null -> None
+            ShelfGroups.FAVORITES_SENTINEL -> BookImportTarget(isFavorite = true)
+            else -> BookImportTarget(shelfGroup = selectedGroup)
+        }
     }
 }

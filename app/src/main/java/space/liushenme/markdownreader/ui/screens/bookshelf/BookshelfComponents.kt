@@ -7,6 +7,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -14,9 +15,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -300,7 +303,7 @@ internal fun BookCard(
             .then(
                 if (selected) Modifier.border(2.dp, borderColor, shape) else Modifier
             )
-            .clip(shape)
+            // 仅裁剪封面圆角；整卡 clip 会切掉下方分组/日期文字
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongClick
@@ -381,7 +384,8 @@ internal fun BookCard(
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .padding(8.dp)
+                        .fillMaxWidth()
+                        .padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
                 ) {
                     LinearProgressIndicator(
                         progress = { book.readingProgress },
@@ -421,7 +425,7 @@ internal fun BookCard(
                     tint = Color.White.copy(alpha = 0.95f),
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(2.dp)
+                        .padding(end = 8.dp, bottom = 8.dp)
                         .size(14.dp)
                 )
             }
@@ -430,6 +434,7 @@ internal fun BookCard(
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
+                        .padding(6.dp)
                         .size(22.dp)
                         .clip(RoundedCornerShape(4.dp))
                         .background(MaterialTheme.colorScheme.primary),
@@ -453,7 +458,8 @@ internal fun BookCard(
                 fontWeight = FontWeight.Medium
             ),
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 2.dp),
         )
 
         Text(
@@ -462,7 +468,239 @@ internal fun BookCard(
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
             ),
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 2.dp),
         )
+    }
+}
+
+/**
+ * @param tabs 可见分组；[ShelfGroupTab.filterKey] 为 null 表示「全部」
+ */
+@Composable
+internal fun ShelfGroupTabs(
+    tabs: List<ShelfGroupTab>,
+    selectedGroup: String?,
+    onSelect: (String?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (tabs.isEmpty()) return
+    LazyRow(
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        items(items = tabs, key = { it.id }) { tab ->
+            FilterChip(
+                selected = selectedGroup == tab.filterKey,
+                onClick = { onSelect(tab.filterKey) },
+                label = { Text(tab.label) },
+            )
+        }
+    }
+}
+
+/**
+ * 书架顶部分组标签项。
+ * [filterKey] 为 null 表示全部；为 [ShelfGroups.FAVORITES_SENTINEL] 表示收藏。
+ */
+internal data class ShelfGroupTab(
+    val id: Long,
+    val filterKey: String?,
+    val label: String,
+)
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+internal fun BookSearchResultCard(
+    book: BookEntity,
+    coverImageCache: LruCache<String, ImageBitmap>,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    selected: Boolean = false,
+    selectionMode: Boolean = false,
+    onLongClick: (() -> Unit)? = null,
+) {
+    val coverColor = BookCoverColors[book.coverColor % BookCoverColors.size]
+    var coverImage by remember(book.id, book.coverImagePath) {
+        mutableStateOf<ImageBitmap?>(null)
+    }
+    LaunchedEffect(book.id, book.coverImagePath) {
+        val cacheKey = book.coverImagePath ?: return@LaunchedEffect
+        val cached = coverImageCache.get(cacheKey)
+        if (cached != null) {
+            coverImage = cached
+        } else {
+            val decoded = withContext(Dispatchers.IO) {
+                if (!File(cacheKey).exists()) return@withContext null
+                BitmapFactory.decodeFile(cacheKey)?.asImageBitmap()
+            }
+            if (decoded != null) {
+                coverImageCache.put(cacheKey, decoded)
+            }
+            coverImage = decoded
+        }
+    }
+    val dateFormat = SimpleDateFormat("MM-dd", Locale.getDefault())
+    val unreadLabel = stringResource(R.string.bookshelf_unread)
+    val subtitle = when {
+        book.shelfGroup.isNotBlank() -> book.shelfGroup
+        book.author != null -> book.author
+        book.lastReadTime != null -> dateFormat.format(book.lastReadTime)
+        else -> unreadLabel
+    }
+    val shape = RoundedCornerShape(12.dp)
+    val borderColor = MaterialTheme.colorScheme.primary
+
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .then(if (selected) Modifier.border(2.dp, borderColor, shape) else Modifier)
+            .clip(shape)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick,
+            ),
+        shape = shape,
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp,
+        shadowElevation = 1.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(52.dp)
+                    .aspectRatio(0.75f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(coverColor),
+                contentAlignment = Alignment.Center,
+            ) {
+                val bmp = coverImage
+                if (bmp != null) {
+                    Image(
+                        bitmap = bmp,
+                        contentDescription = book.title,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                    )
+                } else {
+                    Text(
+                        text = book.title.take(1),
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                        ),
+                    )
+                }
+                if (book.isFavorite) {
+                    Icon(
+                        imageVector = Icons.Default.Favorite,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(3.dp)
+                            .size(12.dp),
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = book.title,
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (book.readingProgress > 0f) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    LinearProgressIndicator(
+                        progress = { book.readingProgress.coerceIn(0f, 1f) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .clip(RoundedCornerShape(2.dp)),
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                    )
+                }
+            }
+            if (selectionMode && selected) {
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            } else if (book.isPinned && !selectionMode) {
+                Icon(
+                    imageVector = Icons.Default.PushPin,
+                    contentDescription = stringResource(R.string.bookshelf_pinned_cd),
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ImportListCard(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(12.dp)
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .clickable(onClick = onClick),
+        shape = shape,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        border = BorderStroke(
+            width = 1.dp,
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+        ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = stringResource(R.string.bookshelf_import),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
     }
 }

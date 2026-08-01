@@ -9,7 +9,10 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import space.liushenme.markdownreader.markdown.MarkdownLinkDispatcher
+import space.liushenme.markdownreader.ui.screens.bookshelf.BookshelfLayoutScreen
 import space.liushenme.markdownreader.ui.screens.bookshelf.BookshelfScreen
+import space.liushenme.markdownreader.ui.screens.bookshelf.BookshelfSearchScreen
+import space.liushenme.markdownreader.ui.screens.bookshelf.GroupManagementScreen
 import space.liushenme.markdownreader.ui.screens.notes.NotesScreen
 import space.liushenme.markdownreader.ui.screens.profile.AboutScreen
 import space.liushenme.markdownreader.ui.screens.profile.LegalDocumentScreen
@@ -41,6 +44,18 @@ fun AppNavHost(
                 pendingExternalUri = pendingOpenUri,
                 onPendingExternalUriConsumed = onPendingExternalUriConsumed,
             )
+        }
+
+        composable(AppRoutes.BOOKSHELF_SEARCH) {
+            BookshelfSearchScreen(navController = navController)
+        }
+
+        composable(AppRoutes.BOOKSHELF_GROUPS) {
+            GroupManagementScreen(navController = navController)
+        }
+
+        composable(AppRoutes.BOOKSHELF_LAYOUT) {
+            BookshelfLayoutScreen(navController = navController)
         }
 
         composable(AppRoutes.PROFILE) {

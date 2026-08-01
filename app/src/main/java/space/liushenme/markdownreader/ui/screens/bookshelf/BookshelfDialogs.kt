@@ -2,11 +2,14 @@ package space.liushenme.markdownreader.ui.screens.bookshelf
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -43,9 +46,11 @@ internal fun BookshelfRemoveConfirmDialog(
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun BookshelfGroupDialog(
     groupInput: String,
+    existingGroups: List<String>,
     onGroupInputChange: (String) -> Unit,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
@@ -54,14 +59,40 @@ internal fun BookshelfGroupDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.dialog_set_group_title)) },
         text = {
-            OutlinedTextField(
-                value = groupInput,
-                onValueChange = onGroupInputChange,
-                label = { Text(stringResource(R.string.dialog_group_name_label)) },
-                supportingText = { Text(stringResource(R.string.dialog_group_name_hint)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (existingGroups.isNotEmpty()) {
+                    Text(
+                        text = stringResource(R.string.dialog_group_existing_label),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        existingGroups.forEach { name ->
+                            FilterChip(
+                                selected = groupInput == name,
+                                onClick = { onGroupInputChange(name) },
+                                label = { Text(name) },
+                            )
+                        }
+                        FilterChip(
+                            selected = groupInput.isEmpty(),
+                            onClick = { onGroupInputChange("") },
+                            label = { Text(stringResource(R.string.dialog_group_ungroup)) },
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = groupInput,
+                    onValueChange = onGroupInputChange,
+                    label = { Text(stringResource(R.string.dialog_group_name_label)) },
+                    supportingText = { Text(stringResource(R.string.dialog_group_name_hint)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         },
         confirmButton = {
             TextButton(onClick = onConfirm) {

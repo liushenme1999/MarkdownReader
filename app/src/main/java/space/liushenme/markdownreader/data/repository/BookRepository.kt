@@ -19,6 +19,9 @@ class BookRepository @Inject constructor(
 
     suspend fun getBookById(id: Long): BookEntity? = bookDao.getBookById(id)
 
+    suspend fun getBookByFilePath(filePath: String): BookEntity? =
+        bookDao.getBookByFilePath(filePath)
+
     suspend fun addBook(book: BookEntity): Long = bookDao.insertBook(book)
 
     suspend fun updateBook(book: BookEntity) = bookDao.updateBook(book)
