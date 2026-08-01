@@ -43,8 +43,8 @@ android {
         applicationId = "space.liushenme.markdownreader"
         minSdk = 24
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -189,15 +189,9 @@ listOf("debug", "release").forEach { buildType ->
             val renamedGradleApk = gradleOutputDir.resolve(targetName)
 
             if (renamedGradleApk.isFile) {
+                // 复制到 app/release/ 供 README 下载；保留历史版本 APK，勿删除同目录其他包
                 studioOutputDir.mkdirs()
                 renamedGradleApk.copyTo(studioOutputDir.resolve(targetName), overwrite = true)
-                studioOutputDir.listFiles()
-                    ?.filter {
-                        it.isFile &&
-                            it.extension.equals("apk", ignoreCase = true) &&
-                            it.name != targetName
-                    }
-                    ?.forEach { it.delete() }
             } else {
                 renameInDirectory(studioOutputDir)
             }

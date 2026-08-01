@@ -6,6 +6,26 @@
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-08-01
+
+### 新增
+
+- 应用内语言切换（简体中文 / 繁体中文 / English），支持设置持久化与运行时切换
+- 用户协议、隐私政策、关于应用独立页面；「我的」页菜单入口
+- APP ICP 备案号悬挂（关于页显著位置，可跳转工信部备案系统）
+- 高亮样式持久化（Room 迁移至 v8）；记住上次高亮颜色与样式
+- 目录当前章节高亮，并自动滚动置顶
+- 选区绑定高亮：菜单区分「划线」与「取消划线」
+
+### 优化
+
+- 文本选择菜单隐藏多余「搜索」项，界面更干净
+- 高亮卡片滑动删除与展开状态管理
+- 行内 LaTeX 支持选区复制与划线提取（`sourceLatex`）
+- 高亮绘制在滚动时减少被裁剪
+- 阅读打开位置与滚动恢复更准确
+- AppCompat / `localeConfig` 本地化基础设施与依赖整理
+
 ## [1.0.1] - 2026-07-24
 
 ### 新增
@@ -56,6 +76,7 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/liukejun1999/MarkdownReader/releases/tag/v1.0.0
