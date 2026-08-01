@@ -8,7 +8,7 @@
 | **包名** | `space.liushenme.markdownreader` |
 | **最低系统** | Android 7.0 (API 24) |
 | **目标 SDK** | 35 |
-| **当前版本** | 1.0.2 (versionCode 3) |
+| **当前版本** | 1.0.3 (versionCode 4) |
 | **仓库** | [github.com/liukejun1999/MarkdownReader](https://github.com/liukejun1999/MarkdownReader) |
 
 ## 安装包下载
@@ -17,7 +17,8 @@
 
 | 版本 | 下载 | 大小约 |
 |------|------|--------|
-| **1.0.2** | [MD阅读器_release_1.0.2.apk](app/release/MD阅读器_release_1.0.2.apk) | 13 MB |
+| **1.0.3** | [MD阅读器_release_1.0.3.apk](app/release/MD阅读器_release_1.0.3.apk) | 14 MB |
+| 1.0.2 | [MD阅读器_release_1.0.2.apk](app/release/MD阅读器_release_1.0.2.apk) | 13 MB |
 | 1.0.1 | [MD阅读器_release_1.0.1.apk](app/release/MD阅读器_release_1.0.1.apk) | 13 MB |
 | 1.0 | [MD阅读器_release_1.0.apk](app/release/MD阅读器_release_1.0.apk) | 13 MB |
 
@@ -36,7 +37,7 @@
 - 卡片式书籍展示
 - 导入 **Markdown**（`.md` / `.markdown` 等）、**纯文本**（`.txt`）、**PDF**
 - 支持系统文档选择器、URL 下载、「用其他应用打开」与分享导入
-- 阅读进度百分比、收藏、分组、置顶与删除
+- 阅读进度百分比、收藏、分组管理、书架布局（网格/列表）、置顶与删除
 
 ### 阅读器
 
@@ -76,6 +77,7 @@
 - 书籍总数、阅读时长、字数、书签/划线数量
 - 近 7 天阅读趋势图（Vico）
 - 应用主题（亮色 / 暗色 / 跟随系统）、缓存清理
+- **WebDAV 备份与恢复**（完整数据云备份、退出时按日自动备份、配置帮助页）
 
 ## 技术栈
 

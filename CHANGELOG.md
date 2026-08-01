@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-08-01
+
+### 新增
+
+- WebDAV 远程备份与恢复（书架、分组、进度、书签、划线、设置、个人资料与书籍内容）
+- 备份与恢复设置页：服务器地址、账号密码、子目录、设备名称、同时上传最新备份
+- 退出应用时按日自动 WebDAV 备份
+- WebDAV 备份帮助页（顶栏入口与列表入口；中/英/繁）
+- 书架分组管理与书架布局选项（网格/列表、网格列数）
+
 ## [1.0.2] - 2026-08-01
 
 ### 新增
@@ -76,7 +86,8 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/liukejun1999/MarkdownReader/releases/tag/v1.0.0
