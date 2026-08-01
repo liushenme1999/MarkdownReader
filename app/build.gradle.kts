@@ -251,6 +251,7 @@ dependencies {
     implementation(libs.documentfile)
 
     implementation(libs.gson)
+    implementation(libs.okhttp)
 
     implementation(libs.vico.compose)
 

@@ -12,6 +12,8 @@ object AppRoutes {
     const val NOTES = "notes"
     const val STATISTICS = "statistics"
     const val READING_SETTINGS = "reading_settings"
+    const val BACKUP_RESTORE = "backup_restore"
+    const val BACKUP_HELP = "backup_help"
     const val USER_AGREEMENT = "user_agreement"
     const val PRIVACY_POLICY = "privacy_policy"
     const val ABOUT = "about"
@@ -28,6 +30,8 @@ object AppRoutes {
         NOTES,
         STATISTICS,
         READING_SETTINGS,
+        BACKUP_RESTORE,
+        BACKUP_HELP,
         USER_AGREEMENT,
         PRIVACY_POLICY,
         ABOUT,

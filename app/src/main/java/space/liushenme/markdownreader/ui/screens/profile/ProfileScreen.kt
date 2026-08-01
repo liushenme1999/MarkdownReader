@@ -251,6 +251,18 @@ fun ProfileScreen(
                         subtitle = stringResource(R.string.profile_menu_reading_settings_subtitle),
                         onClick = { navController.navigate(AppRoutes.READING_SETTINGS) }
                     )
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = 56.dp, end = 16.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                    )
+                    // 备份与恢复
+                    ProfileMenuItem(
+                        icon = Icons.Default.CloudSync,
+                        title = stringResource(R.string.profile_menu_backup_restore),
+                        subtitle = stringResource(R.string.profile_menu_backup_restore_subtitle),
+                        onClick = { navController.navigate(AppRoutes.BACKUP_RESTORE) }
+                    )
                 }
             }
 

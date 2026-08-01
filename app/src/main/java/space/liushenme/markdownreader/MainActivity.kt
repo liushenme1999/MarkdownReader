@@ -54,14 +54,23 @@ import space.liushenme.markdownreader.ui.components.shelfStylePageBackground
 import space.liushenme.markdownreader.ui.screens.profile.AppSettingsViewModel
 import space.liushenme.markdownreader.ui.theme.BookshelfPageBackground
 import space.liushenme.markdownreader.ui.theme.BookshelfPageBackgroundDark
+import space.liushenme.markdownreader.data.backup.BackupManager
 import space.liushenme.markdownreader.ui.theme.MarkdownReaderTheme
 import space.liushenme.markdownreader.ui.theme.resolveDarkTheme
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
 
     private val appSettingsViewModel: AppSettingsViewModel by viewModels()
+
+    @Inject
+    lateinit var backupManager: BackupManager
 
     override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean {
         when (ev.actionMasked) {
@@ -96,6 +105,17 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingOpenUri = IncomingFileIntent.extractOpenableUri(intent)
+    }
+
+    override fun onDestroy() {
+        val shouldAutoBackup = !isChangingConfigurations
+        super.onDestroy()
+        if (shouldAutoBackup) {
+            // Activity scope 已取消，使用独立协程完成退出时自动备份（对齐 Legado）
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                backupManager.autoBackup()
+            }
+        }
     }
 }
 

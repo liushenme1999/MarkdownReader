@@ -15,6 +15,8 @@ import space.liushenme.markdownreader.ui.screens.bookshelf.BookshelfSearchScreen
 import space.liushenme.markdownreader.ui.screens.bookshelf.GroupManagementScreen
 import space.liushenme.markdownreader.ui.screens.notes.NotesScreen
 import space.liushenme.markdownreader.ui.screens.profile.AboutScreen
+import space.liushenme.markdownreader.ui.screens.profile.BackupHelpScreen
+import space.liushenme.markdownreader.ui.screens.profile.BackupRestoreScreen
 import space.liushenme.markdownreader.ui.screens.profile.LegalDocumentScreen
 import space.liushenme.markdownreader.ui.screens.profile.LegalDocumentType
 import space.liushenme.markdownreader.ui.screens.profile.ProfileScreen
@@ -64,6 +66,14 @@ fun AppNavHost(
 
         composable(AppRoutes.READING_SETTINGS) {
             ReadingSettingsScreen(navController = navController)
+        }
+
+        composable(AppRoutes.BACKUP_RESTORE) {
+            BackupRestoreScreen(navController = navController)
+        }
+
+        composable(AppRoutes.BACKUP_HELP) {
+            BackupHelpScreen(navController = navController)
         }
 
         composable(AppRoutes.USER_AGREEMENT) {

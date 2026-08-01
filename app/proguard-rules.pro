@@ -221,11 +221,11 @@
 # -keep class com.google.firebase.** { *; }
 # -dontwarn com.google.firebase.**
 
-# ==================== OkHttp / Retrofit (if added later) ====================
+# ==================== OkHttp ====================
 
-# -keepattributes Signature
-# -keepattributes Exceptions
-# -keep class okhttp3.** { *; }
-# -keep interface okhttp3.** { *; }
-# -dontwarn okhttp3.**
-# -dontwarn okio.**
+-keepattributes Signature
+-keepattributes Exceptions
+-keep class okhttp3.** { *; }
+-keep interface okhttp3.** { *; }
+-dontwarn okhttp3.**
+-dontwarn okio.**

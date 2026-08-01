@@ -12,8 +12,14 @@ interface HighlightDao {
     @Query("SELECT * FROM highlights ORDER BY createTime DESC")
     fun getAllHighlights(): Flow<List<HighlightEntity>>
 
+    @Query("SELECT * FROM highlights ORDER BY createTime DESC")
+    suspend fun getAllHighlightsList(): List<HighlightEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertHighlight(highlight: HighlightEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertHighlights(highlights: List<HighlightEntity>)
 
     @Update
     suspend fun updateHighlight(highlight: HighlightEntity)
@@ -23,4 +29,7 @@ interface HighlightDao {
 
     @Query("DELETE FROM highlights WHERE bookId = :bookId")
     suspend fun deleteHighlightsByBookId(bookId: Long)
+
+    @Query("DELETE FROM highlights")
+    suspend fun deleteAll()
 }

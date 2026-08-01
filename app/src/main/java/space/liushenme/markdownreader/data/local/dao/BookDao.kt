@@ -16,8 +16,20 @@ interface BookDao {
     )
     fun getAllBooks(): Flow<List<BookEntity>>
 
+    @Query(
+        "SELECT * FROM books ORDER BY isPinned DESC, pinOrder DESC, " +
+            "COALESCE(lastReadTime, addTime) DESC, id DESC"
+    )
+    suspend fun getAllBooksList(): List<BookEntity>
+
     @Query("SELECT * FROM books WHERE isFavorite = 1 ORDER BY lastReadTime DESC")
     fun getFavoriteBooks(): Flow<List<BookEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBooks(books: List<BookEntity>)
+
+    @Query("DELETE FROM books")
+    suspend fun deleteAll()
 
     @Query("SELECT * FROM books WHERE id = :id")
     suspend fun getBookById(id: Long): BookEntity?

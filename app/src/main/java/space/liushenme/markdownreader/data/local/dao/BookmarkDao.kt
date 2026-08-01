@@ -12,12 +12,21 @@ interface BookmarkDao {
     @Query("SELECT * FROM bookmarks ORDER BY createTime DESC")
     fun getAllBookmarks(): Flow<List<BookmarkEntity>>
 
+    @Query("SELECT * FROM bookmarks ORDER BY createTime DESC")
+    suspend fun getAllBookmarksList(): List<BookmarkEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertBookmark(bookmark: BookmarkEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBookmarks(bookmarks: List<BookmarkEntity>)
 
     @Delete
     suspend fun deleteBookmark(bookmark: BookmarkEntity)
 
     @Query("DELETE FROM bookmarks WHERE bookId = :bookId")
     suspend fun deleteBookmarksByBookId(bookId: Long)
+
+    @Query("DELETE FROM bookmarks")
+    suspend fun deleteAll()
 }

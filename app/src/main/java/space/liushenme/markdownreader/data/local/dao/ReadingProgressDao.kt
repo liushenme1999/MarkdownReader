@@ -42,8 +42,17 @@ interface ReadingProgressDao {
     )
     fun observeActiveReadingDates(): Flow<List<Date>>
 
+    @Query("SELECT * FROM reading_progress ORDER BY date DESC")
+    suspend fun getAllList(): List<ReadingProgressEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertProgress(progress: ReadingProgressEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(progressList: List<ReadingProgressEntity>)
+
+    @Query("DELETE FROM reading_progress")
+    suspend fun deleteAll()
 
     /**
      * 按 (bookId, date) 累加；依赖表上 UNIQUE(bookId, date)。

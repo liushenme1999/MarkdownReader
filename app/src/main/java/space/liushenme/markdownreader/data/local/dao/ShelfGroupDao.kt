@@ -26,6 +26,9 @@ interface ShelfGroupDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(group: ShelfGroupEntity): Long
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(groups: List<ShelfGroupEntity>)
+
     @Update
     suspend fun update(group: ShelfGroupEntity)
 
@@ -37,4 +40,7 @@ interface ShelfGroupDao {
 
     @Query("DELETE FROM shelf_groups WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM shelf_groups")
+    suspend fun deleteAll()
 }
