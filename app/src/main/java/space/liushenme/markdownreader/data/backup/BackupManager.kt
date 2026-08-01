@@ -260,12 +260,14 @@ class BackupManager @Inject constructor(
     }
 
     private suspend fun applyRestore(unpackDir: File) {
-        val books: List<BookEntity> = readJsonList(File(unpackDir, "books.json"))
-        val bookmarks: List<BookmarkEntity> = readJsonList(File(unpackDir, "bookmarks.json"))
-        val highlights: List<HighlightEntity> = readJsonList(File(unpackDir, "highlights.json"))
-        val progress: List<ReadingProgressEntity> =
-            readJsonList(File(unpackDir, "reading_progress.json"))
-        val groups: List<ShelfGroupEntity> = readJsonList(File(unpackDir, "shelf_groups.json"))
+        val books = readJsonList(File(unpackDir, "books.json"), BookEntity::class.java)
+        val bookmarks = readJsonList(File(unpackDir, "bookmarks.json"), BookmarkEntity::class.java)
+        val highlights = readJsonList(File(unpackDir, "highlights.json"), HighlightEntity::class.java)
+        val progress = readJsonList(
+            File(unpackDir, "reading_progress.json"),
+            ReadingProgressEntity::class.java,
+        )
+        val groups = readJsonList(File(unpackDir, "shelf_groups.json"), ShelfGroupEntity::class.java)
 
         bookmarkDao.deleteAll()
         highlightDao.deleteAll()
@@ -307,8 +309,8 @@ class BackupManager @Inject constructor(
             book.coverImagePath.isNullOrBlank() -> book.coverImagePath
             File(bundleDir, "cover.jpg").isFile -> File(bundleDir, "cover.jpg").absolutePath
             File(bundleDir, "cover.png").isFile -> File(bundleDir, "cover.png").absolutePath
-            book.coverImagePath!!.contains("/parsed_books/") -> {
-                val name = File(book.coverImagePath!!).name
+            book.coverImagePath.contains("/parsed_books/") -> {
+                val name = File(book.coverImagePath).name
                 val candidate = File(bundleDir, name)
                 if (candidate.isFile) candidate.absolutePath else book.coverImagePath
             }
@@ -332,7 +334,12 @@ class BackupManager @Inject constructor(
 
     private suspend fun importPreferences(prefsFile: File, avatarDest: File) {
         if (!prefsFile.isFile) return
-        val type = object : TypeToken<Map<String, Any>>() {}.type
+        // 使用 getParameterized，避免 R8 抹掉 TypeToken 匿名子类泛型签名
+        val type = TypeToken.getParameterized(
+            Map::class.java,
+            String::class.java,
+            Any::class.java,
+        ).type
         val map: Map<String, Any> = BackupGson.gson.fromJson(prefsFile.readText(), type) ?: return
 
         // 已知 int / float 键，避免 Gson 把数字一律当成 Double 后类型错乱
@@ -378,9 +385,10 @@ class BackupManager @Inject constructor(
         }
     }
 
-    private inline fun <reified T> readJsonList(file: File): List<T> {
+    private fun <T> readJsonList(file: File, elementClass: Class<T>): List<T> {
         if (!file.isFile) return emptyList()
-        val type = object : TypeToken<List<T>>() {}.type
+        // 使用 getParameterized，避免 R8 抹掉 TypeToken 匿名子类泛型签名
+        val type = TypeToken.getParameterized(List::class.java, elementClass).type
         return BackupGson.gson.fromJson(file.readText(), type) ?: emptyList()
     }
 
