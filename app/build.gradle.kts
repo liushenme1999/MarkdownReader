@@ -145,63 +145,84 @@ val appVersionName = extensions.getByType<ApplicationExtension>()
 listOf("debug", "release").forEach { buildType ->
     val capitalizedBuildType = buildType.replaceFirstChar { it.titlecase() }
     val targetApkName = "${apkBaseName}_${buildType}_${appVersionName}.apk"
+    val defaultApkName = "app-$buildType.apk"
     val gradleApkOutputPath = layout.buildDirectory.dir("outputs/apk/$buildType")
+    // Android Studio / AGP 的 ApkListingFileRedirect 会把产物同步到 app/<buildType>/
     val studioApkOutputPath = layout.projectDirectory.dir(buildType)
 
     val renameApk = tasks.register("rename${capitalizedBuildType}Apk") {
         notCompatibleWithConfigurationCache("Renames APK files on disk after packaging")
         val targetName = targetApkName
+        val defaultName = defaultApkName
+        val buildTypeName = buildType
+        val baseName = apkBaseName
         val gradleOutputPath = gradleApkOutputPath
         val studioOutputPath = studioApkOutputPath
 
         doLast {
-            fun renameInDirectory(directory: File) {
+            fun renameDefaultApkIn(directory: File) {
                 if (!directory.isDirectory) return
-
                 val targetApk = directory.resolve(targetName)
-                if (!targetApk.isFile) {
-                    val sourceApk = directory.listFiles()
-                        ?.filter { it.isFile && it.extension.equals("apk", ignoreCase = true) }
-                        ?.maxByOrNull { it.lastModified() }
-                        ?: return
-
-                    if (sourceApk.name != targetName) {
-                        targetApk.delete()
+                val defaultApk = directory.resolve(defaultName)
+                when {
+                    targetApk.isFile && defaultApk.isFile -> defaultApk.delete()
+                    !targetApk.isFile && defaultApk.isFile -> {
+                        check(defaultApk.renameTo(targetApk)) {
+                            "Failed to rename ${defaultApk.name} to $targetName in ${directory.path}"
+                        }
+                    }
+                    !targetApk.isFile -> {
+                        // 兼容偶发非默认命名：取最新 apk 改名
+                        val sourceApk = directory.listFiles()
+                            ?.filter {
+                                it.isFile &&
+                                    it.extension.equals("apk", ignoreCase = true) &&
+                                    !it.name.startsWith(baseName)
+                            }
+                            ?.maxByOrNull { it.lastModified() }
+                            ?: return
                         check(sourceApk.renameTo(targetApk)) {
                             "Failed to rename ${sourceApk.name} to $targetName in ${directory.path}"
                         }
                     }
                 }
-
-                directory.listFiles()
-                    ?.filter {
-                        it.isFile &&
-                            it.extension.equals("apk", ignoreCase = true) &&
-                            it.name != targetName
-                    }
-                    ?.forEach { it.delete() }
             }
 
-            renameInDirectory(gradleOutputPath.get().asFile)
+            fun patchOutputMetadata(directory: File) {
+                val metadata = directory.resolve("output-metadata.json")
+                if (!metadata.isFile) return
+                val original = metadata.readText()
+                val updated = original.replace(
+                    Regex(""""outputFile"\s*:\s*"app-$buildTypeName\.apk""""),
+                    """"outputFile": "$targetName"""",
+                )
+                if (updated != original) {
+                    metadata.writeText(updated)
+                }
+            }
 
-            val studioOutputDir = studioOutputPath.asFile
             val gradleOutputDir = gradleOutputPath.get().asFile
-            val renamedGradleApk = gradleOutputDir.resolve(targetName)
+            val studioOutputDir = studioOutputPath.asFile
 
+            renameDefaultApkIn(gradleOutputDir)
+
+            val renamedGradleApk = gradleOutputDir.resolve(targetName)
             if (renamedGradleApk.isFile) {
-                // 复制到 app/release/ 供 README 下载；保留历史版本 APK，勿删除同目录其他包
+                // 复制到 app/<buildType>/ 供 README / Studio 定位；保留历史 MD阅读器_*.apk
                 studioOutputDir.mkdirs()
                 renamedGradleApk.copyTo(studioOutputDir.resolve(targetName), overwrite = true)
-            } else {
-                renameInDirectory(studioOutputDir)
             }
+
+            // Studio 的 listing redirect 常在 assemble 末尾写入 app-release.apk，必须在此之后清理
+            renameDefaultApkIn(studioOutputDir)
+            patchOutputMetadata(studioOutputDir)
+            patchOutputMetadata(gradleOutputDir)
         }
     }
 
-    tasks.configureEach {
-        if (name == "assemble$capitalizedBuildType" || name == "package$capitalizedBuildType") {
-            finalizedBy(renameApk)
-        }
+    // 只挂在 assemble* 上，确保排在 create*ApkListingFileRedirect 之后执行
+    tasks.matching { it.name == "assemble$capitalizedBuildType" }.configureEach {
+        finalizedBy(renameApk)
     }
 }
 
