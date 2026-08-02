@@ -106,6 +106,8 @@
     <string name="bookshelf_no_results">未找到匹配的书籍</string>
     <string name="bookshelf_try_other_keywords">尝试其他关键词</string>
     <string name="bookshelf_exit_management_cd">退出管理</string>
+    <string name="bookshelf_select_all">全选</string>
+    <string name="bookshelf_deselect_all">全不选</string>
     <string name="bookshelf_action_remove">移出书架</string>
     <string name="bookshelf_action_pin">置顶</string>
     <string name="bookshelf_action_favorite">收藏</string>

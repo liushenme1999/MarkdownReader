@@ -4,9 +4,14 @@ import java.util.Date
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
+import space.liushenme.markdownreader.data.local.BookContentHasher
 import space.liushenme.markdownreader.data.local.dao.BookDao
+import space.liushenme.markdownreader.data.local.dao.DeletedBookDao
+import space.liushenme.markdownreader.data.local.dao.DeletedGitProjectDao
 import space.liushenme.markdownreader.data.local.dao.GitProjectDao
 import space.liushenme.markdownreader.data.local.entity.BookEntity
+import space.liushenme.markdownreader.data.local.entity.DeletedBookEntity
+import space.liushenme.markdownreader.data.local.entity.DeletedGitProjectEntity
 import space.liushenme.markdownreader.data.local.entity.GitProjectEntity
 import space.liushenme.markdownreader.git.GitProjectStorage
 import space.liushenme.markdownreader.git.GitRecentOpenedPaths
@@ -16,6 +21,8 @@ import space.liushenme.markdownreader.importing.ParsedBookStorage
 class GitProjectRepository @Inject constructor(
     private val gitProjectDao: GitProjectDao,
     private val bookDao: BookDao,
+    private val deletedBookDao: DeletedBookDao,
+    private val deletedGitProjectDao: DeletedGitProjectDao,
 ) {
     fun getAllProjects(): Flow<List<GitProjectEntity>> = gitProjectDao.getAllProjects()
 
@@ -26,7 +33,12 @@ class GitProjectRepository @Inject constructor(
     suspend fun getByRemoteUrl(remoteUrl: String): GitProjectEntity? =
         gitProjectDao.getByRemoteUrl(remoteUrl)
 
-    suspend fun insert(project: GitProjectEntity): Long = gitProjectDao.insert(project)
+    suspend fun insert(project: GitProjectEntity): Long {
+        if (project.remoteUrl.isNotBlank()) {
+            deletedGitProjectDao.deleteByRemoteUrl(project.remoteUrl)
+        }
+        return gitProjectDao.insert(project)
+    }
 
     suspend fun update(project: GitProjectEntity) = gitProjectDao.update(project)
 
@@ -77,8 +89,25 @@ class GitProjectRepository @Inject constructor(
 
     /** 删除项目、关联书籍解析包，以及本地 clone 目录。 */
     suspend fun deleteProjectCascade(project: GitProjectEntity) {
+        val now = System.currentTimeMillis()
+        if (project.remoteUrl.isNotBlank()) {
+            deletedGitProjectDao.upsert(
+                DeletedGitProjectEntity(
+                    remoteUrl = project.remoteUrl,
+                    deletedAt = now,
+                ),
+            )
+        }
         val books = bookDao.getBooksByGitProjectId(project.id)
         for (book in books) {
+            val hash = book.contentHash.ifBlank {
+                BookContentHasher.hashEmptyFallback(
+                    book.importFormat,
+                    book.title,
+                    book.filePath,
+                )
+            }
+            deletedBookDao.upsert(DeletedBookEntity(contentHash = hash, deletedAt = now))
             ParsedBookStorage.deleteBundleDir(book.parsedBundlePath)
             book.coverImagePath?.let { path ->
                 runCatching { java.io.File(path).delete() }

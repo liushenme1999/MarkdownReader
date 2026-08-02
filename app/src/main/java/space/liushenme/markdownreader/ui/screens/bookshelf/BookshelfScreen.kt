@@ -52,6 +52,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -266,6 +267,19 @@ fun BookshelfScreen(
     }
 
     val selectionCount = selectedIds.size + selectedProjectIds.size
+    val allVisibleSelected = shelfItems.isNotEmpty() &&
+        displayedBooks.all { it.id in selectedIds } &&
+        displayedProjects.all { it.id in selectedProjectIds }
+
+    fun toggleSelectAllVisible() {
+        if (allVisibleSelected) {
+            selectedIds = emptySet()
+            selectedProjectIds = emptySet()
+        } else {
+            selectedIds = displayedBooks.map { it.id }.toSet()
+            selectedProjectIds = displayedProjects.map { it.id }.toSet()
+        }
+    }
 
     BackHandler(enabled = selectionMode) { exitSelection() }
 
@@ -305,6 +319,22 @@ fun BookshelfScreen(
                                 Icon(
                                     Icons.Default.Close,
                                     contentDescription = stringResource(R.string.bookshelf_exit_management_cd),
+                                )
+                            }
+                        },
+                        actions = {
+                            TextButton(
+                                onClick = { toggleSelectAllVisible() },
+                                enabled = shelfItems.isNotEmpty(),
+                            ) {
+                                Text(
+                                    stringResource(
+                                        if (allVisibleSelected) {
+                                            R.string.bookshelf_deselect_all
+                                        } else {
+                                            R.string.bookshelf_select_all
+                                        },
+                                    ),
                                 )
                             }
                         },
@@ -514,6 +544,7 @@ fun BookshelfScreen(
                     when (layoutMode) {
                         BookshelfLayoutMode.List -> {
                             LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
                                 contentPadding = PaddingValues(
                                     start = 16.dp,
                                     end = 16.dp,
@@ -574,6 +605,7 @@ fun BookshelfScreen(
                         BookshelfLayoutMode.Grid -> {
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(gridColumns),
+                                modifier = Modifier.fillMaxSize(),
                                 contentPadding = PaddingValues(
                                     start = 16.dp,
                                     end = 16.dp,

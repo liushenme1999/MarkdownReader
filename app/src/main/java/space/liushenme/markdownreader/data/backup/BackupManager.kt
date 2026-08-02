@@ -28,12 +28,16 @@ import space.liushenme.markdownreader.BuildConfig
 import space.liushenme.markdownreader.data.local.BookContentHasher
 import space.liushenme.markdownreader.data.local.dao.BookDao
 import space.liushenme.markdownreader.data.local.dao.BookmarkDao
+import space.liushenme.markdownreader.data.local.dao.DeletedBookDao
+import space.liushenme.markdownreader.data.local.dao.DeletedGitProjectDao
 import space.liushenme.markdownreader.data.local.dao.GitProjectDao
 import space.liushenme.markdownreader.data.local.dao.HighlightDao
 import space.liushenme.markdownreader.data.local.dao.ReadingProgressDao
 import space.liushenme.markdownreader.data.local.dao.ShelfGroupDao
 import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.data.local.entity.BookmarkEntity
+import space.liushenme.markdownreader.data.local.entity.DeletedBookEntity
+import space.liushenme.markdownreader.data.local.entity.DeletedGitProjectEntity
 import space.liushenme.markdownreader.data.local.entity.GitProjectEntity
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.data.local.entity.ReadingProgressEntity
@@ -76,6 +80,8 @@ class BackupManager @Inject constructor(
     private val readingProgressDao: ReadingProgressDao,
     private val shelfGroupDao: ShelfGroupDao,
     private val gitProjectDao: GitProjectDao,
+    private val deletedBookDao: DeletedBookDao,
+    private val deletedGitProjectDao: DeletedGitProjectDao,
     private val gitDocumentOpener: GitDocumentOpener,
 ) {
     private val mutex = Mutex()
@@ -123,18 +129,31 @@ class BackupManager @Inject constructor(
                 BackupZip.unzipTo(zipFile, unpackDir)
 
                 val remoteBooks = readJsonList(File(unpackDir, "books.json"), BookEntity::class.java)
-                val localBooks = bookDao.getAllBooksList()
                 var pulledCount = 0
                 var needPush = false
 
+                // 先应用删除墓碑，避免对端仍保留的书/项目被进度同步推回云端
+                pulledCount += mergeAndApplyBookTombstones(unpackDir)
+                pulledCount += mergeAndApplyGitProjectTombstones(unpackDir)
+                if (localTombstonesNeedPush(unpackDir)) needPush = true
+
+                // 跨设备：云端有、本机无的 Git 项目在同步时浅克隆到本机（与完整恢复一致）
                 val gitMetaPulled = mergeGitProjectsFromBackup(
                     unpackDir = unpackDir,
-                    cloneMissing = false,
+                    cloneMissing = true,
                 )
                 if (gitMetaPulled > 0) pulledCount += gitMetaPulled
                 if (localGitProjectsNeedPush(unpackDir)) needPush = true
 
+                val localBooks = bookDao.getAllBooksList()
+                val deletedHashes = deletedBookDao.getAllHashes().toSet()
                 for (remote in remoteBooks) {
+                    val remoteHash = remoteStableHash(remote) ?: remote.contentHash.takeIf { it.isNotBlank() }
+                    if (remoteHash != null && remoteHash in deletedHashes) {
+                        // 云端元数据仍含已删书：需推送以更新 books.json
+                        needPush = true
+                        continue
+                    }
                     val local = findLocalBookForRemote(remote, localBooks) ?: continue
                     when {
                         shouldPreferRemoteProgress(remote, local) -> {
@@ -167,12 +186,13 @@ class BackupManager @Inject constructor(
 
                 rematchGitBooks()
 
-                // 本机有云端没有的书且已有阅读进度时，也需要推送
+                // 本机有云端没有的书且已有阅读进度时，也需要推送（已墓碑删除的不会再推回）
                 if (!needPush) {
                     val remoteHashes = remoteBooks.mapNotNull { remoteStableHash(it) }.toSet()
                     val remoteIds = remoteBooks.map { it.id }.toSet()
                     needPush = localBooks.any { local ->
                         val hash = localStableHash(local)
+                        if (hash != null && hash in deletedHashes) return@any false
                         val onRemote = (hash != null && hash in remoteHashes) ||
                             local.id in remoteIds
                         !onRemote && (
@@ -388,6 +408,16 @@ class BackupManager @Inject constructor(
                 gitProjectDao.getAllProjectsList().map { GitProjectBackup.fromEntity(it) },
             ),
         )
+        File(packDir, "deleted_books.json").writeText(
+            BackupGson.gson.toJson(
+                deletedBookDao.getAll().map { DeletedBookBackup.fromEntity(it) },
+            ),
+        )
+        File(packDir, "deleted_git_projects.json").writeText(
+            BackupGson.gson.toJson(
+                deletedGitProjectDao.getAll().map { DeletedGitProjectBackup.fromEntity(it) },
+            ),
+        )
         File(packDir, "bookmarks.json").writeText(
             BackupGson.gson.toJson(bookmarkDao.getAllBookmarksList()),
         )
@@ -436,6 +466,10 @@ class BackupManager @Inject constructor(
         )
         val groups = readJsonList(File(unpackDir, "shelf_groups.json"), ShelfGroupEntity::class.java)
 
+        // 先应用删除墓碑，再合并，避免把已删条目又合并回来
+        mergeAndApplyBookTombstones(unpackDir)
+        mergeAndApplyGitProjectTombstones(unpackDir)
+
         // 先合并 Git 项目（缺失则浅克隆），再合并书籍以便 rematch gitProjectId
         mergeGitProjectsFromBackup(unpackDir = unpackDir, cloneMissing = true)
 
@@ -454,9 +488,16 @@ class BackupManager @Inject constructor(
             }
         }
 
+        val deletedHashes = deletedBookDao.getAllHashes().toSet()
         val idMap = LinkedHashMap<Long, Long>()
         for (remote in books) {
-            idMap[remote.id] = mergeBook(remote)
+            val remoteHash = remoteStableHash(remote)
+                ?: remote.contentHash.takeIf { it.isNotBlank() }
+            if (remoteHash != null && remoteHash in deletedHashes) continue
+            val localId = mergeBook(remote)
+            if (localId > 0L) {
+                idMap[remote.id] = localId
+            }
         }
         rematchGitBooks()
         refreshGitDocumentBundles()
@@ -498,6 +539,14 @@ class BackupManager @Inject constructor(
     /** @return 本机 books.id */
     private suspend fun mergeBook(remote: BookEntity): Long {
         val resolvedHash = resolveRemoteContentHash(remote)
+        if (resolvedHash.isNotBlank() && deletedBookDao.getByHash(resolvedHash) != null) {
+            bookDao.getBookByContentHash(resolvedHash)?.let { stale ->
+                ParsedBookStorage.deleteBundleDir(stale.parsedBundlePath)
+                stale.coverImagePath?.let { path -> runCatching { File(path).delete() } }
+                bookDao.deleteBook(stale)
+            }
+            return 0L
+        }
         var local = if (resolvedHash.isNotBlank()) {
             bookDao.getBookByContentHash(resolvedHash)
         } else {
@@ -804,7 +853,124 @@ class BackupManager @Inject constructor(
     }
 
     /**
-     * @return 从云端写入本机的 Git 项目元数据条数（lastOpened / 收藏置顶等）
+     * 合并云端删除墓碑，并删除本机仍存在的对应书籍。
+     * @return 本机实际删除的书籍数
+     */
+    private suspend fun mergeAndApplyBookTombstones(unpackDir: File): Int {
+        val remotes = readJsonList(File(unpackDir, "deleted_books.json"), DeletedBookBackup::class.java)
+        for (remote in remotes) {
+            if (remote.contentHash.isBlank()) continue
+            val existing = deletedBookDao.getByHash(remote.contentHash)
+            if (existing == null || remote.deletedAt >= existing.deletedAt) {
+                deletedBookDao.upsert(remote.toEntity())
+            }
+        }
+        val hashes = deletedBookDao.getAllHashes().toSet()
+        if (hashes.isEmpty()) return 0
+        var removed = 0
+        for (local in bookDao.getAllBooksList()) {
+            val hash = localStableHash(local)
+                ?: local.contentHash.takeIf { it.isNotBlank() }
+                ?: continue
+            if (hash !in hashes) continue
+            ParsedBookStorage.deleteBundleDir(local.parsedBundlePath)
+            local.coverImagePath?.let { path -> runCatching { File(path).delete() } }
+            bookDao.deleteBook(local)
+            runCatching {
+                bookContentSync.deleteRemoteBookContent(hash, fallbackNumericId = local.id)
+            }
+            removed++
+        }
+        return removed
+    }
+
+    /**
+     * 合并云端 Git 项目删除墓碑，并删除本机对应项目。
+     * @return 本机实际删除的项目数
+     */
+    private suspend fun mergeAndApplyGitProjectTombstones(unpackDir: File): Int {
+        val remotes = readJsonList(
+            File(unpackDir, "deleted_git_projects.json"),
+            DeletedGitProjectBackup::class.java,
+        )
+        for (remote in remotes) {
+            if (remote.remoteUrl.isBlank()) continue
+            val existing = deletedGitProjectDao.getByRemoteUrl(remote.remoteUrl)
+            if (existing == null || remote.deletedAt >= existing.deletedAt) {
+                deletedGitProjectDao.upsert(remote.toEntity())
+            }
+        }
+        val urls = deletedGitProjectDao.getAllRemoteUrls().toSet()
+        if (urls.isEmpty()) return 0
+        var removed = 0
+        for (local in gitProjectDao.getAllProjectsList()) {
+            if (local.remoteUrl !in urls) continue
+            removeLocalGitProject(local)
+            removed++
+        }
+        return removed
+    }
+
+    private suspend fun removeLocalGitProject(project: GitProjectEntity) {
+        val now = System.currentTimeMillis()
+        val books = bookDao.getBooksByGitProjectId(project.id)
+        for (book in books) {
+            val hash = book.contentHash.ifBlank {
+                BookContentHasher.hashEmptyFallback(
+                    book.importFormat,
+                    book.title,
+                    book.filePath,
+                )
+            }
+            deletedBookDao.upsert(DeletedBookEntity(contentHash = hash, deletedAt = now))
+            ParsedBookStorage.deleteBundleDir(book.parsedBundlePath)
+            book.coverImagePath?.let { path -> runCatching { File(path).delete() } }
+        }
+        if (books.isNotEmpty()) {
+            bookDao.deleteBooksByIds(books.map { it.id })
+        }
+        GitProjectStorage.deleteProjectDir(project.localPath)
+        gitProjectDao.delete(project)
+    }
+
+    /** 本机有云端备份尚未包含的墓碑，或云端仍残留已删条目时需要推送。 */
+    private suspend fun localTombstonesNeedPush(unpackDir: File): Boolean {
+        val remoteBooks = readJsonList(
+            File(unpackDir, "deleted_books.json"),
+            DeletedBookBackup::class.java,
+        ).map { it.contentHash }.toSet()
+        if (deletedBookDao.getAll().any { it.contentHash !in remoteBooks }) return true
+
+        val remoteProjects = readJsonList(
+            File(unpackDir, "deleted_git_projects.json"),
+            DeletedGitProjectBackup::class.java,
+        ).map { it.remoteUrl }.toSet()
+        if (deletedGitProjectDao.getAll().any { it.remoteUrl !in remoteProjects }) return true
+
+        val deletedHashes = deletedBookDao.getAllHashes().toSet()
+        if (deletedHashes.isNotEmpty()) {
+            val books = readJsonList(File(unpackDir, "books.json"), BookEntity::class.java)
+            if (books.any { book ->
+                    val hash = remoteStableHash(book) ?: book.contentHash.takeIf { it.isNotBlank() }
+                    hash != null && hash in deletedHashes
+                }
+            ) {
+                return true
+            }
+        }
+        val deletedUrls = deletedGitProjectDao.getAllRemoteUrls().toSet()
+        if (deletedUrls.isNotEmpty()) {
+            val projects = readJsonList(
+                File(unpackDir, "git_projects.json"),
+                GitProjectBackup::class.java,
+            )
+            if (projects.any { it.remoteUrl in deletedUrls }) return true
+        }
+        return false
+    }
+
+    /**
+     * @return 从云端写入本机的条数：新建克隆，或更新了最近打开/收藏置顶等元数据
      */
     private suspend fun mergeGitProjectsFromBackup(
         unpackDir: File,
@@ -812,9 +978,11 @@ class BackupManager @Inject constructor(
     ): Int {
         val remotes = readJsonList(File(unpackDir, "git_projects.json"), GitProjectBackup::class.java)
         if (remotes.isEmpty()) return 0
+        val deletedUrls = deletedGitProjectDao.getAllRemoteUrls().toSet()
         var pulled = 0
         for (remote in remotes) {
             if (remote.remoteUrl.isBlank()) continue
+            if (remote.remoteUrl in deletedUrls) continue
             val changed = mergeGitProject(remote, cloneMissing = cloneMissing)
             if (changed) pulled++
         }
@@ -825,6 +993,9 @@ class BackupManager @Inject constructor(
         remote: GitProjectBackup,
         cloneMissing: Boolean,
     ): Boolean {
+        if (deletedGitProjectDao.getByRemoteUrl(remote.remoteUrl) != null) {
+            return false
+        }
         val local = gitProjectDao.getByRemoteUrl(remote.remoteUrl)
         if (local == null) {
             if (!cloneMissing) return false
@@ -942,13 +1113,13 @@ class BackupManager @Inject constructor(
     private suspend fun localGitProjectsNeedPush(unpackDir: File): Boolean {
         val remotes = readJsonList(File(unpackDir, "git_projects.json"), GitProjectBackup::class.java)
         val remoteByUrl = remotes.associateBy { it.remoteUrl }
+        val deletedUrls = deletedGitProjectDao.getAllRemoteUrls().toSet()
         for (local in gitProjectDao.getAllProjectsList()) {
+            if (local.remoteUrl in deletedUrls) continue
             val remote = remoteByUrl[local.remoteUrl]
             if (remote == null) {
-                if (!local.lastOpenedRelativePath.isNullOrBlank() || local.isFavorite || local.isPinned) {
-                    return true
-                }
-                continue
+                // 本机已导入、云端尚无：需推送，否则另一台设备同步时看不到该项目
+                return true
             }
             val remotePreferred = shouldPreferRemoteLastOpened(remote, local)
             if (!remotePreferred) {
@@ -1020,8 +1191,8 @@ class BackupManager @Inject constructor(
 
     companion object {
         private const val TAG = "BackupManager"
-        /** v3：备份包不含书籍正文；正文走 books/{contentHash}.zip；合并键为 contentHash */
-        private const val FORMAT_VERSION = 3
+        /** v4：增加 deleted_books / deleted_git_projects 墓碑，跨设备同步删除 */
+        private const val FORMAT_VERSION = 4
         private const val LATEST_BACKUP_NAME = "backup.zip"
         private const val PARSED_BOOKS_DIR = "parsed_books"
         private const val AVATAR_FILE_NAME = "profile_avatar.jpg"

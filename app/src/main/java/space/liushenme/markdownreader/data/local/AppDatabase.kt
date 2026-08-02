@@ -9,12 +9,16 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import space.liushenme.markdownreader.data.local.dao.BookDao
 import space.liushenme.markdownreader.data.local.dao.BookmarkDao
+import space.liushenme.markdownreader.data.local.dao.DeletedBookDao
+import space.liushenme.markdownreader.data.local.dao.DeletedGitProjectDao
 import space.liushenme.markdownreader.data.local.dao.GitProjectDao
 import space.liushenme.markdownreader.data.local.dao.HighlightDao
 import space.liushenme.markdownreader.data.local.dao.ReadingProgressDao
 import space.liushenme.markdownreader.data.local.dao.ShelfGroupDao
 import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.data.local.entity.BookmarkEntity
+import space.liushenme.markdownreader.data.local.entity.DeletedBookEntity
+import space.liushenme.markdownreader.data.local.entity.DeletedGitProjectEntity
 import space.liushenme.markdownreader.data.local.entity.GitProjectEntity
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.data.local.entity.ReadingProgressEntity
@@ -28,8 +32,10 @@ import space.liushenme.markdownreader.data.local.entity.ShelfGroupEntity
         ReadingProgressEntity::class,
         ShelfGroupEntity::class,
         GitProjectEntity::class,
+        DeletedBookEntity::class,
+        DeletedGitProjectEntity::class,
     ],
-    version = 16,
+    version = 17,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -40,6 +46,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun readingProgressDao(): ReadingProgressDao
     abstract fun shelfGroupDao(): ShelfGroupDao
     abstract fun gitProjectDao(): GitProjectDao
+    abstract fun deletedBookDao(): DeletedBookDao
+    abstract fun deletedGitProjectDao(): DeletedGitProjectDao
 
     companion object {
         @Volatile
@@ -247,6 +255,29 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `deleted_books` (
+                        `contentHash` TEXT NOT NULL,
+                        `deletedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`contentHash`)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `deleted_git_projects` (
+                        `remoteUrl` TEXT NOT NULL,
+                        `deletedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`remoteUrl`)
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -270,6 +301,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_13_14,
                         MIGRATION_14_15,
                         MIGRATION_15_16,
+                        MIGRATION_16_17,
                     )
                     .build()
                 INSTANCE = instance

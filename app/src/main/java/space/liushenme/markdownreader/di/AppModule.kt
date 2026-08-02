@@ -4,6 +4,8 @@ import android.content.Context
 import space.liushenme.markdownreader.data.local.AppDatabase
 import space.liushenme.markdownreader.data.local.dao.BookDao
 import space.liushenme.markdownreader.data.local.dao.BookmarkDao
+import space.liushenme.markdownreader.data.local.dao.DeletedBookDao
+import space.liushenme.markdownreader.data.local.dao.DeletedGitProjectDao
 import space.liushenme.markdownreader.data.local.dao.GitProjectDao
 import space.liushenme.markdownreader.data.local.dao.HighlightDao
 import space.liushenme.markdownreader.data.local.dao.ReadingProgressDao
@@ -42,4 +44,11 @@ object AppModule {
 
     @Provides
     fun provideGitProjectDao(database: AppDatabase): GitProjectDao = database.gitProjectDao()
+
+    @Provides
+    fun provideDeletedBookDao(database: AppDatabase): DeletedBookDao = database.deletedBookDao()
+
+    @Provides
+    fun provideDeletedGitProjectDao(database: AppDatabase): DeletedGitProjectDao =
+        database.deletedGitProjectDao()
 }

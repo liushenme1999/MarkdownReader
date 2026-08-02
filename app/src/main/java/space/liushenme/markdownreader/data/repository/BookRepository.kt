@@ -10,13 +10,17 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import space.liushenme.markdownreader.data.backup.BookContentSync
+import space.liushenme.markdownreader.data.local.BookContentHasher
 import space.liushenme.markdownreader.data.local.dao.BookDao
+import space.liushenme.markdownreader.data.local.dao.DeletedBookDao
 import space.liushenme.markdownreader.data.local.entity.BookEntity
+import space.liushenme.markdownreader.data.local.entity.DeletedBookEntity
 import space.liushenme.markdownreader.importing.ParsedBookStorage
 
 @Singleton
 class BookRepository @Inject constructor(
     private val bookDao: BookDao,
+    private val deletedBookDao: DeletedBookDao,
     private val bookContentSync: BookContentSync,
 ) {
     private val syncScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -42,7 +46,10 @@ class BookRepository @Inject constructor(
     suspend fun getBooksByGitProjectId(projectId: Long): List<BookEntity> =
         bookDao.getBooksByGitProjectId(projectId)
 
-    suspend fun addBook(book: BookEntity): Long = bookDao.insertBook(book)
+    suspend fun addBook(book: BookEntity): Long {
+        clearTombstone(book.contentHash)
+        return bookDao.insertBook(book)
+    }
 
     suspend fun updateBook(book: BookEntity) = bookDao.updateBook(book)
 
@@ -55,7 +62,8 @@ class BookRepository @Inject constructor(
 
     suspend fun deleteBook(book: BookEntity) {
         val id = book.id
-        val hash = book.contentHash
+        val hash = tombstoneHash(book)
+        recordTombstone(hash)
         deleteStoredAssets(book)
         bookDao.deleteBook(book)
         syncScope.launch {
@@ -81,18 +89,46 @@ class BookRepository @Inject constructor(
     suspend fun deleteBooksByIds(ids: Collection<Long>) {
         if (ids.isEmpty()) return
         val snapshots = ids.mapNotNull { bookDao.getBookById(it) }
+        val now = System.currentTimeMillis()
         for (book in snapshots) {
+            val hash = tombstoneHash(book)
+            deletedBookDao.upsert(DeletedBookEntity(contentHash = hash, deletedAt = now))
             deleteStoredAssets(book)
         }
         bookDao.deleteBooksByIds(ids.toList())
         syncScope.launch {
             snapshots.forEach { book ->
+                val hash = tombstoneHash(book)
                 bookContentSync.deleteRemoteBookContent(
-                    book.contentHash,
+                    hash,
                     fallbackNumericId = book.id,
                 )
             }
         }
+    }
+
+    private suspend fun recordTombstone(contentHash: String) {
+        if (contentHash.isBlank()) return
+        deletedBookDao.upsert(
+            DeletedBookEntity(
+                contentHash = contentHash,
+                deletedAt = System.currentTimeMillis(),
+            ),
+        )
+    }
+
+    private suspend fun clearTombstone(contentHash: String) {
+        if (contentHash.isBlank()) return
+        deletedBookDao.deleteByHash(contentHash)
+    }
+
+    private fun tombstoneHash(book: BookEntity): String {
+        if (book.contentHash.isNotBlank()) return book.contentHash
+        return BookContentHasher.hashEmptyFallback(
+            book.importFormat,
+            book.title,
+            book.filePath,
+        )
     }
 
     private fun deleteStoredAssets(book: BookEntity) {

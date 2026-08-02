@@ -100,6 +100,8 @@
     <string name="bookshelf_no_results">No matching books</string>
     <string name="bookshelf_try_other_keywords">Try different keywords</string>
     <string name="bookshelf_exit_management_cd">Exit management</string>
+    <string name="bookshelf_select_all">Select all</string>
+    <string name="bookshelf_deselect_all">Deselect all</string>
     <string name="bookshelf_action_remove">Remove</string>
     <string name="bookshelf_action_pin">Pin</string>
     <string name="bookshelf_action_favorite">Favorite</string>
