@@ -6,19 +6,31 @@
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-08-02
+
 ### 新增
 
 - 从公开 GitHub 仓库导入完整项目（JGit 浅克隆，无需登录）
 - 项目目录树浏览 Markdown / TXT，打开后进入既有阅读器
 - 项目内相对路径图片解析为本地 `file://` 并正常渲染
-- 项目内一键 Pull 拉取远程最新提交，并刷新已打开文档
+- 项目浏览器：更多菜单（更改分支、拉取更新、删除项目）
+- 项目继续阅读：最近阅读历史列表，支持展开/折叠；条目展示阅读进度
 - Git 项目支持收藏、置顶、分组、移出书架；下拉刷新同步云端进度并 pull 全部 Git 项目
-- 云端备份同步 Git 项目元数据（上次打开文件）与项目内文档阅读进度
+- 云端备份同步 Git 项目元数据（上次打开/最近阅读历史）与项目内文档阅读进度
+- 书架布局新增「项目最近阅读展示数量」（1–5，仅本机）
 
 ### 优化
 
-- 书架布局（网格/列表、列数）仅本机保存，不再随 WebDAV 备份同步
-- Git 项目卡片顶部展示上次阅读的文件名
+- 书架布局（网格/列表、列数、最近阅读条数）仅本机保存，不再随 WebDAV 备份同步
+- Git 项目卡片展示仓库名与作者（owner），封面渐变与书籍卡片区分
+- 书架书籍与 Git 项目按活动时间混排（置顶优先）
+- 收藏图标统一右下角、置顶图标统一右上角
+- 书架布局中宫格列数、最近阅读条数改为粗滑条调节
+- 阅读设置与文内翻页选项仅保留上下滚动、左右滑动
+
+### 修复
+
+- Markdown 图片在行距倍数下下方出现大块空白（顶对齐后补偿行高；本地图占位按正文宽度缩放）
 
 ## [1.0.3] - 2026-08-01
 
@@ -104,7 +116,8 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.4...HEAD
+[1.0.4]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.0...v1.0.1
