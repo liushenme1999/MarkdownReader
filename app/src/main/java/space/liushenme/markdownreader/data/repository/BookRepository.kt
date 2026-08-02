@@ -23,6 +23,9 @@ class BookRepository @Inject constructor(
 
     fun getAllBooks(): Flow<List<BookEntity>> = bookDao.getAllBooks()
 
+    /** 书架展示用：排除 Git 项目内文档（它们在项目浏览器中打开）。 */
+    fun getStandaloneBooks(): Flow<List<BookEntity>> = bookDao.getStandaloneBooks()
+
     fun getFavoriteBooks(): Flow<List<BookEntity>> = bookDao.getFavoriteBooks()
 
     suspend fun getBookById(id: Long): BookEntity? = bookDao.getBookById(id)
@@ -33,11 +36,17 @@ class BookRepository @Inject constructor(
     suspend fun getBookByContentHash(contentHash: String): BookEntity? =
         bookDao.getBookByContentHash(contentHash)
 
+    suspend fun getBookByGitPath(projectId: Long, relativePath: String): BookEntity? =
+        bookDao.getBookByGitPath(projectId, relativePath)
+
+    suspend fun getBooksByGitProjectId(projectId: Long): List<BookEntity> =
+        bookDao.getBooksByGitProjectId(projectId)
+
     suspend fun addBook(book: BookEntity): Long = bookDao.insertBook(book)
 
     suspend fun updateBook(book: BookEntity) = bookDao.updateBook(book)
 
-    /** 正文落盘成功后调用，异步上传到 WebDAV books/ */
+    /** 正文落盘成功后调用，异步上传到 WebDAV books/（Git 文档会被同步层跳过）。 */
     fun scheduleUploadBookContent(bookId: Long) {
         syncScope.launch {
             bookContentSync.uploadBookContent(bookId)

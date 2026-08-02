@@ -9,11 +9,13 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import space.liushenme.markdownreader.data.local.dao.BookDao
 import space.liushenme.markdownreader.data.local.dao.BookmarkDao
+import space.liushenme.markdownreader.data.local.dao.GitProjectDao
 import space.liushenme.markdownreader.data.local.dao.HighlightDao
 import space.liushenme.markdownreader.data.local.dao.ReadingProgressDao
 import space.liushenme.markdownreader.data.local.dao.ShelfGroupDao
 import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.data.local.entity.BookmarkEntity
+import space.liushenme.markdownreader.data.local.entity.GitProjectEntity
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.data.local.entity.ReadingProgressEntity
 import space.liushenme.markdownreader.data.local.entity.ShelfGroupEntity
@@ -25,8 +27,9 @@ import space.liushenme.markdownreader.data.local.entity.ShelfGroupEntity
         HighlightEntity::class,
         ReadingProgressEntity::class,
         ShelfGroupEntity::class,
+        GitProjectEntity::class,
     ],
-    version = 12,
+    version = 16,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -36,6 +39,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun highlightDao(): HighlightDao
     abstract fun readingProgressDao(): ReadingProgressDao
     abstract fun shelfGroupDao(): ShelfGroupDao
+    abstract fun gitProjectDao(): GitProjectDao
 
     companion object {
         @Volatile
@@ -188,6 +192,61 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN gitProjectId INTEGER")
+                db.execSQL("ALTER TABLE books ADD COLUMN gitRelativePath TEXT")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_books_gitProjectId` " +
+                        "ON `books` (`gitProjectId`)",
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `git_projects` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `remoteUrl` TEXT NOT NULL,
+                        `defaultBranch` TEXT NOT NULL,
+                        `localPath` TEXT NOT NULL,
+                        `lastCommitSha` TEXT NOT NULL,
+                        `lastPulledAt` INTEGER,
+                        `addTime` INTEGER NOT NULL,
+                        `isPinned` INTEGER NOT NULL,
+                        `pinOrder` INTEGER NOT NULL,
+                        `shelfGroup` TEXT NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_git_projects_remoteUrl` " +
+                        "ON `git_projects` (`remoteUrl`)",
+                )
+            }
+        }
+
+        private val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE git_projects ADD COLUMN lastOpenedRelativePath TEXT")
+                db.execSQL("ALTER TABLE git_projects ADD COLUMN lastOpenedAt INTEGER")
+            }
+        }
+
+        private val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE git_projects ADD COLUMN isFavorite INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
+
+        private val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE git_projects ADD COLUMN recentOpenedPathsJson TEXT NOT NULL DEFAULT '[]'",
+                )
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -207,6 +266,10 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_9_10,
                         MIGRATION_10_11,
                         MIGRATION_11_12,
+                        MIGRATION_12_13,
+                        MIGRATION_13_14,
+                        MIGRATION_14_15,
+                        MIGRATION_15_16,
                     )
                     .build()
                 INSTANCE = instance

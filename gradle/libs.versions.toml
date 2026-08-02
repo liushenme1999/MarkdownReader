@@ -21,6 +21,7 @@ androidsvg = "1.4"
 documentfile = "1.0.1"
 gson = "2.10.1"
 okhttp = "4.12.0"
+jgit = "6.10.0.202406032230-r"
 vico = "2.0.0-alpha.21"
 
 junit = "4.13.2"
@@ -72,6 +73,7 @@ androidsvg = { group = "com.caverock", name = "androidsvg", version.ref = "andro
 documentfile = { group = "androidx.documentfile", name = "documentfile", version.ref = "documentfile" }
 gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+jgit = { group = "org.eclipse.jgit", name = "org.eclipse.jgit", version.ref = "jgit" }
 vico-compose = { group = "com.patrykandpatrick.vico", name = "compose", version.ref = "vico" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }

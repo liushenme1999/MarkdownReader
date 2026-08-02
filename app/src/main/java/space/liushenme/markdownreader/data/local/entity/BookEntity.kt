@@ -7,7 +7,10 @@ import java.util.Date
 
 @Entity(
     tableName = "books",
-    indices = [Index(value = ["contentHash"], unique = true)],
+    indices = [
+        Index(value = ["contentHash"], unique = true),
+        Index(value = ["gitProjectId"]),
+    ],
 )
 data class BookEntity(
     @PrimaryKey(autoGenerate = true)
@@ -44,6 +47,11 @@ data class BookEntity(
     /**
      * 跨设备稳定标识：正文 SHA-256 hex。
      * WebDAV 正文与备份合并均按此字段对齐；本机主键仍为 [id]。
+     * Git 文档使用稳定身份哈希（不随 pull 正文变化）。
      */
     val contentHash: String = "",
+    /** 非空表示来自 Git 项目文档 */
+    val gitProjectId: Long? = null,
+    /** 仓库内相对路径，如 docs/guide.md */
+    val gitRelativePath: String? = null,
 )

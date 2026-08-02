@@ -34,6 +34,7 @@
 - 卡片式书籍展示
 - 导入 **Markdown**（`.md` / `.markdown` 等）、**纯文本**（`.txt`）、**PDF**
 - 支持系统文档选择器、URL 下载、「用其他应用打开」与分享导入
+- **从公开 GitHub 仓库导入完整项目**（JGit 浅克隆）：按仓库目录树浏览文档，支持 `pull` 拉取最新提交；项目内相对路径图片可正常显示
 - 阅读进度百分比、收藏、分组管理、书架布局（网格/列表）、置顶与删除
 
 ### 阅读器
@@ -58,7 +59,7 @@
 | **高级公式** | `\oiint` / `\oiiint`、`\cancel`、`\stackrel`、`\xleftarrow` 等（部分经预处理器改写） |
 | **图表** | 围栏代码块 `mermaid` / `echarts` / `chart`（WebView 异步渲染） |
 | **代码** | 围栏代码块语法高亮；行内 `` `code` `` 圆角底色 |
-| **图片** | 网络图片缓存与占位；HTML `<img>` 布局优化 |
+| **图片** | 网络图片缓存与占位；HTML `<img>` 布局优化；Git 项目文档支持相对路径本地图 |
 | **其他** | HTML 片段、自动链接、PDF 栅格化页面 |
 
 > LaTeX 由 JLaTeXMath 驱动，并非完整 TeX 环境。不支持的命令会在解析前尝试预处理；仍无法渲染的公式会在 Logcat 输出 `JLatexMathPlugin` 错误。
@@ -84,8 +85,9 @@
 | UI | Jetpack Compose + Material 3 |
 | 架构 | MVVM + Repository |
 | 依赖注入 | Hilt + KSP |
-| 本地数据 | Room（显式 Migration，schema v5）+ DataStore |
+| 本地数据 | Room（显式 Migration）+ DataStore |
 | Markdown | Markwon + 自研插件（LaTeX / 图表 / 预处理 / 样式） |
+| Git | JGit（公开 GitHub 仓库浅克隆 / pull） |
 | 异步 | Kotlin Coroutines + Flow |
 | 测试 | JUnit 4、Robolectric、MockK |
 | CI | GitHub Actions（Lint / 构建 / 单元测试 / Release） |
@@ -97,6 +99,7 @@ app/src/main/java/
 ├── space/liushenme/markdownreader/
 │   ├── data/              # Room 实体/DAO、DataStore、Repository
 │   ├── di/                # Hilt 模块
+│   ├── git/               # GitHub 仓库解析、JGit 克隆/pull、工作区索引、文档打开
 │   ├── importing/         # 书籍导入、PDF 提取、TOC 解析
 │   ├── intent/            # 外部 Intent 打开文件
 │   ├── markdown/          # Markwon 工厂、预处理、LaTeX/图表/代码样式
@@ -105,7 +108,7 @@ app/src/main/java/
 │   ├── platform/          # 平台工具
 │   └── ui/
 │       ├── components/    # 通用 Compose 组件
-│       ├── screens/       # bookshelf / reader / profile / notes / statistics / weblink
+│       ├── screens/       # bookshelf / project / reader / profile / notes / statistics / weblink
 │       ├── system/        # 系统栏
 │       └── theme/         # 应用与阅读主题
 └── io/noties/markwon/ext/latex/   # 行内 LaTeX 对齐、复合公式 Span 等定制

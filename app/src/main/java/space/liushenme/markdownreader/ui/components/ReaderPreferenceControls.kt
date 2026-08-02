@@ -227,6 +227,7 @@ fun ReadingThemeCardOption(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReaderWideSliderRow(
     label: String,
@@ -237,6 +238,11 @@ fun ReaderWideSliderRow(
     steps: Int,
     showDividerBelow: Boolean = false,
 ) {
+    val sliderColors = SliderDefaults.colors(
+        thumbColor = MainNavTabSelectedTint,
+        activeTrackColor = MainNavTabSelectedTint,
+        inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+    )
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
@@ -272,11 +278,16 @@ fun ReaderWideSliderRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 4.dp),
-            colors = SliderDefaults.colors(
-                thumbColor = MainNavTabSelectedTint,
-                activeTrackColor = MainNavTabSelectedTint,
-                inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant,
-            ),
+            colors = sliderColors,
+            track = { sliderState ->
+                SliderDefaults.Track(
+                    sliderState = sliderState,
+                    modifier = Modifier.height(10.dp),
+                    colors = sliderColors,
+                    thumbTrackGapSize = 0.dp,
+                    drawStopIndicator = null,
+                )
+            },
         )
         if (showDividerBelow) {
             HorizontalDivider(

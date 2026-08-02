@@ -40,6 +40,21 @@ interface BookDao {
     @Query("SELECT * FROM books WHERE contentHash = :contentHash LIMIT 1")
     suspend fun getBookByContentHash(contentHash: String): BookEntity?
 
+    @Query(
+        "SELECT * FROM books WHERE gitProjectId = :projectId " +
+            "AND gitRelativePath = :relativePath LIMIT 1",
+    )
+    suspend fun getBookByGitPath(projectId: Long, relativePath: String): BookEntity?
+
+    @Query("SELECT * FROM books WHERE gitProjectId = :projectId")
+    suspend fun getBooksByGitProjectId(projectId: Long): List<BookEntity>
+
+    @Query(
+        "SELECT * FROM books WHERE gitProjectId IS NULL ORDER BY isPinned DESC, pinOrder DESC, " +
+            "COALESCE(lastReadTime, addTime) DESC, id DESC",
+    )
+    fun getStandaloneBooks(): Flow<List<BookEntity>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertBook(book: BookEntity): Long
 

@@ -10,7 +10,7 @@ import io.noties.markwon.image.AsyncDrawable
 import io.noties.markwon.image.ImageProps
 import org.commonmark.node.Image
 
-/** 覆盖 Markwon 默认图片 span：顶对齐，避免行距倍数在图片上方产生空白。 */
+/** 覆盖 Markwon 默认图片 span：顶对齐并抵消行距放大，避免图片上下出现大块空白。 */
 internal object ReaderImagePlugin {
 
     fun create(): MarkwonPlugin = object : AbstractMarkwonPlugin() {

@@ -25,3 +25,14 @@ object BookshelfGridColumns {
         else -> DEFAULT
     }
 }
+
+/** 项目浏览器「继续阅读」折叠时展示条数。 */
+object GitProjectRecentReadCount {
+    val OPTIONS = listOf(1, 2, 3, 4, 5)
+    const val DEFAULT = 3
+
+    fun coerce(value: Int): Int = when (value) {
+        in OPTIONS -> value
+        else -> DEFAULT
+    }
+}

@@ -1,6 +1,7 @@
 package space.liushenme.markdownreader.markdown
 
 import android.content.Context
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -53,5 +54,37 @@ class MarkdownPreprocessorLocalImageTest {
         val out = MarkdownPreprocessor.prepare(md, context)
         assertFalse(out.contains("static/images/demo.jpg"))
         assertTrue(out.contains("本地"))
+    }
+
+    @Test
+    fun rewriteRelativeImagesToFileUri_rewritesExistingFile() {
+        val dir = File(context.cacheDir, "img_rewrite_test").apply {
+            deleteRecursively()
+            mkdirs()
+        }
+        val img = File(dir, "demo.png").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+        val md = "![本地](./demo.png)"
+        val out = MarkdownPreprocessor.rewriteRelativeImagesToFileUri(md, dir)
+        assertTrue(out.contains("file://${img.canonicalFile.absolutePath}"))
+        assertTrue(out.contains("![本地]"))
+    }
+
+    @Test
+    fun rewriteRelativeImagesToFileUri_missingFileKeepsAlt() {
+        val dir = File(context.cacheDir, "img_rewrite_missing").apply {
+            deleteRecursively()
+            mkdirs()
+        }
+        val md = "![本地](./missing.png)"
+        val out = MarkdownPreprocessor.rewriteRelativeImagesToFileUri(md, dir)
+        assertEquals("本地", out)
+    }
+
+    @Test
+    fun rewriteRelativeImagesToFileUri_keepsHttp() {
+        val dir = File(context.cacheDir, "img_rewrite_http").apply { mkdirs() }
+        val md = "![net](https://example.com/a.png)"
+        val out = MarkdownPreprocessor.rewriteRelativeImagesToFileUri(md, dir)
+        assertEquals(md, out)
     }
 }

@@ -9,10 +9,17 @@ import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.backup.BackupManager
 import space.liushenme.markdownreader.data.local.BookContentHasher
 import space.liushenme.markdownreader.data.local.entity.BookEntity
+import space.liushenme.markdownreader.data.local.entity.GitProjectEntity
 import space.liushenme.markdownreader.data.local.entity.ShelfGroups
 import space.liushenme.markdownreader.data.repository.BookRepository
+import space.liushenme.markdownreader.data.repository.GitProjectRepository
 import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
 import space.liushenme.markdownreader.data.repository.ShelfGroupRepository
+import space.liushenme.markdownreader.git.GitCloneException
+import space.liushenme.markdownreader.git.GitDocumentOpener
+import space.liushenme.markdownreader.git.GitHubRepoUrlParser
+import space.liushenme.markdownreader.git.GitProgress
+import space.liushenme.markdownreader.git.GitProjectImporter
 import space.liushenme.markdownreader.model.BookshelfGridColumns
 import space.liushenme.markdownreader.model.BookshelfLayoutMode
 import space.liushenme.markdownreader.importing.BookContentLoader
@@ -45,13 +52,19 @@ import kotlin.random.Random
 @HiltViewModel
 class BookshelfViewModel @Inject constructor(
     private val bookRepository: BookRepository,
+    private val gitProjectRepository: GitProjectRepository,
+    private val gitProjectImporter: GitProjectImporter,
+    private val gitDocumentOpener: GitDocumentOpener,
     private val shelfGroupRepository: ShelfGroupRepository,
     private val readerSettingsRepository: ReaderSettingsRepository,
     private val backupManager: BackupManager,
     @ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
-    val books = bookRepository.getAllBooks()
+    val books = bookRepository.getStandaloneBooks()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val gitProjects = gitProjectRepository.getAllProjects()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val shelfGroups = shelfGroupRepository.observeGroups()
@@ -72,9 +85,72 @@ class BookshelfViewModel @Inject constructor(
     private val readerOpenRequestChannel = Channel<Long>(Channel.BUFFERED)
     val readerOpenRequests = readerOpenRequestChannel.receiveAsFlow()
 
+    private val projectOpenRequestChannel = Channel<Long>(Channel.BUFFERED)
+    val projectOpenRequests = projectOpenRequestChannel.receiveAsFlow()
+
+    private val _gitImportProgress = MutableStateFlow<GitProgress?>(null)
+    val gitImportProgress: StateFlow<GitProgress?> = _gitImportProgress.asStateFlow()
+
+    private val _gitImporting = MutableStateFlow(false)
+    val gitImporting: StateFlow<Boolean> = _gitImporting.asStateFlow()
+
     init {
         viewModelScope.launch {
             shelfGroupRepository.syncFromBooks()
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { gitProjectImporter.refreshDisplayTitlesIfNeeded() }
+        }
+    }
+
+    fun importFromGitHub(
+        rawUrl: String,
+        branch: String?,
+        target: BookImportTarget = BookImportTarget.None,
+    ) {
+        if (_gitImporting.value) return
+        if (GitHubRepoUrlParser.parse(rawUrl) == null) {
+            toastChannel.trySend(appContext.getString(R.string.toast_git_import_invalid))
+            return
+        }
+        viewModelScope.launch {
+            _gitImporting.value = true
+            _gitImportProgress.value = GitProgress(GitProgress.Phase.PREPARING)
+            try {
+                val outcome = gitProjectImporter.importPublicRepo(
+                    context = appContext,
+                    rawUrl = rawUrl,
+                    branch = branch,
+                    shelfGroup = target.shelfGroup,
+                    isFavorite = target.isFavorite,
+                    onProgress = { _gitImportProgress.value = it },
+                )
+                toastChannel.trySend(
+                    appContext.getString(R.string.toast_git_import_success, outcome.title),
+                )
+                if (outcome.sizeWarn) {
+                    val mb = (outcome.sizeBytes / (1024L * 1024L)).toInt().coerceAtLeast(1)
+                    toastChannel.trySend(
+                        appContext.getString(R.string.toast_git_import_size_warn, mb),
+                    )
+                }
+                projectOpenRequestChannel.trySend(outcome.projectId)
+            } catch (e: Exception) {
+                val msg = when {
+                    e is GitCloneException && e.message?.contains("已导入") == true ->
+                        appContext.getString(R.string.toast_git_import_already_exists)
+                    e is GitCloneException && e.isLikelyPrivateOrMissing ->
+                        appContext.getString(R.string.toast_git_import_private)
+                    else -> appContext.getString(
+                        R.string.toast_git_import_failed,
+                        e.message ?: appContext.getString(R.string.error_unknown),
+                    )
+                }
+                toastChannel.trySend(msg)
+            } finally {
+                _gitImporting.value = false
+                _gitImportProgress.value = null
+            }
         }
     }
 
@@ -85,6 +161,7 @@ class BookshelfViewModel @Inject constructor(
             val result = withContext(Dispatchers.IO) {
                 backupManager.syncReadingProgress()
             }
+            val gitPulled = withContext(Dispatchers.IO) { pullAllGitProjects() }
             _isRefreshing.value = false
             result.fold(
                 onSuccess = { sync ->
@@ -101,12 +178,19 @@ class BookshelfViewModel @Inject constructor(
                             )
                         sync.pushed ->
                             appContext.getString(R.string.bookshelf_toast_sync_pushed)
+                        gitPulled > 0 ->
+                            appContext.getString(R.string.bookshelf_toast_git_pulled, gitPulled)
                         else ->
                             appContext.getString(R.string.bookshelf_toast_sync_uptodate)
                     }
                     toastChannel.trySend(msg)
                 },
                 onFailure = {
+                    if (gitPulled > 0) {
+                        toastChannel.trySend(
+                            appContext.getString(R.string.bookshelf_toast_git_pulled, gitPulled),
+                        )
+                    }
                     toastChannel.trySend(
                         appContext.getString(
                             R.string.bookshelf_toast_sync_failed,
@@ -116,6 +200,26 @@ class BookshelfViewModel @Inject constructor(
                 },
             )
         }
+    }
+
+    /** @return 有新提交的项目数 */
+    private suspend fun pullAllGitProjects(): Int {
+        val projects = gitProjectRepository.getAllProjectsList()
+        var changed = 0
+        for (project in projects) {
+            if (project.localPath.isBlank()) continue
+            runCatching {
+                val result = gitProjectImporter.pull(project)
+                if (result.changed) {
+                    changed++
+                    val refreshed = gitProjectRepository.getById(project.id) ?: project
+                    gitDocumentOpener.refreshOpenedDocuments(appContext, refreshed)
+                }
+            }.onFailure {
+                // 单个项目失败不中断其余
+            }
+        }
+        return changed
     }
 
     fun importFromLocalUris(
@@ -438,6 +542,12 @@ class BookshelfViewModel @Inject constructor(
         }
     }
 
+    fun toggleFavoriteProject(project: GitProjectEntity) {
+        viewModelScope.launch {
+            gitProjectRepository.toggleFavorite(project.id, !project.isFavorite)
+        }
+    }
+
     fun deleteBook(book: BookEntity) {
         viewModelScope.launch {
             bookRepository.deleteBook(book)
@@ -451,29 +561,61 @@ class BookshelfViewModel @Inject constructor(
         }
     }
 
-    fun togglePinForSelection(ids: Set<Long>) {
+    fun deleteSelection(bookIds: Set<Long>, projectIds: Set<Long>) {
         viewModelScope.launch {
-            if (ids.isEmpty()) return@launch
-            val idList = ids.toList()
-            val loaded = idList.mapNotNull { bookRepository.getBookById(it) }
-            if (loaded.isEmpty()) return@launch
-            val allPinned = loaded.all { it.isPinned }
+            if (bookIds.isNotEmpty()) bookRepository.deleteBooksByIds(bookIds)
+            if (projectIds.isNotEmpty()) gitProjectRepository.deleteProjectsByIds(projectIds)
+        }
+    }
+
+    fun togglePinForSelection(bookIds: Set<Long>, projectIds: Set<Long> = emptySet()) {
+        viewModelScope.launch {
+            val books = bookIds.mapNotNull { bookRepository.getBookById(it) }
+            val projects = projectIds.mapNotNull { gitProjectRepository.getById(it) }
+            if (books.isEmpty() && projects.isEmpty()) return@launch
+            val allPinned = books.all { it.isPinned } && projects.all { it.isPinned } &&
+                (books.isNotEmpty() || projects.isNotEmpty())
+            val pinOrder = System.currentTimeMillis()
             if (allPinned) {
-                bookRepository.unpinBooksByIds(idList)
+                if (bookIds.isNotEmpty()) bookRepository.unpinBooksByIds(bookIds)
+                if (projectIds.isNotEmpty()) gitProjectRepository.unpinByIds(projectIds)
             } else {
-                bookRepository.pinBooksByIds(idList, System.currentTimeMillis())
+                if (bookIds.isNotEmpty()) bookRepository.pinBooksByIds(bookIds, pinOrder)
+                if (projectIds.isNotEmpty()) gitProjectRepository.pinByIds(projectIds, pinOrder)
             }
         }
     }
 
-    fun moveSelectedToGroup(ids: Set<Long>, groupName: String) {
-        if (ids.isEmpty()) return
+    fun toggleFavoriteForSelection(bookIds: Set<Long>, projectIds: Set<Long>) {
+        viewModelScope.launch {
+            val books = bookIds.mapNotNull { bookRepository.getBookById(it) }
+            val projects = projectIds.mapNotNull { gitProjectRepository.getById(it) }
+            val allFavorite = books.all { it.isFavorite } && projects.all { it.isFavorite } &&
+                (books.isNotEmpty() || projects.isNotEmpty())
+            val target = !allFavorite
+            for (book in books) {
+                bookRepository.toggleFavorite(book.id, target)
+            }
+            if (projectIds.isNotEmpty()) {
+                gitProjectRepository.updateFavoriteByIds(projectIds, target)
+            }
+        }
+    }
+
+    fun moveSelectedToGroup(
+        bookIds: Set<Long>,
+        projectIds: Set<Long>,
+        groupName: String,
+    ) {
         viewModelScope.launch {
             val name = groupName.trim()
             if (name.isNotEmpty()) {
                 shelfGroupRepository.ensureGroup(name)
             }
-            bookRepository.updateShelfGroupByIds(ids, name)
+            if (bookIds.isNotEmpty()) bookRepository.updateShelfGroupByIds(bookIds, name)
+            if (projectIds.isNotEmpty()) {
+                gitProjectRepository.updateShelfGroupByIds(projectIds, name)
+            }
         }
     }
 

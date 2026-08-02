@@ -21,6 +21,7 @@ import space.liushenme.markdownreader.ui.screens.profile.LegalDocumentScreen
 import space.liushenme.markdownreader.ui.screens.profile.LegalDocumentType
 import space.liushenme.markdownreader.ui.screens.profile.ProfileScreen
 import space.liushenme.markdownreader.ui.screens.profile.ReadingSettingsScreen
+import space.liushenme.markdownreader.ui.screens.project.ProjectBrowserScreen
 import space.liushenme.markdownreader.ui.screens.reader.ReaderScreen
 import space.liushenme.markdownreader.ui.screens.statistics.StatisticsScreen
 import space.liushenme.markdownreader.ui.screens.weblink.WebLinkScreen
@@ -100,6 +101,15 @@ fun AppNavHost(
                 navController = navController,
                 bookId = bookId,
             )
+        }
+
+        composable(
+            route = AppRoutes.PROJECT,
+            arguments = listOf(
+                navArgument("projectId") { type = NavType.StringType },
+            ),
+        ) {
+            ProjectBrowserScreen(navController = navController)
         }
 
         composable(AppRoutes.NOTES) {

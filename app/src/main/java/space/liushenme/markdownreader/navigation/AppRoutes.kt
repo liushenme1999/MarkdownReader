@@ -18,6 +18,7 @@ object AppRoutes {
     const val PRIVACY_POLICY = "privacy_policy"
     const val ABOUT = "about"
     const val READER = "reader/{bookId}"
+    const val PROJECT = "project/{projectId}"
     const val WEB_LINK = "web_link?url={url}"
 
     /** 使用书架统一页面背景与状态栏配色的路由 */
@@ -35,9 +36,12 @@ object AppRoutes {
         USER_AGREEMENT,
         PRIVACY_POLICY,
         ABOUT,
+        PROJECT,
     )
 
     fun reader(bookId: Long): String = "reader/$bookId"
+
+    fun project(projectId: Long): String = "project/$projectId"
 
     fun webLink(url: String): String = "web_link?url=${Uri.encode(url)}"
 }

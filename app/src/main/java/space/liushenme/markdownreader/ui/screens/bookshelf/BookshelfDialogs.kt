@@ -111,6 +111,7 @@ internal fun BookshelfGroupDialog(
 internal fun BookshelfImportMethodDialog(
     onLocalImport: () -> Unit,
     onUrlImport: () -> Unit,
+    onGitHubImport: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -138,6 +139,15 @@ internal fun BookshelfImportMethodDialog(
                 ) {
                     Text(
                         stringResource(R.string.dialog_import_from_url),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                TextButton(
+                    onClick = onGitHubImport,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        stringResource(R.string.dialog_import_from_github),
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -182,5 +192,87 @@ internal fun BookshelfUrlImportDialog(
                 Text(stringResource(R.string.action_cancel))
             }
         }
+    )
+}
+
+@Composable
+internal fun BookshelfGitHubImportDialog(
+    urlText: String,
+    branchText: String,
+    onUrlTextChange: (String) -> Unit,
+    onBranchTextChange: (String) -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.dialog_github_import_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    stringResource(R.string.dialog_github_import_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = urlText,
+                    onValueChange = onUrlTextChange,
+                    label = { Text(stringResource(R.string.dialog_github_import_label)) },
+                    singleLine = false,
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                )
+                OutlinedTextField(
+                    value = branchText,
+                    onValueChange = onBranchTextChange,
+                    label = { Text(stringResource(R.string.dialog_github_import_branch_label)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(stringResource(R.string.action_import))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        },
+    )
+}
+
+@Composable
+internal fun BookshelfGitCloneProgressDialog(
+    detail: String,
+    percent: Int,
+) {
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text(stringResource(R.string.dialog_github_cloning_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (detail.isNotBlank()) {
+                    Text(
+                        stringResource(R.string.dialog_github_cloning_detail, detail),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                if (percent in 0..100) {
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { percent / 100f },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    androidx.compose.material3.LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        },
+        confirmButton = {},
     )
 }

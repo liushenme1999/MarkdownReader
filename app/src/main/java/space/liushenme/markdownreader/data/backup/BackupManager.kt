@@ -28,21 +28,29 @@ import space.liushenme.markdownreader.BuildConfig
 import space.liushenme.markdownreader.data.local.BookContentHasher
 import space.liushenme.markdownreader.data.local.dao.BookDao
 import space.liushenme.markdownreader.data.local.dao.BookmarkDao
+import space.liushenme.markdownreader.data.local.dao.GitProjectDao
 import space.liushenme.markdownreader.data.local.dao.HighlightDao
 import space.liushenme.markdownreader.data.local.dao.ReadingProgressDao
 import space.liushenme.markdownreader.data.local.dao.ShelfGroupDao
 import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.data.local.entity.BookmarkEntity
+import space.liushenme.markdownreader.data.local.entity.GitProjectEntity
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.data.local.entity.ReadingProgressEntity
 import space.liushenme.markdownreader.data.local.entity.ShelfGroupEntity
 import space.liushenme.markdownreader.data.preferences.readerPreferencesDataStore
+import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
 import space.liushenme.markdownreader.data.repository.WebDavConfig
 import space.liushenme.markdownreader.data.repository.WebDavConfigRepository
 import space.liushenme.markdownreader.data.webdav.Authorization
 import space.liushenme.markdownreader.data.webdav.WebDav
 import space.liushenme.markdownreader.data.webdav.WebDavException
 import space.liushenme.markdownreader.data.webdav.WebDavFile
+import space.liushenme.markdownreader.git.GitDocumentOpener
+import space.liushenme.markdownreader.git.GitHubRepoUrlParser
+import space.liushenme.markdownreader.git.GitProjectCloner
+import space.liushenme.markdownreader.git.GitProjectStorage
+import space.liushenme.markdownreader.git.GitRecentOpenedPaths
 import space.liushenme.markdownreader.importing.ParsedBookStorage
 
 data class RemoteBackupInfo(
@@ -67,6 +75,8 @@ class BackupManager @Inject constructor(
     private val highlightDao: HighlightDao,
     private val readingProgressDao: ReadingProgressDao,
     private val shelfGroupDao: ShelfGroupDao,
+    private val gitProjectDao: GitProjectDao,
+    private val gitDocumentOpener: GitDocumentOpener,
 ) {
     private val mutex = Mutex()
     private val dataStore = readerPreferencesDataStore(context)
@@ -117,6 +127,13 @@ class BackupManager @Inject constructor(
                 var pulledCount = 0
                 var needPush = false
 
+                val gitMetaPulled = mergeGitProjectsFromBackup(
+                    unpackDir = unpackDir,
+                    cloneMissing = false,
+                )
+                if (gitMetaPulled > 0) pulledCount += gitMetaPulled
+                if (localGitProjectsNeedPush(unpackDir)) needPush = true
+
                 for (remote in remoteBooks) {
                     val local = findLocalBookForRemote(remote, localBooks) ?: continue
                     when {
@@ -133,6 +150,10 @@ class BackupManager @Inject constructor(
                                         ),
                                         totalChars = remote.totalChars.takeIf { it > 0 }
                                             ?: local.totalChars,
+                                        gitProjectId = local.gitProjectId
+                                            ?: resolveGitProjectIdForBook(remote),
+                                        gitRelativePath = remote.gitRelativePath
+                                            ?: local.gitRelativePath,
                                     ),
                                 )
                                 pulledCount++
@@ -143,6 +164,8 @@ class BackupManager @Inject constructor(
                         }
                     }
                 }
+
+                rematchGitBooks()
 
                 // 本机有云端没有的书且已有阅读进度时，也需要推送
                 if (!needPush) {
@@ -360,6 +383,11 @@ class BackupManager @Inject constructor(
         File(packDir, "books.json").writeText(
             BackupGson.gson.toJson(bookDao.getAllBooksList()),
         )
+        File(packDir, "git_projects.json").writeText(
+            BackupGson.gson.toJson(
+                gitProjectDao.getAllProjectsList().map { GitProjectBackup.fromEntity(it) },
+            ),
+        )
         File(packDir, "bookmarks.json").writeText(
             BackupGson.gson.toJson(bookmarkDao.getAllBookmarksList()),
         )
@@ -387,6 +415,7 @@ class BackupManager @Inject constructor(
         for ((key, value) in snapshot.asMap()) {
             val name = key.name
             if (name in WebDavConfigRepository.WEBDAV_PREF_KEYS) continue
+            if (name in ReaderSettingsRepository.DEVICE_LOCAL_PREF_KEYS) continue
             when (value) {
                 is String, is Int, is Long, is Float, is Double, is Boolean -> map[name] = value
                 is Set<*> -> map[name] = value.map { it.toString() }
@@ -407,6 +436,9 @@ class BackupManager @Inject constructor(
         )
         val groups = readJsonList(File(unpackDir, "shelf_groups.json"), ShelfGroupEntity::class.java)
 
+        // 先合并 Git 项目（缺失则浅克隆），再合并书籍以便 rematch gitProjectId
+        mergeGitProjectsFromBackup(unpackDir = unpackDir, cloneMissing = true)
+
         // 兼容旧备份：若包内仍带 parsed_books，先落到临时 remoteId 目录，merge 时再迁到本地 id
         val packedParsed = File(unpackDir, PARSED_BOOKS_DIR)
         if (packedParsed.isDirectory) {
@@ -426,6 +458,8 @@ class BackupManager @Inject constructor(
         for (remote in books) {
             idMap[remote.id] = mergeBook(remote)
         }
+        rematchGitBooks()
+        refreshGitDocumentBundles()
 
         val remappedBookmarks = bookmarks.mapNotNull { bm ->
             val localBookId = idMap[bm.bookId] ?: return@mapNotNull null
@@ -476,18 +510,31 @@ class BackupManager @Inject constructor(
             local = bookDao.getBookById(remote.id)
         }
 
+        val resolvedGitProjectId = resolveGitProjectIdForBook(remote)
+            ?: local?.gitProjectId
+        val resolvedGitPath = remote.gitRelativePath ?: local?.gitRelativePath
+        val resolvedFilePath = if (resolvedGitProjectId != null && !resolvedGitPath.isNullOrBlank()) {
+            GitDocumentOpener.gitFilePath(resolvedGitProjectId, resolvedGitPath)
+        } else {
+            remote.filePath
+        }
+
         if (local == null) {
             val newId = bookDao.insertBook(
                 remote.copy(
                     id = 0,
                     contentHash = resolvedHash.ifBlank { BookContentHasher.legacyHash(remote.id) },
-                    filePath = remote.filePath,
+                    filePath = resolvedFilePath,
                     coverImagePath = null,
                     parsedBundlePath = null,
+                    gitProjectId = resolvedGitProjectId,
+                    gitRelativePath = resolvedGitPath,
                 ),
             )
             adoptPackedBundle(remote.id, newId)
-            bookContentSync.ensureLocalBookContent(newId)
+            if (resolvedGitProjectId == null) {
+                bookContentSync.ensureLocalBookContent(newId)
+            }
             val inserted = bookDao.getBookById(newId) ?: return newId
             val withHash = inserted.copy(
                 contentHash = bookContentSync.upgradeContentHashIfNeeded(inserted),
@@ -497,7 +544,9 @@ class BackupManager @Inject constructor(
         }
 
         adoptPackedBundle(remote.id, local.id)
-        bookContentSync.ensureLocalBookContent(local.id)
+        if (resolvedGitProjectId == null) {
+            bookContentSync.ensureLocalBookContent(local.id)
+        }
 
         // 以阅读位置/进度为主：本机若只是最近打开过但进度更旧，仍应采用云端更靠前的进度
         val preferRemoteProgress = shouldPreferRemoteProgress(remote, local)
@@ -530,13 +579,19 @@ class BackupManager @Inject constructor(
             shelfGroup = remote.shelfGroup.ifBlank { local.shelfGroup },
             isPinned = remote.isPinned || local.isPinned,
             pinOrder = maxOf(remote.pinOrder, local.pinOrder),
-            filePath = base.filePath,
+            filePath = if (resolvedGitProjectId != null && !resolvedGitPath.isNullOrBlank()) {
+                GitDocumentOpener.gitFilePath(resolvedGitProjectId, resolvedGitPath)
+            } else {
+                base.filePath
+            },
             coverImagePath = base.coverImagePath
                 ?: local.coverImagePath?.takeUnless { isForeignAppPrivatePath(it) },
             parsedBundlePath = base.parsedBundlePath,
+            gitProjectId = resolvedGitProjectId,
+            gitRelativePath = resolvedGitPath,
         )
         bookDao.updateBook(merged)
-        if (!localCanonicalBundleHasBody(local.id)) {
+        if (resolvedGitProjectId == null && !localCanonicalBundleHasBody(local.id)) {
             bookContentSync.ensureLocalBookContent(local.id)
             bookDao.updateBook(remapBookPaths(merged))
         }
@@ -704,13 +759,13 @@ class BackupManager @Inject constructor(
             "reader_font_size",
             "reader_reader_padding_dp",
             "reader_last_highlight_color",
-            "bookshelf_grid_columns",
         )
         val floatKeys = setOf("reader_line_spacing_multiplier")
 
         dataStore.edit { prefs ->
             for ((name, value) in map) {
                 if (name in WebDavConfigRepository.WEBDAV_PREF_KEYS) continue
+                if (name in ReaderSettingsRepository.DEVICE_LOCAL_PREF_KEYS) continue
                 when (value) {
                     is Boolean -> prefs[booleanPreferencesKey(name)] = value
                     is String -> prefs[stringPreferencesKey(name)] = value
@@ -746,6 +801,216 @@ class BackupManager @Inject constructor(
         if (!file.isFile) return emptyList()
         val type = TypeToken.getParameterized(List::class.java, elementClass).type
         return BackupGson.gson.fromJson(file.readText(), type) ?: emptyList()
+    }
+
+    /**
+     * @return 从云端写入本机的 Git 项目元数据条数（lastOpened / 收藏置顶等）
+     */
+    private suspend fun mergeGitProjectsFromBackup(
+        unpackDir: File,
+        cloneMissing: Boolean,
+    ): Int {
+        val remotes = readJsonList(File(unpackDir, "git_projects.json"), GitProjectBackup::class.java)
+        if (remotes.isEmpty()) return 0
+        var pulled = 0
+        for (remote in remotes) {
+            if (remote.remoteUrl.isBlank()) continue
+            val changed = mergeGitProject(remote, cloneMissing = cloneMissing)
+            if (changed) pulled++
+        }
+        return pulled
+    }
+
+    private suspend fun mergeGitProject(
+        remote: GitProjectBackup,
+        cloneMissing: Boolean,
+    ): Boolean {
+        val local = gitProjectDao.getByRemoteUrl(remote.remoteUrl)
+        if (local == null) {
+            if (!cloneMissing) return false
+            return runCatching {
+                cloneGitProjectFromBackup(remote)
+                true
+            }.onFailure {
+                Log.w(TAG, "恢复克隆 Git 项目失败 ${remote.remoteUrl}: ${it.localizedMessage}", it)
+            }.getOrDefault(false)
+        }
+
+        val preferRemoteOpened = shouldPreferRemoteLastOpened(remote, local)
+        val remoteRecent = GitRecentOpenedPaths.resolveList(
+            remote.recentOpenedPathsJson,
+            remote.lastOpenedRelativePath,
+        )
+        val localRecent = GitRecentOpenedPaths.resolveList(
+            local.recentOpenedPathsJson,
+            local.lastOpenedRelativePath,
+        )
+        val mergedRecent = if (preferRemoteOpened) {
+            GitRecentOpenedPaths.mergePreferFirst(remoteRecent, localRecent)
+        } else {
+            GitRecentOpenedPaths.mergePreferFirst(localRecent, remoteRecent)
+        }
+        val merged = local.copy(
+            title = remote.title.ifBlank { local.title },
+            defaultBranch = remote.defaultBranch.ifBlank { local.defaultBranch },
+            isPinned = remote.isPinned || local.isPinned,
+            pinOrder = maxOf(remote.pinOrder, local.pinOrder),
+            isFavorite = remote.isFavorite || local.isFavorite,
+            shelfGroup = remote.shelfGroup.ifBlank { local.shelfGroup },
+            lastOpenedRelativePath = if (preferRemoteOpened) {
+                remote.lastOpenedRelativePath
+            } else {
+                local.lastOpenedRelativePath
+            },
+            lastOpenedAt = if (preferRemoteOpened) {
+                newerDate(remote.lastOpenedAt, local.lastOpenedAt)
+            } else {
+                newerDate(local.lastOpenedAt, remote.lastOpenedAt)
+            },
+            recentOpenedPathsJson = GitRecentOpenedPaths.encode(mergedRecent),
+        )
+        val changed = merged != local
+        if (changed) gitProjectDao.update(merged)
+        return changed && preferRemoteOpened &&
+            remote.lastOpenedRelativePath != local.lastOpenedRelativePath
+    }
+
+    private suspend fun cloneGitProjectFromBackup(remote: GitProjectBackup) {
+        val parsed = GitHubRepoUrlParser.parse(remote.remoteUrl)
+        val resolvedTitle = parsed?.repo
+            ?: remote.title.ifBlank { parsed?.displayName.orEmpty() }
+        val placeholder = GitProjectEntity(
+            title = resolvedTitle,
+            remoteUrl = remote.remoteUrl,
+            defaultBranch = remote.defaultBranch,
+            localPath = "",
+            addTime = remote.addTime,
+            isPinned = remote.isPinned,
+            pinOrder = remote.pinOrder,
+            isFavorite = remote.isFavorite,
+            shelfGroup = remote.shelfGroup,
+            lastOpenedRelativePath = remote.lastOpenedRelativePath,
+            lastOpenedAt = remote.lastOpenedAt,
+            recentOpenedPathsJson = GitRecentOpenedPaths.encode(
+                GitRecentOpenedPaths.resolveList(
+                    remote.recentOpenedPathsJson,
+                    remote.lastOpenedRelativePath,
+                ),
+            ),
+        )
+        val projectId = gitProjectDao.insert(placeholder)
+        val dest = GitProjectStorage.projectDir(context, projectId)
+        try {
+            val branch = remote.defaultBranch.trim().takeIf { it.isNotEmpty() }
+            val result = GitProjectCloner.clone(
+                cloneUrl = remote.remoteUrl.trimEnd('/') + ".git",
+                destination = dest,
+                branch = branch,
+            )
+            gitProjectDao.update(
+                placeholder.copy(
+                    id = projectId,
+                    localPath = dest.absolutePath,
+                    defaultBranch = result.branch.ifBlank { remote.defaultBranch },
+                    lastCommitSha = result.commitSha.ifBlank { remote.lastCommitSha },
+                    lastPulledAt = Date(),
+                ),
+            )
+        } catch (e: Exception) {
+            runCatching {
+                gitProjectDao.getById(projectId)?.let { row ->
+                    GitProjectStorage.deleteProjectDir(dest.absolutePath)
+                    gitProjectDao.delete(row)
+                }
+            }
+            throw e
+        }
+    }
+
+    private fun shouldPreferRemoteLastOpened(
+        remote: GitProjectBackup,
+        local: GitProjectEntity,
+    ): Boolean {
+        val remoteAt = remote.lastOpenedAt?.time ?: 0L
+        val localAt = local.lastOpenedAt?.time ?: 0L
+        if (remoteAt != localAt) return remoteAt > localAt
+        val remotePath = remote.lastOpenedRelativePath.orEmpty()
+        val localPath = local.lastOpenedRelativePath.orEmpty()
+        return remotePath.isNotBlank() && remotePath != localPath && localPath.isBlank()
+    }
+
+    private suspend fun localGitProjectsNeedPush(unpackDir: File): Boolean {
+        val remotes = readJsonList(File(unpackDir, "git_projects.json"), GitProjectBackup::class.java)
+        val remoteByUrl = remotes.associateBy { it.remoteUrl }
+        for (local in gitProjectDao.getAllProjectsList()) {
+            val remote = remoteByUrl[local.remoteUrl]
+            if (remote == null) {
+                if (!local.lastOpenedRelativePath.isNullOrBlank() || local.isFavorite || local.isPinned) {
+                    return true
+                }
+                continue
+            }
+            val remotePreferred = shouldPreferRemoteLastOpened(remote, local)
+            if (!remotePreferred) {
+                val localAt = local.lastOpenedAt?.time ?: 0L
+                val remoteAt = remote.lastOpenedAt?.time ?: 0L
+                val pathDiffer =
+                    local.lastOpenedRelativePath.orEmpty() != remote.lastOpenedRelativePath.orEmpty()
+                if ((!local.lastOpenedRelativePath.isNullOrBlank() && pathDiffer) || localAt > remoteAt) {
+                    return true
+                }
+            }
+            if ((local.isFavorite && !remote.isFavorite) || (local.isPinned && !remote.isPinned)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private suspend fun resolveGitProjectIdForBook(remote: BookEntity): Long? {
+        val path = remote.gitRelativePath ?: return null
+        if (path.isBlank() || remote.contentHash.isBlank()) return null
+        return gitProjectDao.getAllProjectsList().firstOrNull { project ->
+            BookContentHasher.hashForGitDocument(project.remoteUrl, path) == remote.contentHash
+        }?.id
+    }
+
+    private suspend fun rematchGitBooks() {
+        val projects = gitProjectDao.getAllProjectsList()
+        if (projects.isEmpty()) return
+        val books = bookDao.getAllBooksList().filter { !it.gitRelativePath.isNullOrBlank() }
+        for (book in books) {
+            val path = book.gitRelativePath ?: continue
+            val match = projects.firstOrNull { project ->
+                BookContentHasher.hashForGitDocument(project.remoteUrl, path) == book.contentHash ||
+                    book.gitProjectId == project.id
+            } ?: projects.firstOrNull { project ->
+                book.contentHash == BookContentHasher.hashForGitDocument(project.remoteUrl, path)
+            }
+            val project = match ?: continue
+            val expectedPath = GitDocumentOpener.gitFilePath(project.id, path)
+            if (book.gitProjectId == project.id && book.filePath == expectedPath) continue
+            bookDao.updateBook(
+                book.copy(
+                    gitProjectId = project.id,
+                    gitRelativePath = path,
+                    filePath = expectedPath,
+                    author = project.title,
+                ),
+            )
+        }
+    }
+
+    private suspend fun refreshGitDocumentBundles() {
+        val projects = gitProjectDao.getAllProjectsList()
+        for (project in projects) {
+            if (project.localPath.isBlank()) continue
+            runCatching {
+                gitDocumentOpener.refreshOpenedDocuments(context, project)
+            }.onFailure {
+                Log.w(TAG, "刷新 Git 文档失败 project=${project.id}: ${it.localizedMessage}", it)
+            }
+        }
     }
 
     private fun cleanupTemp() {

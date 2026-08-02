@@ -40,6 +40,7 @@ class BookContentSync @Inject constructor(
         withContext(Dispatchers.IO) {
             runCatching {
                 val book = bookDao.getBookById(bookId) ?: return@runCatching
+                if (book.gitProjectId != null) return@runCatching
                 val config = webDavConfigRepository.current()
                 if (!config.isConfigured) return@runCatching
                 val bundle = ParsedBookStorage.bundleDir(context, bookId)
@@ -79,7 +80,7 @@ class BookContentSync @Inject constructor(
             val booksUrl = booksRootUrl(config)
             WebDav(booksUrl, auth).makeAsDir()
 
-            val books = bookDao.getAllBooksList()
+            val books = bookDao.getAllBooksList().filter { it.gitProjectId == null }
             var success = 0
             var skipped = 0
             var failed = 0
@@ -124,7 +125,7 @@ class BookContentSync @Inject constructor(
             val auth = authorize(config) ?: error("WebDAV 授权失败，请检查账号与应用密码")
             val booksUrl = booksRootUrl(config)
 
-            val books = bookDao.getAllBooksList()
+            val books = bookDao.getAllBooksList().filter { it.gitProjectId == null }
             if (books.isEmpty()) error("书架为空，请先恢复日常备份（书架/进度）")
 
             var success = 0
@@ -187,6 +188,7 @@ class BookContentSync @Inject constructor(
             return@withContext true
         }
         val book = bookDao.getBookById(bookId) ?: return@withContext false
+        if (book.gitProjectId != null) return@withContext false
         runCatching {
             val config = webDavConfigRepository.current()
             if (!config.isConfigured) return@runCatching false

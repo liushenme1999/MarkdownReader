@@ -30,6 +30,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DashboardCustomize
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
@@ -87,6 +88,45 @@ import space.liushenme.markdownreader.navigation.AppRoutes
 import space.liushenme.markdownreader.ui.components.ShelfStyleTopBarBackground
 import space.liushenme.markdownreader.ui.components.shelfStylePageBackground
 import space.liushenme.markdownreader.data.local.entity.BookEntity
+import space.liushenme.markdownreader.data.local.entity.GitProjectEntity
+import space.liushenme.markdownreader.git.GitHubRepoUrlParser
+
+/** 书架混合卡片：书籍与 Git 项目按同一套活动时间规则交错排序。 */
+private sealed class ShelfCardItem {
+    abstract val isPinned: Boolean
+    abstract val pinOrder: Long
+    abstract val activityAtMillis: Long
+    abstract val sortKey: String
+
+    data class Book(val entity: BookEntity) : ShelfCardItem() {
+        override val isPinned: Boolean get() = entity.isPinned
+        override val pinOrder: Long get() = entity.pinOrder
+        override val activityAtMillis: Long
+            get() = (entity.lastReadTime ?: entity.addTime).time
+        override val sortKey: String get() = "book_${entity.id}"
+    }
+
+    data class Project(val entity: GitProjectEntity) : ShelfCardItem() {
+        override val isPinned: Boolean get() = entity.isPinned
+        override val pinOrder: Long get() = entity.pinOrder
+        override val activityAtMillis: Long
+            get() = (entity.lastOpenedAt ?: entity.addTime).time
+        override val sortKey: String get() = "git_${entity.id}"
+    }
+}
+
+private fun mergeShelfItems(
+    books: List<BookEntity>,
+    projects: List<GitProjectEntity>,
+): List<ShelfCardItem> {
+    return (books.map { ShelfCardItem.Book(it) } + projects.map { ShelfCardItem.Project(it) })
+        .sortedWith(
+            compareByDescending<ShelfCardItem> { it.isPinned }
+                .thenByDescending { it.pinOrder }
+                .thenByDescending { it.activityAtMillis }
+                .thenByDescending { it.sortKey },
+        )
+}
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -98,19 +138,26 @@ fun BookshelfScreen(
     viewModel: BookshelfViewModel = hiltViewModel(),
 ) {
     val books by viewModel.books.collectAsState()
+    val gitProjects by viewModel.gitProjects.collectAsState()
     val shelfGroups by viewModel.shelfGroups.collectAsState()
     val layoutMode by viewModel.layoutMode.collectAsState()
     val gridColumns by viewModel.gridColumns.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
+    val gitImporting by viewModel.gitImporting.collectAsState()
+    val gitImportProgress by viewModel.gitImportProgress.collectAsState()
     val context = LocalContext.current
     var selectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<Long>()) }
+    var selectedProjectIds by remember { mutableStateOf(setOf<Long>()) }
     var showRemoveConfirm by remember { mutableStateOf(false) }
     var showGroupDialog by remember { mutableStateOf(false) }
     var groupInput by remember { mutableStateOf("") }
     var showImportMethodDialog by remember { mutableStateOf(false) }
     var showUrlImportDialog by remember { mutableStateOf(false) }
+    var showGitHubImportDialog by remember { mutableStateOf(false) }
     var urlImportText by remember { mutableStateOf("") }
+    var gitHubUrlText by remember { mutableStateOf("") }
+    var gitHubBranchText by remember { mutableStateOf("") }
     var moreMenuExpanded by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     var selectedGroup by remember { mutableStateOf<String?>(null) }
@@ -151,6 +198,16 @@ fun BookshelfScreen(
             ShelfGroups.FAVORITES_SENTINEL -> books.filter { it.isFavorite }
             else -> books.filter { it.shelfGroup == selectedGroup }
         }
+    }
+    val displayedProjects = remember(gitProjects, selectedGroup) {
+        when (selectedGroup) {
+            null -> gitProjects
+            ShelfGroups.FAVORITES_SENTINEL -> gitProjects.filter { it.isFavorite }
+            else -> gitProjects.filter { it.shelfGroup == selectedGroup }
+        }
+    }
+    val shelfItems = remember(displayedBooks, displayedProjects) {
+        mergeShelfItems(displayedBooks, displayedProjects)
     }
 
     val importTarget = remember(selectedGroup) {
@@ -194,10 +251,21 @@ fun BookshelfScreen(
         }
     }
 
+    LaunchedEffect(viewModel) {
+        viewModel.projectOpenRequests.collectLatest { projectId ->
+            navController.navigate(AppRoutes.project(projectId)) {
+                launchSingleTop = true
+            }
+        }
+    }
+
     fun exitSelection() {
         selectionMode = false
         selectedIds = emptySet()
+        selectedProjectIds = emptySet()
     }
+
+    val selectionCount = selectedIds.size + selectedProjectIds.size
 
     BackHandler(enabled = selectionMode) { exitSelection() }
 
@@ -208,7 +276,7 @@ fun BookshelfScreen(
     }
 
     val barBg = MaterialTheme.colorScheme.surface
-    val managementVisible = selectionMode && selectedIds.isNotEmpty()
+    val managementVisible = selectionMode && selectionCount > 0
     val gridBottomPadding = 16.dp + if (managementVisible) 80.dp else 0.dp
 
     LaunchedEffect(selectionMode) {
@@ -225,7 +293,7 @@ fun BookshelfScreen(
                         windowInsets = WindowInsets(),
                         title = {
                             Text(
-                                stringResource(R.string.bookshelf_selected_count, selectedIds.size),
+                                stringResource(R.string.bookshelf_selected_count, selectionCount),
                                 style = MaterialTheme.typography.titleLarge.copy(
                                     fontFamily = FontFamily.SansSerif,
                                     fontWeight = FontWeight.Black
@@ -310,12 +378,25 @@ fun BookshelfScreen(
                                 )
                                 DropdownMenuItem(
                                     text = {
+                                        Text(stringResource(R.string.bookshelf_menu_github_import))
+                                    },
+                                    onClick = {
+                                        moreMenuExpanded = false
+                                        showGitHubImportDialog = true
+                                    },
+                                    leadingIcon = {
+                                        Icon(Icons.Default.Code, contentDescription = null)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = {
                                         Text(stringResource(R.string.bookshelf_menu_manage))
                                     },
                                     onClick = {
                                         moreMenuExpanded = false
                                         selectionMode = true
                                         selectedIds = emptySet()
+                                        selectedProjectIds = emptySet()
                                     },
                                     leadingIcon = {
                                         Icon(Icons.Default.Edit, contentDescription = null)
@@ -379,7 +460,7 @@ fun BookshelfScreen(
                     .fillMaxSize()
                     .padding(contentPadding),
             ) {
-                if (books.isEmpty()) {
+                if (books.isEmpty() && gitProjects.isEmpty()) {
                     EmptyBookshelf(onImportClick = { openImportChooser() })
                 } else {
                     fun onBookClick(book: BookEntity, selected: Boolean) {
@@ -402,6 +483,34 @@ fun BookshelfScreen(
                         }
                     }
 
+                    fun onProjectClick(project: GitProjectEntity, selected: Boolean) {
+                        if (selectionMode) {
+                            selectedProjectIds =
+                                if (selected) {
+                                    selectedProjectIds - project.id
+                                } else {
+                                    selectedProjectIds + project.id
+                                }
+                        } else {
+                            navController.navigate(AppRoutes.project(project.id))
+                        }
+                    }
+
+                    fun onProjectLongClick(project: GitProjectEntity) {
+                        if (!selectionMode) {
+                            selectionMode = true
+                            selectedProjectIds = setOf(project.id)
+                            selectedIds = emptySet()
+                        } else {
+                            selectedProjectIds =
+                                if (project.id in selectedProjectIds) {
+                                    selectedProjectIds - project.id
+                                } else {
+                                    selectedProjectIds + project.id
+                                }
+                        }
+                    }
+
                     when (layoutMode) {
                         BookshelfLayoutMode.List -> {
                             LazyColumn(
@@ -413,21 +522,47 @@ fun BookshelfScreen(
                                 ),
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
-                                if (displayedBooks.isEmpty() && !selectionMode) {
+                                if (shelfItems.isEmpty() && !selectionMode) {
                                     item(key = "group_empty_hint") {
                                         BookshelfGroupEmptyHint()
                                     }
                                 }
-                                items(items = displayedBooks, key = { it.id }) { book ->
-                                    val selected = book.id in selectedIds
-                                    BookSearchResultCard(
-                                        book = book,
-                                        coverImageCache = coverImageCache,
-                                        selected = selected,
-                                        selectionMode = selectionMode,
-                                        onClick = { onBookClick(book, selected) },
-                                        onLongClick = { onBookLongClick(book) },
-                                    )
+                                items(
+                                    items = shelfItems,
+                                    key = { it.sortKey },
+                                ) { item ->
+                                    when (item) {
+                                        is ShelfCardItem.Project -> {
+                                            val project = item.entity
+                                            val selected = project.id in selectedProjectIds
+                                            val parsed = GitHubRepoUrlParser.parse(
+                                                project.remoteUrl,
+                                            )
+                                            GitProjectListCard(
+                                                repoName = parsed?.repo
+                                                    ?: project.title,
+                                                owner = parsed?.owner.orEmpty(),
+                                                selected = selected,
+                                                selectionMode = selectionMode,
+                                                isPinned = project.isPinned,
+                                                isFavorite = project.isFavorite,
+                                                onClick = { onProjectClick(project, selected) },
+                                                onLongClick = { onProjectLongClick(project) },
+                                            )
+                                        }
+                                        is ShelfCardItem.Book -> {
+                                            val book = item.entity
+                                            val selected = book.id in selectedIds
+                                            BookSearchResultCard(
+                                                book = book,
+                                                coverImageCache = coverImageCache,
+                                                selected = selected,
+                                                selectionMode = selectionMode,
+                                                onClick = { onBookClick(book, selected) },
+                                                onLongClick = { onBookLongClick(book) },
+                                            )
+                                        }
+                                    }
                                 }
                                 if (!selectionMode) {
                                     item(key = "import_card") {
@@ -448,7 +583,7 @@ fun BookshelfScreen(
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 verticalArrangement = Arrangement.spacedBy(16.dp),
                             ) {
-                                if (displayedBooks.isEmpty() && !selectionMode) {
+                                if (shelfItems.isEmpty() && !selectionMode) {
                                     item(
                                         key = "group_empty_hint",
                                         span = { GridItemSpan(maxLineSpan) },
@@ -456,16 +591,42 @@ fun BookshelfScreen(
                                         BookshelfGroupEmptyHint()
                                     }
                                 }
-                                items(items = displayedBooks, key = { it.id }) { book ->
-                                    val selected = book.id in selectedIds
-                                    BookCard(
-                                        book = book,
-                                        selected = selected,
-                                        selectionMode = selectionMode,
-                                        coverImageCache = coverImageCache,
-                                        onClick = { onBookClick(book, selected) },
-                                        onLongClick = { onBookLongClick(book) },
-                                    )
+                                items(
+                                    items = shelfItems,
+                                    key = { it.sortKey },
+                                ) { item ->
+                                    when (item) {
+                                        is ShelfCardItem.Project -> {
+                                            val project = item.entity
+                                            val selected = project.id in selectedProjectIds
+                                            val parsed = GitHubRepoUrlParser.parse(
+                                                project.remoteUrl,
+                                            )
+                                            GitProjectCard(
+                                                repoName = parsed?.repo
+                                                    ?: project.title,
+                                                owner = parsed?.owner.orEmpty(),
+                                                selected = selected,
+                                                selectionMode = selectionMode,
+                                                isPinned = project.isPinned,
+                                                isFavorite = project.isFavorite,
+                                                onClick = { onProjectClick(project, selected) },
+                                                onLongClick = { onProjectLongClick(project) },
+                                            )
+                                        }
+                                        is ShelfCardItem.Book -> {
+                                            val book = item.entity
+                                            val selected = book.id in selectedIds
+                                            BookCard(
+                                                book = book,
+                                                selected = selected,
+                                                selectionMode = selectionMode,
+                                                coverImageCache = coverImageCache,
+                                                onClick = { onBookClick(book, selected) },
+                                                onLongClick = { onBookLongClick(book) },
+                                            )
+                                        }
+                                    }
                                 }
                                 if (!selectionMode) {
                                     item(key = "import_card") {
@@ -502,15 +663,18 @@ fun BookshelfScreen(
                         ManagementBarButton(
                             icon = Icons.Default.PushPin,
                             label = stringResource(R.string.bookshelf_action_pin),
-                            onClick = { viewModel.togglePinForSelection(selectedIds) }
+                            onClick = {
+                                viewModel.togglePinForSelection(selectedIds, selectedProjectIds)
+                            }
                         )
                         ManagementBarButton(
                             icon = Icons.Default.FavoriteBorder,
                             label = stringResource(R.string.bookshelf_action_favorite),
                             onClick = {
-                                displayedBooks
-                                    .filter { it.id in selectedIds }
-                                    .forEach { viewModel.toggleFavorite(it) }
+                                viewModel.toggleFavoriteForSelection(
+                                    selectedIds,
+                                    selectedProjectIds,
+                                )
                             }
                         )
                         ManagementBarButton(
@@ -518,8 +682,13 @@ fun BookshelfScreen(
                             label = stringResource(R.string.bookshelf_action_group),
                             onClick = {
                                 val selectedBooks = books.filter { it.id in selectedIds }
-                                val common = selectedBooks.map { it.shelfGroup }.distinct()
-                                groupInput = common.singleOrNull().orEmpty()
+                                val selectedProjects =
+                                    gitProjects.filter { it.id in selectedProjectIds }
+                                val groups = (
+                                    selectedBooks.map { it.shelfGroup } +
+                                        selectedProjects.map { it.shelfGroup }
+                                    ).distinct()
+                                groupInput = groups.singleOrNull().orEmpty()
                                 showGroupDialog = true
                             }
                         )
@@ -531,9 +700,9 @@ fun BookshelfScreen(
 
     if (showRemoveConfirm) {
         BookshelfRemoveConfirmDialog(
-            selectedCount = selectedIds.size,
+            selectedCount = selectionCount,
             onConfirm = {
-                viewModel.deleteBooks(selectedIds)
+                viewModel.deleteSelection(selectedIds, selectedProjectIds)
                 showRemoveConfirm = false
                 exitSelection()
             },
@@ -547,7 +716,7 @@ fun BookshelfScreen(
             existingGroups = dialogGroupNames,
             onGroupInputChange = { groupInput = it },
             onConfirm = {
-                viewModel.moveSelectedToGroup(selectedIds, groupInput)
+                viewModel.moveSelectedToGroup(selectedIds, selectedProjectIds, groupInput)
                 showGroupDialog = false
                 exitSelection()
             },
@@ -564,6 +733,10 @@ fun BookshelfScreen(
             onUrlImport = {
                 showImportMethodDialog = false
                 showUrlImportDialog = true
+            },
+            onGitHubImport = {
+                showImportMethodDialog = false
+                showGitHubImportDialog = true
             },
             onDismiss = { showImportMethodDialog = false }
         )
@@ -585,6 +758,40 @@ fun BookshelfScreen(
                 showUrlImportDialog = false
                 urlImportText = ""
             }
+        )
+    }
+
+    if (showGitHubImportDialog) {
+        BookshelfGitHubImportDialog(
+            urlText = gitHubUrlText,
+            branchText = gitHubBranchText,
+            onUrlTextChange = { gitHubUrlText = it },
+            onBranchTextChange = { gitHubBranchText = it },
+            onConfirm = {
+                val url = gitHubUrlText.trim()
+                if (url.isNotEmpty()) {
+                    viewModel.importFromGitHub(
+                        rawUrl = url,
+                        branch = gitHubBranchText.trim().ifEmpty { null },
+                        target = latestImportTarget.value,
+                    )
+                }
+                showGitHubImportDialog = false
+                gitHubUrlText = ""
+                gitHubBranchText = ""
+            },
+            onDismiss = {
+                showGitHubImportDialog = false
+                gitHubUrlText = ""
+                gitHubBranchText = ""
+            },
+        )
+    }
+
+    if (gitImporting) {
+        BookshelfGitCloneProgressDialog(
+            detail = gitImportProgress?.detail.orEmpty(),
+            percent = gitImportProgress?.percent ?: -1,
         )
     }
 }

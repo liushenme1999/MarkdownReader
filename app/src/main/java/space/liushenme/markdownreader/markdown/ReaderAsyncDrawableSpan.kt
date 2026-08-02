@@ -8,8 +8,10 @@ import io.noties.markwon.image.AsyncDrawableSpan
 import io.noties.markwon.utils.SpanUtils
 
 /**
- * 图片行顶对齐：TextView [android.widget.TextView.setLineSpacing] 放大行高时，
- * Markwon 默认 [AsyncDrawableSpan.ALIGN_BOTTOM] 会把图片贴在行框底部，在行首留下大块空白。
+ * 图片行顶对齐，并抵消 [android.widget.TextView.setLineSpacing] 对行高的放大。
+ *
+ * Markwon 默认底对齐时，多余行高会出现在图片上方；仅改为顶对齐绘制后，
+ * 若不在 [getSize] 里补偿，多余高度会落到图片下方形成大块空白。
  */
 internal class ReaderAsyncDrawableSpan(
     theme: MarkwonTheme,
@@ -21,6 +23,23 @@ internal class ReaderAsyncDrawableSpan(
     AsyncDrawableSpan.ALIGN_BOTTOM,
     replacementTextIsLink,
 ) {
+
+    override fun getSize(
+        paint: Paint,
+        text: CharSequence,
+        start: Int,
+        end: Int,
+        fm: Paint.FontMetricsInt?,
+    ): Int {
+        val size = super.getSize(paint, text, start, end, fm)
+        if (fm != null) {
+            ReaderTableSpacing.compensateLineSpacing(
+                fm,
+                ReaderTableSpacing.lineSpacingMultiplier,
+            )
+        }
+        return size
+    }
 
     override fun draw(
         canvas: Canvas,

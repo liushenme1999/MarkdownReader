@@ -1,6 +1,7 @@
 package space.liushenme.markdownreader.markdown
 
 import android.content.Context
+import java.io.File
 import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.importing.ImageAssetUtils
 
@@ -135,6 +136,51 @@ object MarkdownPreprocessor {
             if (isLoadableImageRef(src)) return@replace m.value
             extractAttr(ATTR_ALT, attrs).orEmpty()
         }
+    }
+
+    /**
+     * 将相对路径图片改写为 `file://` 绝对 URI（相对 [baseDir]，通常为文档所在目录）。
+     * 文件不存在时保留 alt（与 [stripLocalRelativeImages] 一致）。
+     * 仅用于 Git 项目文档导入路径。
+     */
+    fun rewriteRelativeImagesToFileUri(markdown: String, baseDir: File): String {
+        if (!markdown.contains("![") && !markdown.contains("<img", ignoreCase = true)) return markdown
+        val base = baseDir.canonicalFile
+        var out = MD_LOCAL_IMAGE.replace(markdown) { m ->
+            val alt = m.groupValues[1]
+            val raw = m.groupValues[2].trim()
+            if (isLoadableImageRef(raw)) return@replace m.value
+            val fileUri = resolveRelativeImageToFileUri(raw, base)
+            if (fileUri != null) {
+                m.value.replace(raw, fileUri)
+            } else {
+                alt
+            }
+        }
+        if (!out.contains("<img", ignoreCase = true)) return out
+        return HTML_IMG.replace(out) { m ->
+            val attrs = m.groupValues[1]
+            val src = extractAttr(ATTR_SRC, attrs) ?: return@replace m.value
+            if (isLoadableImageRef(src)) return@replace m.value
+            val fileUri = resolveRelativeImageToFileUri(src, base)
+            if (fileUri != null) {
+                m.value.replace(src, fileUri)
+            } else {
+                extractAttr(ATTR_ALT, attrs).orEmpty()
+            }
+        }
+    }
+
+    private fun resolveRelativeImageToFileUri(raw: String, baseDir: File): String? {
+        val path = raw.trim()
+        if (path.isEmpty() || path.startsWith("#")) return null
+        if (path.contains("..")) {
+            // 允许合法的 `../images/a.png`，但最终必须落在 baseDir 的祖先项目树内由调用方保证；
+            // 这里仅做路径规范化与存在性检查。
+        }
+        val candidate = File(baseDir, path).canonicalFile
+        if (!candidate.isFile) return null
+        return "file://${candidate.absolutePath}"
     }
 
     internal fun isLoadableImageRef(raw: String): Boolean {

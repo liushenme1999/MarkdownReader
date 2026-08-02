@@ -10,6 +10,7 @@ import space.liushenme.markdownreader.model.AppLanguage
 import space.liushenme.markdownreader.model.AppThemeMode
 import space.liushenme.markdownreader.model.BookshelfGridColumns
 import space.liushenme.markdownreader.model.BookshelfLayoutMode
+import space.liushenme.markdownreader.model.GitProjectRecentReadCount
 import space.liushenme.markdownreader.model.HighlightStyle
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
@@ -27,8 +28,7 @@ class ReaderSettingsRepository @Inject constructor(
     private val dataStore = readerPreferencesDataStore(context)
 
     val pageTurnMode: Flow<ReaderPageTurnMode> = dataStore.data.map { prefs ->
-        val raw = prefs[KEY_PAGE_TURN_MODE]
-        ReaderPageTurnMode.entries.find { it.name == raw } ?: ReaderPageTurnMode.VerticalScroll
+        ReaderPageTurnMode.fromStored(prefs[KEY_PAGE_TURN_MODE])
     }
 
     val appLanguage: Flow<AppLanguage> = dataStore.data.map { prefs ->
@@ -73,9 +73,16 @@ class ReaderSettingsRepository @Inject constructor(
         BookshelfGridColumns.coerce(prefs[KEY_BOOKSHELF_GRID_COLUMNS] ?: BookshelfGridColumns.DEFAULT)
     }
 
+    val gitProjectRecentReadCount: Flow<Int> = dataStore.data.map { prefs ->
+        GitProjectRecentReadCount.coerce(
+            prefs[KEY_GIT_PROJECT_RECENT_READ_COUNT] ?: GitProjectRecentReadCount.DEFAULT,
+        )
+    }
+
     suspend fun setPageTurnMode(mode: ReaderPageTurnMode) {
+        val normalized = ReaderPageTurnMode.normalize(mode)
         dataStore.edit { prefs ->
-            prefs[KEY_PAGE_TURN_MODE] = mode.name
+            prefs[KEY_PAGE_TURN_MODE] = normalized.name
         }
     }
 
@@ -136,6 +143,12 @@ class ReaderSettingsRepository @Inject constructor(
         }
     }
 
+    suspend fun setGitProjectRecentReadCount(count: Int) {
+        dataStore.edit { prefs ->
+            prefs[KEY_GIT_PROJECT_RECENT_READ_COUNT] = GitProjectRecentReadCount.coerce(count)
+        }
+    }
+
     companion object {
         const val DEFAULT_FONT_SIZE = 16
         const val DEFAULT_PADDING_DP = 32
@@ -148,6 +161,15 @@ class ReaderSettingsRepository @Inject constructor(
         private val KEY_READING_THEME = stringPreferencesKey("reader_reading_theme")
         private val KEY_BOOKSHELF_LAYOUT_MODE = stringPreferencesKey("bookshelf_layout_mode")
         private val KEY_BOOKSHELF_GRID_COLUMNS = intPreferencesKey("bookshelf_grid_columns")
+        private val KEY_GIT_PROJECT_RECENT_READ_COUNT =
+            intPreferencesKey("git_project_recent_read_count")
+
+        /** 仅本机生效、不进入 WebDAV 备份/恢复的偏好键 */
+        val DEVICE_LOCAL_PREF_KEYS = setOf(
+            KEY_BOOKSHELF_LAYOUT_MODE.name,
+            KEY_BOOKSHELF_GRID_COLUMNS.name,
+            KEY_GIT_PROJECT_RECENT_READ_COUNT.name,
+        )
 
         private fun appThemeFromStored(raw: String?): AppThemeMode =
             AppThemeMode.entries.find { it.name == raw } ?: AppThemeMode.SYSTEM

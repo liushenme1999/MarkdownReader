@@ -4,6 +4,7 @@ import android.content.Context
 import space.liushenme.markdownreader.data.local.AppDatabase
 import space.liushenme.markdownreader.data.local.dao.BookDao
 import space.liushenme.markdownreader.data.local.dao.BookmarkDao
+import space.liushenme.markdownreader.data.local.dao.GitProjectDao
 import space.liushenme.markdownreader.data.local.dao.HighlightDao
 import space.liushenme.markdownreader.data.local.dao.ReadingProgressDao
 import space.liushenme.markdownreader.data.local.dao.ShelfGroupDao
@@ -38,4 +39,7 @@ object AppModule {
 
     @Provides
     fun provideShelfGroupDao(database: AppDatabase): ShelfGroupDao = database.shelfGroupDao()
+
+    @Provides
+    fun provideGitProjectDao(database: AppDatabase): GitProjectDao = database.gitProjectDao()
 }

@@ -233,7 +233,7 @@ internal fun ReaderPageTurnSheet(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(16.dp))
-            ReaderPageTurnMode.values().forEach { mode ->
+            ReaderPageTurnMode.selectableModes.forEach { mode ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()

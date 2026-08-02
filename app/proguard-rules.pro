@@ -229,3 +229,13 @@
 -keep interface okhttp3.** { *; }
 -dontwarn okhttp3.**
 -dontwarn okio.**
+
+# ==================== JGit ====================
+
+-keep class org.eclipse.jgit.** { *; }
+-dontwarn org.eclipse.jgit.**
+-dontwarn org.slf4j.**
+-dontwarn java.lang.management.**
+-dontwarn javax.management.**
+-dontwarn org.apache.sshd.**
+-keep class space.liushenme.markdownreader.git.** { *; }

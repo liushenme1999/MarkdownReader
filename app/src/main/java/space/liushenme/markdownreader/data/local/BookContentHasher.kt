@@ -54,4 +54,8 @@ object BookContentHasher {
     fun isLegacy(hash: String): Boolean = hash.startsWith(LEGACY_PREFIX)
 
     fun legacyHash(bookId: Long): String = "$LEGACY_PREFIX$bookId"
+
+    /** Git 文档稳定身份：不随 pull 后正文变化，避免唯一索引冲突。 */
+    fun hashForGitDocument(remoteUrl: String, relativePath: String): String =
+        sha256Hex("git|$remoteUrl|$relativePath")
 }
