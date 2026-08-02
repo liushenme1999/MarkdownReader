@@ -73,8 +73,14 @@ jobs:
   build-release:
     name: Build Release APK
     runs-on: ubuntu-latest
-    # 需在仓库 Secrets 中配置 RELEASE_*；未配置时 assembleRelease 会按 Gradle 规则失败
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    # 仅在 push 到主分支且已配置签名 Secrets 时构建；未配置则跳过（不算失败）
+    if: >
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') &&
+      secrets.RELEASE_STORE_PASSWORD != '' &&
+      secrets.RELEASE_KEY_ALIAS != '' &&
+      secrets.RELEASE_KEY_PASSWORD != '' &&
+      (secrets.RELEASE_KEYSTORE_BASE64 != '' || secrets.RELEASE_STORE_FILE != '')
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

@@ -1,17 +1,27 @@
 package space.liushenme.markdownreader.markdown
 
 import android.content.Context
+import android.text.Spanned
+import io.noties.markwon.image.AsyncDrawableSpan
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import ru.noties.jlatexmath.JLatexMathAndroid
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class LatexInHtmlDivTest {
+
+    @Before
+    fun initJlatex() {
+        JLatexMathAndroid.init(RuntimeEnvironment.getApplication())
+    }
 
     private val blockInDiv = """
         3.  <strong>缩放（Scaling）：</strong> 将计算出的分数除以一个缩放因子 ${'$'}\\sqrt{d_k}${'$'}（ ${'$'}d_k${'$'} 是K向量的维度）。这一步是为了在反向传播时获得更稳定的梯度，防止点积结果过大导致Softmax函数进入饱和区。
@@ -100,8 +110,14 @@ class LatexInHtmlDivTest {
         val markwon = ReaderMarkwonFactory.create(context)
         val inline = "因子 ${'$'}\\sqrt{d_k}${'$'} 与 ${'$'}d_k${'$'}"
         val prepared = ReaderMarkwonFactory.prepareMarkdown(inline, context)
-        val rendered = markwon.toMarkdown(prepared.text).toString()
-        assertFalse("inline latex should render: $rendered", rendered.contains("${'$'}\\sqrt"))
+        val rendered = markwon.toMarkdown(prepared.text) as Spanned
+        // 占位文本会刻意保留 `$…$` 以便复制，不能用 toString 是否含 `$` 判断是否解析成功
+        val latexSpans = rendered.getSpans(0, rendered.length, AsyncDrawableSpan::class.java)
+        assertEquals(
+            "both inline latex formulas should become spans: $rendered",
+            2,
+            latexSpans.size,
+        )
     }
 
     @Test
