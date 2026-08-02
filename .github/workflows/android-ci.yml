@@ -73,19 +73,34 @@ jobs:
   build-release:
     name: Build Release APK
     runs-on: ubuntu-latest
-    # 仅在 push 到主分支且已配置签名 Secrets 时构建；未配置则跳过（不算失败）
-    if: >
-      github.event_name == 'push' &&
-      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') &&
-      secrets.RELEASE_STORE_PASSWORD != '' &&
-      secrets.RELEASE_KEY_ALIAS != '' &&
-      secrets.RELEASE_KEY_PASSWORD != '' &&
-      (secrets.RELEASE_KEYSTORE_BASE64 != '' || secrets.RELEASE_STORE_FILE != '')
+    # job 级 if 不能引用 secrets；未配置签名时在步骤内跳过构建（不算失败）
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     steps:
+      - name: Check release signing secrets
+        id: signing
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_FILE: ${{ secrets.RELEASE_STORE_FILE }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$RELEASE_STORE_PASSWORD" ] && \
+             [ -n "$RELEASE_KEY_ALIAS" ] && \
+             [ -n "$RELEASE_KEY_PASSWORD" ] && \
+             { [ -n "$RELEASE_KEYSTORE_BASE64" ] || [ -n "$RELEASE_STORE_FILE" ]; }; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Signing secrets not configured; skipping release APK build."
+          fi
+
       - name: Checkout code
+        if: steps.signing.outputs.configured == 'true'
         uses: actions/checkout@v4
 
       - name: Set up JDK ${{ env.JAVA_VERSION }}
+        if: steps.signing.outputs.configured == 'true'
         uses: actions/setup-java@v4
         with:
           java-version: ${{ env.JAVA_VERSION }}
@@ -93,22 +108,29 @@ jobs:
           cache: gradle
 
       - name: Set up Android SDK
+        if: steps.signing.outputs.configured == 'true'
         uses: android-actions/setup-android@v2
 
       - name: Grant execute permission for gradlew
+        if: steps.signing.outputs.configured == 'true'
         run: chmod +x gradlew
 
       - name: Prepare release keystore
+        if: steps.signing.outputs.configured == 'true'
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_FILE: ${{ secrets.RELEASE_STORE_FILE }}
         run: |
           mkdir -p signing
-          if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
-            echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > signing/ci-release.keystore
+          if [ -n "$RELEASE_KEYSTORE_BASE64" ]; then
+            echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > signing/ci-release.keystore
             echo "RELEASE_STORE_FILE=${{ github.workspace }}/signing/ci-release.keystore" >> "$GITHUB_ENV"
-          elif [ -n "${{ secrets.RELEASE_STORE_FILE }}" ]; then
-            echo "RELEASE_STORE_FILE=${{ secrets.RELEASE_STORE_FILE }}" >> "$GITHUB_ENV"
+          elif [ -n "$RELEASE_STORE_FILE" ]; then
+            echo "RELEASE_STORE_FILE=$RELEASE_STORE_FILE" >> "$GITHUB_ENV"
           fi
 
       - name: Build release APK
+        if: steps.signing.outputs.configured == 'true'
         env:
           RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
@@ -116,6 +138,7 @@ jobs:
         run: ./gradlew assembleRelease
 
       - name: Upload release APK
+        if: steps.signing.outputs.configured == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: release-apk
