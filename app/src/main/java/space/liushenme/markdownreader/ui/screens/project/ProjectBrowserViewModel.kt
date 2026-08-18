@@ -27,6 +27,7 @@ import space.liushenme.markdownreader.git.GitDocumentOpener
 import space.liushenme.markdownreader.git.GitPathUtils
 import space.liushenme.markdownreader.git.GitProgress
 import space.liushenme.markdownreader.git.GitProjectImporter
+import space.liushenme.markdownreader.git.GitProjectStorage
 import space.liushenme.markdownreader.git.GitRecentOpenedPaths
 import space.liushenme.markdownreader.git.GitTreeNode
 import space.liushenme.markdownreader.git.GitWorkingTreeIndexer
@@ -280,13 +281,33 @@ class ProjectBrowserViewModel @Inject constructor(
 
     private suspend fun refreshProjectAndTree() {
         val p = withContext(Dispatchers.IO) { gitProjectRepository.getById(projectId) }
-        if (p != null) {
-            applyProjectState(p)
-            reloadTree(p)
-        } else {
+        if (p == null) {
             _projectState.value = null
             _lastOpenedRelativePath.value = null
             _recentReadEntries.value = emptyList()
+            return
+        }
+        applyProjectState(p)
+        if (GitProjectStorage.hasValidRepo(p.localPath)) {
+            reloadTree(p)
+            return
+        }
+        _busy.value = true
+        _busyStatusRes.value = R.string.dialog_github_cloning_title
+        _progress.value = GitProgress(GitProgress.Phase.CLONING)
+        try {
+            val ready = gitProjectImporter.ensureCloned(p) { prog ->
+                _progress.value = prog
+            }
+            applyProjectState(ready)
+            reloadTree(ready)
+        } catch (e: Exception) {
+            reloadTree(p)
+            toastChannel.trySend(mapGitError(e, R.string.toast_git_pull_failed))
+        } finally {
+            _busy.value = false
+            _progress.value = null
+            _busyStatusRes.value = null
         }
     }
 

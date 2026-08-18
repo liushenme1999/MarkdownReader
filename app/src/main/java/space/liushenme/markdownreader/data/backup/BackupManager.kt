@@ -50,6 +50,7 @@ import space.liushenme.markdownreader.data.webdav.Authorization
 import space.liushenme.markdownreader.data.webdav.WebDav
 import space.liushenme.markdownreader.data.webdav.WebDavException
 import space.liushenme.markdownreader.data.webdav.WebDavFile
+import space.liushenme.markdownreader.git.GitCloneException
 import space.liushenme.markdownreader.git.GitDocumentOpener
 import space.liushenme.markdownreader.git.GitHubRepoUrlParser
 import space.liushenme.markdownreader.git.GitProjectCloner
@@ -993,10 +994,15 @@ class BackupManager @Inject constructor(
         remote: GitProjectBackup,
         cloneMissing: Boolean,
     ): Boolean {
-        if (deletedGitProjectDao.getByRemoteUrl(remote.remoteUrl) != null) {
+        val canonicalUrl = GitHubRepoUrlParser.parse(remote.remoteUrl)?.httpsBrowseUrl
+            ?: remote.remoteUrl
+        if (deletedGitProjectDao.getByRemoteUrl(canonicalUrl) != null ||
+            deletedGitProjectDao.getByRemoteUrl(remote.remoteUrl) != null
+        ) {
             return false
         }
-        val local = gitProjectDao.getByRemoteUrl(remote.remoteUrl)
+        var local = gitProjectDao.getByRemoteUrl(canonicalUrl)
+            ?: gitProjectDao.getByRemoteUrl(remote.remoteUrl)
         if (local == null) {
             if (!cloneMissing) return false
             return runCatching {
@@ -1005,6 +1011,15 @@ class BackupManager @Inject constructor(
             }.onFailure {
                 Log.w(TAG, "恢复克隆 Git 项目失败 ${remote.remoteUrl}: ${it.localizedMessage}", it)
             }.getOrDefault(false)
+        }
+
+        if (cloneMissing && !GitProjectStorage.hasValidRepo(local.localPath)) {
+            runCatching {
+                recloneExistingGitProject(local, remote)
+            }.onFailure {
+                Log.w(TAG, "恢复补克隆 Git 项目失败 ${remote.remoteUrl}: ${it.localizedMessage}", it)
+            }
+            local = gitProjectDao.getById(local.id) ?: local
         }
 
         val preferRemoteOpened = shouldPreferRemoteLastOpened(remote, local)
@@ -1048,11 +1063,11 @@ class BackupManager @Inject constructor(
 
     private suspend fun cloneGitProjectFromBackup(remote: GitProjectBackup) {
         val parsed = GitHubRepoUrlParser.parse(remote.remoteUrl)
-        val resolvedTitle = parsed?.repo
-            ?: remote.title.ifBlank { parsed?.displayName.orEmpty() }
+            ?: throw GitCloneException("无法识别的 GitHub 仓库地址：${remote.remoteUrl}")
+        val resolvedTitle = parsed.repo.ifBlank { remote.title }
         val placeholder = GitProjectEntity(
             title = resolvedTitle,
-            remoteUrl = remote.remoteUrl,
+            remoteUrl = parsed.httpsBrowseUrl,
             defaultBranch = remote.defaultBranch,
             localPath = "",
             addTime = remote.addTime,
@@ -1070,32 +1085,46 @@ class BackupManager @Inject constructor(
             ),
         )
         val projectId = gitProjectDao.insert(placeholder)
-        val dest = GitProjectStorage.projectDir(context, projectId)
         try {
-            val branch = remote.defaultBranch.trim().takeIf { it.isNotEmpty() }
-            val result = GitProjectCloner.clone(
-                cloneUrl = remote.remoteUrl.trimEnd('/') + ".git",
-                destination = dest,
-                branch = branch,
-            )
-            gitProjectDao.update(
-                placeholder.copy(
-                    id = projectId,
-                    localPath = dest.absolutePath,
-                    defaultBranch = result.branch.ifBlank { remote.defaultBranch },
-                    lastCommitSha = result.commitSha.ifBlank { remote.lastCommitSha },
-                    lastPulledAt = Date(),
-                ),
+            recloneExistingGitProject(
+                local = placeholder.copy(id = projectId),
+                remote = remote,
             )
         } catch (e: Exception) {
+            // 克隆失败仍保留元数据（远程地址、阅读记录），之后可在项目页重新拉取
             runCatching {
-                gitProjectDao.getById(projectId)?.let { row ->
-                    GitProjectStorage.deleteProjectDir(dest.absolutePath)
-                    gitProjectDao.delete(row)
-                }
+                GitProjectStorage.deleteProjectDir(
+                    GitProjectStorage.projectDir(context, projectId).absolutePath,
+                )
             }
             throw e
         }
+    }
+
+    private suspend fun recloneExistingGitProject(
+        local: GitProjectEntity,
+        remote: GitProjectBackup,
+    ) {
+        val parsed = GitHubRepoUrlParser.parse(local.remoteUrl.ifBlank { remote.remoteUrl })
+            ?: throw GitCloneException("无法识别的 GitHub 仓库地址")
+        val dest = GitProjectStorage.projectDir(context, local.id)
+        val branch = remote.defaultBranch.trim().ifEmpty { local.defaultBranch }
+            .takeIf { it.isNotEmpty() }
+        val result = GitProjectCloner.clone(
+            cloneUrl = parsed.cloneUrl,
+            destination = dest,
+            branch = branch,
+        )
+        gitProjectDao.update(
+            local.copy(
+                title = parsed.repo.ifBlank { local.title },
+                remoteUrl = parsed.httpsBrowseUrl,
+                localPath = dest.absolutePath,
+                defaultBranch = result.branch.ifBlank { remote.defaultBranch.ifBlank { local.defaultBranch } },
+                lastCommitSha = result.commitSha.ifBlank { remote.lastCommitSha.ifBlank { local.lastCommitSha } },
+                lastPulledAt = Date(),
+            ),
+        )
     }
 
     private fun shouldPreferRemoteLastOpened(

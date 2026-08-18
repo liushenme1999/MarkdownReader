@@ -1,6 +1,7 @@
 package space.liushenme.markdownreader.git
 
 import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.Date
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -18,6 +19,7 @@ data class GitImportOutcome(
 
 @Singleton
 class GitProjectImporter @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val gitProjectRepository: GitProjectRepository,
 ) {
 
@@ -84,21 +86,42 @@ class GitProjectImporter @Inject constructor(
         }
     }
 
+    /**
+     * 若本地工作区缺失或损坏，按 [GitProjectEntity.remoteUrl] 重新浅克隆。
+     * 跨设备恢复后常见：云端只存元数据，本机尚无 `.git`。
+     */
+    suspend fun ensureCloned(
+        project: GitProjectEntity,
+        onProgress: (GitProgress) -> Unit = {},
+    ): GitProjectEntity = withContext(Dispatchers.IO) {
+        if (GitProjectStorage.hasValidRepo(project.localPath)) return@withContext project
+        cloneIntoExisting(project, onProgress)
+    }
+
     suspend fun pull(
         project: GitProjectEntity,
         onProgress: (GitProgress) -> Unit = {},
     ): GitPullResult = withContext(Dispatchers.IO) {
+        val hadRepo = GitProjectStorage.hasValidRepo(project.localPath)
+        val ready = ensureCloned(project, onProgress)
+        if (!hadRepo) {
+            return@withContext GitPullResult(
+                previousSha = "",
+                currentSha = ready.lastCommitSha,
+                changed = true,
+            )
+        }
         val result = GitProjectPuller.pull(
-            localPath = project.localPath,
-            branch = project.defaultBranch,
+            localPath = ready.localPath,
+            branch = ready.defaultBranch,
             onProgress = onProgress,
         )
-        val refreshedTitle = GitHubRepoUrlParser.parse(project.remoteUrl)?.repo
-            ?: project.title
+        val refreshedTitle = GitHubRepoUrlParser.parse(ready.remoteUrl)?.repo
+            ?: ready.title
         gitProjectRepository.update(
-            project.copy(
+            ready.copy(
                 title = refreshedTitle,
-                lastCommitSha = result.currentSha.ifEmpty { project.lastCommitSha },
+                lastCommitSha = result.currentSha.ifEmpty { ready.lastCommitSha },
                 lastPulledAt = Date(),
             ),
         )
@@ -107,7 +130,19 @@ class GitProjectImporter @Inject constructor(
 
     suspend fun listRemoteBranches(project: GitProjectEntity): List<String> =
         withContext(Dispatchers.IO) {
-            GitProjectBranches.listRemoteBranches(project.localPath)
+            val parsed = GitHubRepoUrlParser.parse(project.remoteUrl)
+            if (GitProjectStorage.hasValidRepo(project.localPath)) {
+                runCatching {
+                    GitProjectBranches.listRemoteBranches(project.localPath)
+                }.getOrElse { error ->
+                    if (parsed == null) throw error
+                    GitProjectBranches.listRemoteBranchesByUrl(parsed.cloneUrl)
+                }
+            } else {
+                val cloneUrl = parsed?.cloneUrl
+                    ?: throw GitCloneException("缺少远程仓库地址")
+                GitProjectBranches.listRemoteBranchesByUrl(cloneUrl)
+            }
         }
 
     suspend fun checkoutBranch(
@@ -115,18 +150,19 @@ class GitProjectImporter @Inject constructor(
         branch: String,
         onProgress: (GitProgress) -> Unit = {},
     ): GitCheckoutResult = withContext(Dispatchers.IO) {
+        val ready = ensureCloned(project, onProgress)
         val result = GitProjectBranches.checkoutBranch(
-            localPath = project.localPath,
+            localPath = ready.localPath,
             branch = branch,
             onProgress = onProgress,
         )
-        val refreshedTitle = GitHubRepoUrlParser.parse(project.remoteUrl)?.repo
-            ?: project.title
+        val refreshedTitle = GitHubRepoUrlParser.parse(ready.remoteUrl)?.repo
+            ?: ready.title
         gitProjectRepository.update(
-            project.copy(
+            ready.copy(
                 title = refreshedTitle,
                 defaultBranch = result.branch,
-                lastCommitSha = result.commitSha.ifEmpty { project.lastCommitSha },
+                lastCommitSha = result.commitSha.ifEmpty { ready.lastCommitSha },
                 lastPulledAt = Date(),
             ),
         )
@@ -142,5 +178,31 @@ class GitProjectImporter @Inject constructor(
                 gitProjectRepository.update(project.copy(title = parsed.repo))
             }
         }
+    }
+
+    private suspend fun cloneIntoExisting(
+        project: GitProjectEntity,
+        onProgress: (GitProgress) -> Unit,
+    ): GitProjectEntity {
+        val parsed = GitHubRepoUrlParser.parse(project.remoteUrl)
+            ?: throw GitCloneException("无法识别的 GitHub 仓库地址")
+        val dest = GitProjectStorage.projectDir(context, project.id)
+        val branch = project.defaultBranch.trim().takeIf { it.isNotEmpty() }
+        val result = GitProjectCloner.clone(
+            cloneUrl = parsed.cloneUrl,
+            destination = dest,
+            branch = branch,
+            onProgress = onProgress,
+        )
+        val updated = project.copy(
+            title = parsed.repo.ifBlank { project.title },
+            remoteUrl = parsed.httpsBrowseUrl,
+            localPath = dest.absolutePath,
+            defaultBranch = result.branch.ifBlank { project.defaultBranch },
+            lastCommitSha = result.commitSha.ifBlank { project.lastCommitSha },
+            lastPulledAt = Date(),
+        )
+        gitProjectRepository.update(updated)
+        return updated
     }
 }

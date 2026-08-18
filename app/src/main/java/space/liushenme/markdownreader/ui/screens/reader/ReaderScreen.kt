@@ -1204,6 +1204,7 @@ fun ReaderScreen(
                                 ReaderImmersiveChapterTitleBar(
                                     title = immersiveChapterTitle,
                                     theme = currentTheme,
+                                    progressPercent = (readingProgress * 100).toInt(),
                                 )
                             }
                             key(bookId, pageTurnMode) {

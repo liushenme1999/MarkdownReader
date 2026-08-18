@@ -14,6 +14,12 @@ object GitProjectStorage {
     fun projectDir(context: Context, projectId: Long): File =
         File(rootDir(context), projectId.toString())
 
+    fun hasValidRepo(path: String?): Boolean {
+        if (path.isNullOrBlank()) return false
+        val dir = File(path)
+        return dir.isDirectory && File(dir, ".git").exists()
+    }
+
     fun resolveFile(projectRoot: File, relativePath: String): File? {
         val normalized = relativePath.trim().trimStart('/').replace('\\', '/')
         if (normalized.isEmpty() || normalized.contains("..")) return null

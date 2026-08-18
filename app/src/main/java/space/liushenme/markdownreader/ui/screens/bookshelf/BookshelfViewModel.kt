@@ -207,7 +207,6 @@ class BookshelfViewModel @Inject constructor(
         val projects = gitProjectRepository.getAllProjectsList()
         var changed = 0
         for (project in projects) {
-            if (project.localPath.isBlank()) continue
             runCatching {
                 val result = gitProjectImporter.pull(project)
                 if (result.changed) {

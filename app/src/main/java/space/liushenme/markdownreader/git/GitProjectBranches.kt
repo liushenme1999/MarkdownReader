@@ -26,20 +26,40 @@ object GitProjectBranches {
                     .setRemote("origin")
                     .setHeads(true)
                     .call()
-                refs.mapNotNull { ref ->
-                    ref.name
-                        .removePrefix("refs/heads/")
-                        .trim()
-                        .takeIf { it.isNotEmpty() }
-                }
-                    .distinct()
-                    .sortedWith(String.CASE_INSENSITIVE_ORDER)
+                normalizeHeadNames(refs.map { it.name })
             }
         } catch (e: GitCloneException) {
             throw e
         } catch (e: Exception) {
             throw wrapTransportError(e, fallback = "获取远程分支失败")
         }
+    }
+
+    /** 不依赖本地工作区，直接对 clone URL 做 ls-remote。 */
+    fun listRemoteBranchesByUrl(cloneUrl: String): List<String> {
+        val url = cloneUrl.trim()
+        if (url.isEmpty()) {
+            throw GitCloneException("缺少远程仓库地址")
+        }
+        return try {
+            val refs = Git.lsRemoteRepository()
+                .setRemote(url)
+                .setHeads(true)
+                .call()
+            normalizeHeadNames(refs.map { it.name })
+        } catch (e: GitCloneException) {
+            throw e
+        } catch (e: Exception) {
+            throw wrapTransportError(e, fallback = "获取远程分支失败")
+        }
+    }
+
+    private fun normalizeHeadNames(names: Collection<String>): List<String> {
+        return names.mapNotNull { name ->
+            name.removePrefix("refs/heads/").trim().takeIf { it.isNotEmpty() }
+        }
+            .distinct()
+            .sortedWith(String.CASE_INSENSITIVE_ORDER)
     }
 
     /**

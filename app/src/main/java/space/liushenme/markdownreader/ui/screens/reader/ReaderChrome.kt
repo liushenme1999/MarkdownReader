@@ -106,8 +106,10 @@ import kotlin.math.roundToInt
 internal fun ReaderImmersiveChapterTitleBar(
     title: String,
     theme: ReadingTheme,
+    progressPercent: Int,
     modifier: Modifier = Modifier,
 ) {
+    val percent = progressPercent.coerceIn(0, 100)
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -118,16 +120,28 @@ internal fun ReaderImmersiveChapterTitleBar(
                 .fillMaxWidth()
                 .windowInsetsTopHeight(WindowInsets.statusBars)
         )
-        MarkdownInlineHtmlText(
-            text = title,
-            style = MaterialTheme.typography.labelMedium,
-            color = theme.textColor.copy(alpha = 0.7f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 2.dp)
-        )
+                .padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MarkdownInlineHtmlText(
+                text = title,
+                style = MaterialTheme.typography.labelMedium,
+                color = theme.textColor.copy(alpha = 0.7f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "$percent%",
+                style = MaterialTheme.typography.labelMedium,
+                color = theme.textColor.copy(alpha = 0.7f),
+                maxLines = 1,
+                modifier = Modifier.padding(start = 12.dp),
+            )
+        }
     }
 }
 
