@@ -1,10 +1,8 @@
 name: Android CI
 
+# 已关闭 push / PR 自动触发，避免消耗 Actions 额度。需要时在 GitHub Actions 页手动 Run workflow。
 on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main, develop ]
+  workflow_dispatch:
 
 env:
   JAVA_VERSION: '17'
