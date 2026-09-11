@@ -8,7 +8,7 @@
 | **包名** | `space.liushenme.markdownreader` |
 | **最低系统** | Android 7.0 (API 24) |
 | **目标 SDK** | 35 |
-| **当前版本** | 1.0.4 (versionCode 5) |
+| **当前版本** | 1.0.5 (versionCode 6) |
 | **仓库** | [github.com/liukejun1999/MarkdownReader](https://github.com/liukejun1999/MarkdownReader) |
 
 ## 安装包下载
@@ -17,7 +17,8 @@
 
 | 版本 | 下载 | 大小约 |
 |------|------|--------|
-| **1.0.4** | [MD阅读器_release_1.0.4.apk](app/release/MD阅读器_release_1.0.4.apk) | 15 MB |
+| **1.0.5** | [MD阅读器_release_1.0.5.apk](app/release/MD阅读器_release_1.0.5.apk) | 15 MB |
+| 1.0.4 | [MD阅读器_release_1.0.4.apk](app/release/MD阅读器_release_1.0.4.apk) | 15 MB |
 | 1.0.3 | [MD阅读器_release_1.0.3.apk](app/release/MD阅读器_release_1.0.3.apk) | 14 MB |
 
 安装说明：
@@ -43,7 +44,10 @@
 
 - **5 种阅读主题**：纸质书、纯净白、护眼绿、复古棕、夜间模式
 - **2 种翻页方式**：上下滚动、左右滑动
+- 阅读页底栏将主题、字体排版、翻页方式聚合为单一「阅读设置」
 - 字体大小、页边距、行距调节（DataStore 持久化）
+- **代码块自动换行**（默认开启）；关闭后超宽代码可横向滑动，并显示语言标签与复制按钮
+- 阅读页顶栏随进度显示当前章节标题
 - 目录（TOC）跳转；导入时优先使用结构化目录
 - 书签、多色高亮、文本选择与笔记
 - 阅读进度（字符坐标）自动保存
@@ -60,8 +64,8 @@
 | **化学式** | mhchem 风格 `\ce{…}`（预处理为 JLatex 可解析形式） |
 | **高级公式** | `\oiint` / `\oiiint`、`\cancel`、`\stackrel`、`\xleftarrow` 等（部分经预处理器改写） |
 | **图表** | 围栏代码块 `mermaid` / `echarts` / `chart`（WebView 异步渲染） |
-| **代码** | 围栏代码块语法高亮；行内 `` `code` `` 圆角底色 |
-| **图片** | 网络图片缓存与占位；HTML `<img>` 布局优化；Git 项目文档支持相对路径本地图 |
+| **代码** | 围栏代码块语法高亮；行内 `` `code` `` 圆角底色；可关闭自动换行后横向滚动查看 |
+| **图片** | 网络图片缓存与占位；点击普通图 / PDF 页图全屏预览（毛玻璃背景）；HTML `<img>` 布局优化；Git 项目文档支持相对路径本地图 |
 | **其他** | HTML 片段、自动链接、PDF 栅格化页面 |
 
 > LaTeX 由 JLaTeXMath 驱动，并非完整 TeX 环境。不支持的命令会在解析前尝试预处理；仍无法渲染的公式会在 Logcat 输出 `JLatexMathPlugin` 错误。

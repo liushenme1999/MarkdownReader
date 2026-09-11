@@ -6,6 +6,27 @@
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-09-11
+
+### 新增
+
+- 阅读设置新增「代码块自动换行」（默认开启，随 WebDAV 备份）
+- 关闭换行后，超宽代码块可横向滑动查看，顶部显示语言标签与复制按钮，底部有滚动指示
+- 正文普通图片与 PDF 页图支持点击全屏预览（排除 LaTeX 公式图）
+- 阅读页顶栏随进度动态显示当前章节标题
+
+### 优化
+
+- 阅读页底栏将主题、字体排版、翻页方式合并为单一「阅读设置」入口
+- 图片预览改为半透明深色遮罩，Android 12+ 启用窗口后模糊
+- 书架支持全选 / 全不选
+- Git 项目或书籍删除后写入墓碑，跨设备恢复时不再被对端推回
+- Git 项目本地缺失或损坏时自动重新克隆
+
+### 修复
+
+- 关闭代码换行后，部分真机横向滑动偏移不刷新绘制
+
 ## [1.0.4] - 2026-08-02
 
 ### 新增
@@ -116,7 +137,8 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.4...HEAD
+[Unreleased]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.5...HEAD
+[1.0.5]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.1...v1.0.2
