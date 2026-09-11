@@ -194,9 +194,9 @@
     <string name="snackbar_bookmark_removed">已取消书签</string>
     <string name="reader_toc_empty_plain_text">未识别到章节。请将章节标题单独成行，例如：\n第一章 …、第1节 …、Chapter 1 …</string>
     <string name="reader_toc_empty_markdown">未识别到标题。请使用 Markdown ATX 语法，例如：\n# 一级标题\n## 二级标题</string>
-    <string name="reader_diagram_preview_cd">图表预览</string>
+    <string name="reader_diagram_preview_cd">图片预览</string>
     <string name="reader_diagram_zoom_hint">双指缩放 / 拖动查看</string>
-    <string name="reader_diagram_close_cd">关闭图表预览</string>
+    <string name="reader_diagram_close_cd">关闭图片预览</string>
     <string name="reader_chrome_toc_cd">目录</string>
     <string name="reader_chrome_bookmark_cd">书签</string>
     <string name="reader_chrome_theme_cd">阅读背景</string>
@@ -208,6 +208,10 @@
     <string name="reader_page_margin">页边距</string>
     <string name="reader_line_spacing">行距</string>
     <string name="reader_line_spacing_value">%1$.2f 倍</string>
+    <string name="reader_code_block_wrap">代码块自动换行</string>
+    <string name="reader_code_block_wrap_summary">关闭后，长代码可在代码窗口内左右滑动查看</string>
+    <string name="reader_code_block_copy">复制</string>
+    <string name="reader_code_block_copied">已复制代码</string>
     <string name="reader_marks_sheet_title">书签与划线</string>
     <string name="reader_marks_tab_bookmarks">书签</string>
     <string name="reader_marks_tab_highlights">划线</string>

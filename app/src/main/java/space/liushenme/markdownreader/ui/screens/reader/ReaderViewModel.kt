@@ -102,6 +102,13 @@ class ReaderViewModel @Inject constructor(
                 initialValue = 1.5f
             )
 
+    val codeBlockWrap: StateFlow<Boolean> = readerSettingsRepository.codeBlockWrap
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = ReaderSettingsRepository.DEFAULT_CODE_BLOCK_WRAP,
+        )
+
     val pageTurnMode: StateFlow<ReaderPageTurnMode> = readerSettingsRepository.pageTurnMode
         .stateIn(
             scope = viewModelScope,

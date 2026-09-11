@@ -136,6 +136,7 @@ fun ReaderScreen(
     val fontSize by viewModel.fontSize.collectAsState()
     val readerPaddingDp by viewModel.readerPaddingDp.collectAsState()
     val readerLineSpacingMultiplier by viewModel.readerLineSpacingMultiplier.collectAsState()
+    val codeBlockWrap by viewModel.codeBlockWrap.collectAsState()
     val loadError by viewModel.loadError.collectAsState()
     val pageTurnMode by viewModel.pageTurnMode.collectAsState()
     val configuration = LocalConfiguration.current
@@ -445,12 +446,14 @@ fun ReaderScreen(
         renderPlainText,
         currentTheme,
         fontSize,
+        codeBlockWrap,
     ) {
         readerContentSignature(
             content = displayedContent,
             renderPlainText = renderPlainText,
             themeName = currentTheme::class.java.name,
             fontSize = fontSize,
+            codeBlockWrap = codeBlockWrap,
         )
     }
 
@@ -1318,6 +1321,7 @@ fun ReaderScreen(
                                             },
                                             onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange,
                                             pdfFullWidthImages = isPdfBook,
+                                            codeBlockWrap = codeBlockWrap,
                                             onOpenPositionReady = ::onReaderOpenPositionReady,
                                         )
                                     } else {
@@ -1354,6 +1358,7 @@ fun ReaderScreen(
                                                 }
                                             },
                                             pdfFullWidthImages = isPdfBook,
+                                            codeBlockWrap = codeBlockWrap,
                                         )
                                     }
                                     // 打开书/书签定位完成前遮住正文，避免先露出窗口开头（更早章节）再跳回。

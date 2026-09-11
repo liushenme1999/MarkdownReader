@@ -186,9 +186,9 @@
     <string name="snackbar_bookmark_removed">Bookmark removed</string>
     <string name="reader_toc_empty_plain_text">No chapters found. Put chapter titles on their own line, e.g.\nChapter 1 …, Section 1 …</string>
     <string name="reader_toc_empty_markdown">No headings found. Use Markdown ATX syntax, e.g.\n# Heading 1\n## Heading 2</string>
-    <string name="reader_diagram_preview_cd">Diagram preview</string>
+    <string name="reader_diagram_preview_cd">Image preview</string>
     <string name="reader_diagram_zoom_hint">Pinch to zoom / drag to pan</string>
-    <string name="reader_diagram_close_cd">Close diagram preview</string>
+    <string name="reader_diagram_close_cd">Close image preview</string>
     <string name="reader_chrome_toc_cd">Contents</string>
     <string name="reader_chrome_bookmark_cd">Bookmarks</string>
     <string name="reader_chrome_theme_cd">Reading theme</string>
@@ -200,6 +200,10 @@
     <string name="reader_page_margin">Page margin</string>
     <string name="reader_line_spacing">Line spacing</string>
     <string name="reader_line_spacing_value">%1$.2fx</string>
+    <string name="reader_code_block_wrap">Wrap code blocks</string>
+    <string name="reader_code_block_wrap_summary">When off, long code can be scrolled horizontally inside the block</string>
+    <string name="reader_code_block_copy">Copy</string>
+    <string name="reader_code_block_copied">Code copied</string>
     <string name="reader_marks_sheet_title">Bookmarks &amp; highlights</string>
     <string name="reader_marks_tab_bookmarks">Bookmarks</string>
     <string name="reader_marks_tab_highlights">Highlights</string>

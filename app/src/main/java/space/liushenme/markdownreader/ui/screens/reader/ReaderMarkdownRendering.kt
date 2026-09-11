@@ -13,6 +13,7 @@ import android.text.style.ClickableSpan
 import android.text.style.BackgroundColorSpan
 import android.graphics.Canvas
 import android.graphics.Rect
+import android.graphics.drawable.BitmapDrawable
 import android.os.Build
 import android.view.ActionMode
 import android.view.HapticFeedbackConstants
@@ -28,6 +29,7 @@ import android.text.method.MovementMethod
 import android.text.style.ImageSpan
 import android.view.View
 import android.widget.TextView
+import android.widget.Toast
 import io.noties.markwon.image.AsyncDrawableSpan
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -99,8 +101,11 @@ import space.liushenme.markdownreader.markdown.DiagramImageLoader
 import space.liushenme.markdownreader.markdown.MarkdownAnchorIndex
 import space.liushenme.markdownreader.markdown.NetworkImageCache
 import space.liushenme.markdownreader.markdown.PreparedMarkdown
+import space.liushenme.markdownreader.markdown.ReaderCodeBlockSettings
 import space.liushenme.markdownreader.markdown.ReaderMarkwonFactory
+import space.liushenme.markdownreader.markdown.ReaderScrollableCodeBlockSpan
 import space.liushenme.markdownreader.markdown.ReaderTableSpacing
+import ru.noties.jlatexmath.JLatexMathDrawable
 import java.io.File
 import io.noties.markwon.Markwon
 import io.noties.markwon.core.spans.HeadingSpan
@@ -139,7 +144,8 @@ internal fun readerContentSignature(
     renderPlainText: Boolean,
     themeName: String,
     fontSize: Int,
-): String = "${renderPlainText}_${content.length}_${content.hashCode()}_${themeName}_$fontSize"
+    codeBlockWrap: Boolean = true,
+): String = "${renderPlainText}_${content.length}_${content.hashCode()}_${themeName}_${fontSize}_w$codeBlockWrap"
 
 internal fun readerHighlightSignature(
     highlights: List<HighlightEntity>,
@@ -154,7 +160,8 @@ internal fun readerRenderSignature(
     themeName: String,
     fontSize: Int,
     highlights: List<HighlightEntity>,
-): String = "${readerContentSignature(content, renderPlainText, themeName, fontSize)}|${readerHighlightSignature(highlights)}"
+    codeBlockWrap: Boolean = true,
+): String = "${readerContentSignature(content, renderPlainText, themeName, fontSize, codeBlockWrap)}|${readerHighlightSignature(highlights)}"
 
 /** 把最新划线状态挂到 TextView，供异步 Markdown/纯文本渲染完成时读取（避免闭包捕获空列表）。 */
 internal fun syncReaderPendingHighlights(
@@ -201,6 +208,7 @@ internal fun applyReaderTextContent(
     highlightColorArgb: Int,
     pdfFullWidthImages: Boolean = false,
     pdfCenterImageVertically: Boolean = false,
+    codeBlockWrap: Boolean = true,
 ) {
     syncReaderPendingHighlights(
         textView = textView,
@@ -229,6 +237,7 @@ internal fun applyReaderTextContent(
             markwon = markwon,
             pdfFullWidthImages = pdfFullWidthImages,
             pdfCenterImageVertically = pdfCenterImageVertically,
+            codeBlockWrap = codeBlockWrap,
         )
         return
     }
@@ -268,6 +277,7 @@ internal fun applyMarkdownContent(
     markwon: Markwon,
     pdfFullWidthImages: Boolean = false,
     pdfCenterImageVertically: Boolean = false,
+    codeBlockWrap: Boolean = true,
 ) {
     fun finishMarkdownRender() {
         textView.setTag(R.id.reader_markdown_render_complete, renderSig)
@@ -328,6 +338,10 @@ internal fun applyMarkdownContent(
         val markdown = NetworkImageCache.rewriteCachedUrls(appContext, prepared.text)
         val tPrep1 = android.os.SystemClock.uptimeMillis()
         val rendered: CharSequence = synchronized(markwonRenderLock) {
+            ReaderCodeBlockSettings.wrapEnabled = codeBlockWrap
+            val viewport = (textView.width - textView.paddingLeft - textView.paddingRight)
+                .coerceAtLeast(0)
+            if (viewport > 0) ReaderCodeBlockSettings.viewportWidthPx = viewport
             runCatching { markwon.toMarkdown(markdown) }.getOrNull() ?: content
         }
         val tMd1 = android.os.SystemClock.uptimeMillis()
@@ -388,6 +402,7 @@ internal fun MarkdownReaderView(
     onDiagramTap: (android.graphics.Bitmap) -> Unit = {},
     onReaderTextSelectionActiveChange: (Boolean) -> Unit = {},
     pdfFullWidthImages: Boolean = false,
+    codeBlockWrap: Boolean = true,
     onOpenPositionReady: () -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -428,6 +443,7 @@ internal fun MarkdownReaderView(
                     renderPlainText = renderPlainText,
                     themeName = theme::class.java.name,
                     fontSize = fontSize,
+                    codeBlockWrap = codeBlockWrap,
                 )
                 syncReaderPendingHighlights(
                     textView = this,
@@ -445,6 +461,7 @@ internal fun MarkdownReaderView(
                     highlightColorArgb = theme.highlightColor.toArgb(),
                     pdfFullWidthImages = pdfFullWidthImages,
                     pdfCenterImageVertically = pdfPagedLayout,
+                    codeBlockWrap = codeBlockWrap,
                 )
 
                 this.onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange
@@ -486,6 +503,7 @@ internal fun MarkdownReaderView(
                 renderPlainText = renderPlainText,
                 themeName = theme::class.java.name,
                 fontSize = fontSize,
+                codeBlockWrap = codeBlockWrap,
             )
             val highlightSig = readerHighlightSignature(highlights)
             val highlightColorArgb = theme.highlightColor.toArgb()
@@ -542,6 +560,7 @@ internal fun MarkdownReaderView(
                     highlightColorArgb = highlightColorArgb,
                     pdfFullWidthImages = pdfFullWidthImages,
                     pdfCenterImageVertically = pdfPagedLayout,
+                    codeBlockWrap = codeBlockWrap,
                 )
             } else if (highlightsChanged) {
                 val renderComplete = textView.getTag(R.id.reader_markdown_render_complete) as? String
@@ -600,6 +619,10 @@ internal class ReaderTouchState(
     var scrollYOnDown: Int = 0,
     /** 本次触摸开始时已有选区，或划词过程中出现选区 → 禁用滑动加书签 */
     var blockBookmarkSwipeGesture: Boolean = false,
+    /** 按下时命中可横滑代码块 */
+    var codeBlockSpan: ReaderScrollableCodeBlockSpan? = null,
+    var lastCodeTouchX: Float = 0f,
+    var codeScrolling: Boolean = false,
 )
 
 /** 当前是否处于文本选区（含 SafeReaderTextView 会话与 Spannable 选区）。 */
@@ -640,14 +663,17 @@ internal fun bindReaderGesturesAndScroll(
                 touchState.downY = e.y
                 touchState.scrollYOnDown = tv?.scrollY ?: 0
                 touchState.blockBookmarkSwipeGesture = tv?.hasActiveReaderTextSelection() == true
+                touchState.codeScrolling = false
+                touchState.lastCodeTouchX = e.x
                 (tv as? SafeReaderTextView)?.prepareForNewTouch(e.x, e.y)
+                touchState.codeBlockSpan = (tv as? SafeReaderTextView)?.scrollableCodeBlockSpanAt(e.x, e.y)
                 // 手指按下即解除目录/书签跳转锁定：否则滑走后 diagram 仍按标题 offset 拉回。
                 if (allowVerticalScroll) {
                     clearPendingScrollCharOffset(tv)
                 }
                 if (tv is SafeReaderTextView && tv.isInTextSelection()) {
                     v.parent?.requestDisallowInterceptTouchEvent(true)
-                } else if (!allowVerticalScroll) {
+                } else if (!allowVerticalScroll && touchState.codeBlockSpan == null) {
                     v.parent?.requestDisallowInterceptTouchEvent(false)
                 }
             }
@@ -655,8 +681,25 @@ internal fun bindReaderGesturesAndScroll(
                 if (tv?.hasActiveReaderTextSelection() == true) {
                     touchState.blockBookmarkSwipeGesture = true
                 }
-                if (tv is SafeReaderTextView && tv.isInTextSelection()) {
+                if (tv is SafeReaderTextView && tv.isInTextSelection() &&
+                    touchState.codeBlockSpan == null &&
+                    !tv.isCodeBlockScrolling()
+                ) {
                     return@setOnTouchListener false
+                }
+                val codeSpan = touchState.codeBlockSpan
+                    ?: (tv as? SafeReaderTextView)?.scrollableCodeBlockSpanAt(e.x, e.y)
+                if (codeSpan != null && tv is SafeReaderTextView) {
+                    val dx = e.x - touchState.downX
+                    val dy = e.y - touchState.downY
+                    val adx = kotlin.math.abs(dx)
+                    val ady = kotlin.math.abs(dy)
+                    if (tv.isCodeBlockScrolling() || (adx > slop && adx > ady)) {
+                        touchState.codeScrolling = true
+                        touchState.blockBookmarkSwipeGesture = true
+                        v.parent?.requestDisallowInterceptTouchEvent(true)
+                        // 不 return true：横滑由 onTouchEvent 在 super 之前消费，避免 Editor 抢走
+                    }
                 }
                 if (allowVerticalScroll && tv is SafeReaderTextView) {
                     val dx = e.x - touchState.downX
@@ -675,7 +718,11 @@ internal fun bindReaderGesturesAndScroll(
                         }
                     }
                 }
-                if (!allowVerticalScroll && tv != null) {
+                if (!allowVerticalScroll && tv != null &&
+                    !touchState.codeScrolling &&
+                    (tv as? SafeReaderTextView)?.isCodeBlockScrolling() != true &&
+                    touchState.codeBlockSpan == null
+                ) {
                     val dx = e.x - touchState.downX
                     val dy = e.y - touchState.downY
                     val adx = kotlin.math.abs(dx)
@@ -703,13 +750,16 @@ internal fun bindReaderGesturesAndScroll(
                     onScroll(localCharProgressAtScrollTop(tv))
                 }
                 val blockBookmarkSwipe = touchState.blockBookmarkSwipeGesture ||
+                    touchState.codeScrolling ||
+                    (tv as? SafeReaderTextView)?.isCodeBlockScrolling() == true ||
                     tv?.hasActiveReaderTextSelection() == true
+                val wasCodeScrolling = touchState.codeScrolling ||
+                    (tv as? SafeReaderTextView)?.isCodeBlockScrolling() == true
                 touchState.blockBookmarkSwipeGesture = false
+                touchState.codeScrolling = false
+                touchState.codeBlockSpan = null
                 if (e.actionMasked != MotionEvent.ACTION_UP) return@setOnTouchListener false
-                if (tv is SafeReaderTextView && tv.dispatchLinkClickIfPresent(e.x, e.y)) {
-                    return@setOnTouchListener true
-                }
-                // 划词/选区期间跳过中心点击与滑动加书签
+                // 划词/选区期间跳过预览、链接与滑动加书签
                 if (tv is SafeReaderTextView && tv.isInTextSelection()) {
                     return@setOnTouchListener false
                 }
@@ -718,10 +768,18 @@ internal fun bindReaderGesturesAndScroll(
                 val adx = kotlin.math.abs(dx)
                 val ady = kotlin.math.abs(dy)
                 if (adx < slop && ady < slop) {
-                    val diagramBitmap = (tv as? SafeReaderTextView)
-                        ?.diagramBitmapAt(touchState.downX, touchState.downY)
-                    if (diagramBitmap != null) {
-                        onDiagramTap(diagramBitmap)
+                    if (tv is SafeReaderTextView &&
+                        tv.dispatchCodeBlockCopyIfPresent(touchState.downX, touchState.downY)
+                    ) {
+                        return@setOnTouchListener true
+                    }
+                    val previewBitmap = (tv as? SafeReaderTextView)
+                        ?.previewableBitmapAt(touchState.downX, touchState.downY)
+                    if (previewBitmap != null) {
+                        onDiagramTap(previewBitmap)
+                        return@setOnTouchListener true
+                    }
+                    if (tv is SafeReaderTextView && tv.dispatchLinkClickIfPresent(e.x, e.y)) {
                         return@setOnTouchListener true
                     }
                     val w = v.width.toFloat()
@@ -732,7 +790,9 @@ internal fun bindReaderGesturesAndScroll(
                     ) {
                         onCenterTap()
                     }
-                } else if (!blockBookmarkSwipe && allowVerticalScroll && dx > 120f && dx > ady * 2f) {
+                } else if (!blockBookmarkSwipe && !wasCodeScrolling &&
+                    allowVerticalScroll && dx > 120f && dx > ady * 2f
+                ) {
                     onSwipeRightBookmark()
                 } else if (!blockBookmarkSwipe && onSwipeDownBookmark != null &&
                     dy > 120f &&
@@ -873,6 +933,16 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     private var lastDragDy = 0f
     /** 本次触摸落在 Mermaid/图表 span 上，整段手势内禁止扩窗。 */
     private var gestureOnDiagram = false
+    /** 本次触摸落在可横滑代码块上。 */
+    private var gestureOnCodeBlock = false
+    private var activeCodeBlockSpan: ReaderScrollableCodeBlockSpan? = null
+    private var lastCodeTouchX = 0f
+    private var lastCodeTouchY = 0f
+    private var codeScrolling = false
+    private var codeGestureCanceledTextView = false
+    private var codeCopyDown = false
+    /** 超宽代码块从 DOWN 起由 dispatchTouchEvent 独占，防止 Compose 父级先截走 MOVE。 */
+    private var interceptOverflowCodeGesture = false
     /** 每次手指按下只允许触发一次扩窗，避免连续扩到全书末尾。 */
     private var windowExpandConsumedThisGesture = false
     private var selectionActive = false
@@ -1460,8 +1530,165 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     /** 本次手势是否从 diagram 区域开始（扩窗应忽略）。 */
     fun isGestureOnDiagram(): Boolean = gestureOnDiagram
 
+    fun isGestureOnCodeBlock(): Boolean = gestureOnCodeBlock
+
+    fun isCodeBlockScrolling(): Boolean = codeScrolling
+
     fun diagramBitmapAt(x: Float, y: Float): android.graphics.Bitmap? {
-        return DiagramImageLoader.cachedBitmapForDestination(diagramDestinationAt(x, y))
+        return previewableBitmapAt(x, y)
+    }
+
+    fun previewableBitmapAt(x: Float, y: Float): android.graphics.Bitmap? {
+        val span = ReaderTextLinkTouch.findAsyncDrawableSpanAt(this, x, y) ?: return null
+        if (isLatexImageSpan(span)) return null
+        val destination = span.drawable.destination.orEmpty()
+        if (destination.startsWith("diagram://")) {
+            return DiagramImageLoader.cachedBitmapForDestination(destination)
+        }
+        if (!span.drawable.hasResult()) return null
+        return (span.drawable.result as? BitmapDrawable)?.bitmap
+    }
+
+    fun scrollableCodeBlockSpanAt(x: Float, y: Float): ReaderScrollableCodeBlockSpan? {
+        val layout = layout ?: return null
+        val spanned = text as? Spanned ?: return null
+        if (spanned.isEmpty()) return null
+        val contentX = x - totalPaddingLeft
+        val contentW = (width - totalPaddingLeft - totalPaddingRight).toFloat()
+        val contentY = y + scrollY - totalPaddingTop
+        val spans = spanned.getSpans(0, spanned.length, ReaderScrollableCodeBlockSpan::class.java)
+        for (span in spans) {
+            val spanStart = spanned.getSpanStart(span)
+            val spanEnd = spanned.getSpanEnd(span)
+            if (spanStart < 0 || spanEnd <= spanStart) continue
+            val firstLine = layout.getLineForOffset(spanStart)
+            val lastLine = layout.getLineForOffset((spanEnd - 1).coerceAtLeast(spanStart))
+            val top = layout.getLineTop(firstLine).toFloat()
+            val bottom = layout.getLineBottom(lastLine).toFloat()
+            if (contentY < top || contentY > bottom) continue
+            // 窗口按整行视口铺满，勿用 lastViewportWidth（getSize 阶段可能仍是 1）
+            if (contentW > 0f && (contentX < -8f || contentX > contentW + 8f)) continue
+            return span
+        }
+        return null
+    }
+
+    private fun codeBlockViewportWidth(): Int =
+        (width - totalPaddingLeft - totalPaddingRight).coerceAtLeast(0)
+
+    /**
+     * 在 [onTouchEvent] 里处理代码块横滑，必须赶在 Editor / 正文滚动之前。
+     * @return true 表示已消费，调用方不要再交给 super。
+     */
+    fun handleCodeBlockTouch(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                activeCodeBlockSpan = scrollableCodeBlockSpanAt(event.x, event.y)
+                lastCodeTouchX = event.x
+                lastCodeTouchY = event.y
+                codeScrolling = false
+                codeGestureCanceledTextView = false
+                activeCodeBlockSpan?.prepareForTouch(paint, codeBlockViewportWidth())
+                codeCopyDown = activeCodeBlockSpan?.let {
+                    it.isOnCopyButton(event.x - totalPaddingLeft, event.y + scrollY - totalPaddingTop)
+                } == true
+                gestureOnCodeBlock = activeCodeBlockSpan != null
+                if (activeCodeBlockSpan != null) {
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                }
+                return false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val span = activeCodeBlockSpan ?: return false
+                if (selectionActive && !codeScrolling) {
+                    dismissSelection()
+                }
+                val dx = event.x - touchDownX
+                val dy = event.y - touchDownY
+                val adx = kotlin.math.abs(dx)
+                val ady = kotlin.math.abs(dy)
+                if (codeCopyDown && adx <= touchSlop && ady <= touchSlop) {
+                    return false
+                }
+                if (codeCopyDown && (adx > touchSlop || ady > touchSlop)) {
+                    codeCopyDown = false
+                }
+                val horizontal = codeScrolling || (adx > touchSlop && adx >= ady)
+                if (!horizontal) return false
+                span.prepareForTouch(paint, codeBlockViewportWidth())
+                val delta = lastCodeTouchX - event.x
+                lastCodeTouchX = event.x
+                span.scrollBy(delta)
+                invalidateMutableCodeBlockSpan(span)
+                codeScrolling = true
+                gestureOnCodeBlock = true
+                parent?.requestDisallowInterceptTouchEvent(true)
+                return true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                val span = activeCodeBlockSpan
+                val tapCopy = event.actionMasked == MotionEvent.ACTION_UP &&
+                    !codeScrolling &&
+                    codeCopyDown &&
+                    span != null &&
+                    isTapGesture(event.x, event.y) &&
+                    span.isOnCopyButton(
+                        event.x - totalPaddingLeft,
+                        event.y + scrollY - totalPaddingTop,
+                    )
+                if (tapCopy && span != null) {
+                    copyCodeBlockToClipboard(span)
+                    codeScrolling = false
+                    codeCopyDown = false
+                    activeCodeBlockSpan = null
+                    return true
+                }
+                val consumed = codeScrolling
+                codeScrolling = false
+                codeCopyDown = false
+                activeCodeBlockSpan = null
+                return consumed
+            }
+        }
+        return false
+    }
+
+    /**
+     * TextView/StaticLayout 在部分硬件加速设备上会缓存行显示列表；仅 invalidate()
+     * 不一定重新调用可变 ReplacementSpan.draw。重复设置原 span 可通知 ChangeWatcher
+     * 该行内容已变化，从而让 scrollX 和滚动条在下一帧真正重绘。
+     */
+    private fun invalidateMutableCodeBlockSpan(span: ReaderScrollableCodeBlockSpan) {
+        val body = text as? Spannable
+        if (body != null) {
+            val start = body.getSpanStart(span)
+            val end = body.getSpanEnd(span)
+            if (start >= 0 && end > start) {
+                val flags = body.getSpanFlags(span)
+                body.setSpan(span, start, end, flags)
+            }
+        }
+        invalidate()
+        postInvalidateOnAnimation()
+    }
+
+    fun dispatchCodeBlockCopyIfPresent(x: Float, y: Float): Boolean {
+        if (selectionActive) return false
+        val span = scrollableCodeBlockSpanAt(x, y) ?: return false
+        if (!span.isOnCopyButton(x - totalPaddingLeft, y + scrollY - totalPaddingTop)) {
+            return false
+        }
+        copyCodeBlockToClipboard(span)
+        return true
+    }
+
+    private fun copyCodeBlockToClipboard(span: ReaderScrollableCodeBlockSpan) {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            ?: return
+        clipboard.setPrimaryClip(ClipData.newPlainText("code", span.rawCode))
+        performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        Toast.makeText(context, context.getString(R.string.reader_code_block_copied), Toast.LENGTH_SHORT)
+            .show()
     }
 
     /**
@@ -1471,6 +1698,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     fun dispatchLinkClickIfPresent(x: Float, y: Float): Boolean {
         if (selectionActive || gestureOnDiagram) return false
         if (!isTapGesture(x, y)) return false
+        if (previewableBitmapAt(x, y) != null) return false
         val span = ReaderTextLinkTouch.findClickableSpanAt(this, x, y) ?: return false
         pendingLinkSpan = null
         ReaderTextLinkTouch.dispatchClickableSpan(this, span)
@@ -1521,6 +1749,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         lastDragDy = 0f
         windowExpandConsumedThisGesture = false
         gestureOnDiagram = isTouchOnDiagramSpan(x, y)
+        gestureOnCodeBlock = scrollableCodeBlockSpanAt(x, y) != null
         allowReaderScrollSideEffects = false
         if (selectionActive) {
             pendingOutsideTapDismiss = !isTouchNearSelection(x, y)
@@ -1642,6 +1871,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     /** 仅拦截图片/图表上的长按，其余完全交给 Editor 原生划词流程（含句柄）。 */
     private fun allowLongPressSelectionAt(x: Float, y: Float): Boolean {
         if (isTouchOnDiagramSpan(x, y)) return false
+        if (scrollableCodeBlockSpanAt(x, y) != null) return false
         val offset = touchOffsetToCharOffset(x, y) ?: return false
         return canSelectAtOffset(offset)
     }
@@ -1786,6 +2016,10 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         val snapChar = viewportAnchorChar
         val snapInLineOffset = viewportAnchorInLineOffset
         super.onLayout(changed, left, top, right, bottom)
+        if (changed) {
+            val viewport = (width - paddingLeft - paddingRight).coerceAtLeast(0)
+            if (viewport > 0) ReaderCodeBlockSettings.viewportWidthPx = viewport
+        }
         if (scrollToTop) {
             // 不清意图：等 finishMarkdownRender 匹配新内容后再清，确保新窗口首帧也在顶部。
             if (scrollY != 0) super.scrollTo(0, 0)
@@ -1845,6 +2079,22 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         return diagramDestinationAt(x, y) != null
     }
 
+    private fun isLatexImageSpan(span: AsyncDrawableSpan): Boolean {
+        val result = span.drawable.result
+        if (result is JLatexMathDrawable) return true
+        var cls: Class<*>? = span.javaClass
+        while (cls != null) {
+            val name = cls.simpleName
+            if (name.contains("Latex", ignoreCase = true) ||
+                name.contains("JLatex", ignoreCase = true)
+            ) {
+                return true
+            }
+            cls = cls.superclass
+        }
+        return false
+    }
+
     private fun diagramDestinationAt(x: Float, y: Float): String? {
         val layout = layout ?: return null
         val spanned = text as? Spanned ?: return null
@@ -1867,6 +2117,103 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         return null
     }
 
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                val span = scrollableCodeBlockSpanAt(event.x, event.y)
+                span?.prepareForTouch(paint, codeBlockViewportWidth())
+                val contentX = event.x - totalPaddingLeft
+                val contentY = event.y + scrollY - totalPaddingTop
+                val copyDown = span?.isOnCopyButton(contentX, contentY) == true
+                if (span != null && (span.canScrollHorizontally() || copyDown)) {
+                    removeCallbacks(settleViewportAfterScrollRunnable)
+                    pointerDown = true
+                    touchDownX = event.x
+                    touchDownY = event.y
+                    lastTouchX = event.x
+                    lastTouchY = event.y
+                    lastCodeTouchX = event.x
+                    lastCodeTouchY = event.y
+                    activeCodeBlockSpan = span
+                    codeScrolling = false
+                    codeCopyDown = copyDown
+                    gestureOnCodeBlock = true
+                    interceptOverflowCodeGesture = true
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    return true
+                }
+                interceptOverflowCodeGesture = false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (interceptOverflowCodeGesture) {
+                    val span = activeCodeBlockSpan ?: return finishOverflowCodeGesture()
+                    val totalDx = event.x - touchDownX
+                    val totalDy = event.y - touchDownY
+                    val adx = kotlin.math.abs(totalDx)
+                    val ady = kotlin.math.abs(totalDy)
+                    if (codeCopyDown && (adx > touchSlop || ady > touchSlop)) {
+                        codeCopyDown = false
+                    }
+                    when {
+                        codeScrolling || (adx > touchSlop && adx >= ady) -> {
+                            val delta = lastCodeTouchX - event.x
+                            lastCodeTouchX = event.x
+                            span.scrollBy(delta)
+                            codeScrolling = true
+                            invalidateMutableCodeBlockSpan(span)
+                        }
+                        ady > touchSlop && ady > adx && allowVerticalScroll -> {
+                            val deltaY = event.y - lastCodeTouchY
+                            lastCodeTouchY = event.y
+                            val layoutH = layout?.height ?: 0
+                            val innerH =
+                                (height - totalPaddingTop - totalPaddingBottom).coerceAtLeast(0)
+                            val maxY = (layoutH - innerH).coerceAtLeast(0)
+                            scrollTo(0, (scrollY - deltaY.toInt()).coerceIn(0, maxY))
+                            markVerticalScrollDrag()
+                        }
+                    }
+                    lastTouchX = event.x
+                    lastTouchY = event.y
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    return true
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (interceptOverflowCodeGesture) {
+                    val span = activeCodeBlockSpan
+                    val tapCopy = event.actionMasked == MotionEvent.ACTION_UP &&
+                        !codeScrolling &&
+                        codeCopyDown &&
+                        span != null &&
+                        kotlin.math.abs(event.x - touchDownX) <= touchSlop &&
+                        kotlin.math.abs(event.y - touchDownY) <= touchSlop &&
+                        span.isOnCopyButton(
+                            event.x - totalPaddingLeft,
+                            event.y + scrollY - totalPaddingTop,
+                        )
+                    if (tapCopy && span != null) {
+                        copyCodeBlockToClipboard(span)
+                    }
+                    return finishOverflowCodeGesture()
+                }
+            }
+        }
+        return super.dispatchTouchEvent(event)
+    }
+
+    private fun finishOverflowCodeGesture(): Boolean {
+        interceptOverflowCodeGesture = false
+        activeCodeBlockSpan = null
+        codeScrolling = false
+        codeCopyDown = false
+        gestureOnCodeBlock = false
+        pointerDown = false
+        isVerticalScrollDrag = false
+        parent?.requestDisallowInterceptTouchEvent(false)
+        return true
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -1879,12 +2226,21 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 isVerticalScrollDrag = false
                 windowExpandConsumedThisGesture = false
                 gestureOnDiagram = isTouchOnDiagramSpan(event.x, event.y)
-                pendingLinkSpan = if (!selectionActive && !gestureOnDiagram) {
+                handleCodeBlockTouch(event)
+                pendingLinkSpan = if (!selectionActive && !gestureOnDiagram &&
+                    !gestureOnCodeBlock &&
+                    previewableBitmapAt(event.x, event.y) == null
+                ) {
                     ReaderTextLinkTouch.findClickableSpanAt(this, event.x, event.y)
                 } else {
                     null
                 }
                 if (pendingLinkSpan != null) {
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    return true
+                }
+                // 超宽代码块：按下即接管，避免 Editor / 正文滚动把横滑吃掉
+                if (activeCodeBlockSpan?.canScrollHorizontally() == true || codeCopyDown) {
                     parent?.requestDisallowInterceptTouchEvent(true)
                     return true
                 }
@@ -1897,6 +2253,35 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             MotionEvent.ACTION_MOVE -> {
                 lastTouchX = event.x
                 lastTouchY = event.y
+                if (handleCodeBlockTouch(event)) {
+                    lastCodeTouchY = event.y
+                    if (!codeGestureCanceledTextView) {
+                        codeGestureCanceledTextView = true
+                        val cancel = MotionEvent.obtain(event).also {
+                            it.action = MotionEvent.ACTION_CANCEL
+                        }
+                        try {
+                            super.onTouchEvent(cancel)
+                        } catch (_: NullPointerException) {
+                        } catch (_: IndexOutOfBoundsException) {
+                        } finally {
+                            cancel.recycle()
+                        }
+                    }
+                    return true
+                }
+                if (activeCodeBlockSpan != null && allowVerticalScroll) {
+                    val dy = event.y - lastCodeTouchY
+                    lastCodeTouchY = event.y
+                    if (kotlin.math.abs(event.y - touchDownY) > touchSlop) {
+                        val layoutH = layout?.height ?: 0
+                        val innerH = (height - totalPaddingTop - totalPaddingBottom).coerceAtLeast(0)
+                        val maxScroll = (layoutH - innerH).coerceAtLeast(0)
+                        scrollTo(0, (scrollY - dy.toInt()).coerceIn(0, maxScroll))
+                        tryMarkVerticalScrollDrag(event.x - touchDownX, event.y - touchDownY)
+                    }
+                    return true
+                }
                 if (selectionActive && isTouchNearSelection(event.x, event.y)) {
                     pendingOutsideTapDismiss = false
                 }
@@ -1910,7 +2295,10 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 // 松手后等惯性结束，再补一次视口锚点补偿（拖动中跳过的异步重排）。
                 removeCallbacks(settleViewportAfterScrollRunnable)
                 postDelayed(settleViewportAfterScrollRunnable, 180L)
-                if (event.actionMasked == MotionEvent.ACTION_UP) {
+                val codeConsumed = handleCodeBlockTouch(event)
+                if (codeConsumed) {
+                    pendingLinkSpan = null
+                } else if (event.actionMasked == MotionEvent.ACTION_UP) {
                     val link = pendingLinkSpan
                     pendingLinkSpan = null
                     if (link != null && isTapGesture(event.x, event.y)) {
@@ -1920,6 +2308,15 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                     }
                 } else {
                     pendingLinkSpan = null
+                }
+                if (codeConsumed) {
+                    isVerticalScrollDrag = false
+                    gestureOnDiagram = false
+                    gestureOnCodeBlock = false
+                    codeGestureCanceledTextView = false
+                    parent?.requestDisallowInterceptTouchEvent(false)
+                    revertToLinkModeIfIdle()
+                    return true
                 }
             }
         }
@@ -1936,6 +2333,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             dismissSelectionOnOutsideTapIfNeeded()
             isVerticalScrollDrag = false
             gestureOnDiagram = false
+            gestureOnCodeBlock = false
             if (!selectionActive) {
                 allowReaderScrollSideEffects = false
             }

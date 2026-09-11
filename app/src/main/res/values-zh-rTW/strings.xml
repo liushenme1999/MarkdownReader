@@ -186,9 +186,9 @@
     <string name="snackbar_bookmark_removed">已取消書籤</string>
     <string name="reader_toc_empty_plain_text">未識別到章節。請將章節標題單獨成行，例如：\n第一章 …、第1節 …、Chapter 1 …</string>
     <string name="reader_toc_empty_markdown">未識別到標題。請使用 Markdown ATX 語法，例如：\n# 一級標題\n## 二級標題</string>
-    <string name="reader_diagram_preview_cd">圖表預覽</string>
+    <string name="reader_diagram_preview_cd">圖片預覽</string>
     <string name="reader_diagram_zoom_hint">雙指縮放 / 拖動檢視</string>
-    <string name="reader_diagram_close_cd">關閉圖表預覽</string>
+    <string name="reader_diagram_close_cd">關閉圖片預覽</string>
     <string name="reader_chrome_toc_cd">目錄</string>
     <string name="reader_chrome_bookmark_cd">書籤</string>
     <string name="reader_chrome_theme_cd">閱讀背景</string>
@@ -200,6 +200,10 @@
     <string name="reader_page_margin">頁邊距</string>
     <string name="reader_line_spacing">行距</string>
     <string name="reader_line_spacing_value">%1$.2f 倍</string>
+    <string name="reader_code_block_wrap">程式碼區塊自動換行</string>
+    <string name="reader_code_block_wrap_summary">關閉後，長程式碼可在區塊內左右滑動檢視</string>
+    <string name="reader_code_block_copy">複製</string>
+    <string name="reader_code_block_copied">已複製程式碼</string>
     <string name="reader_marks_sheet_title">書籤與劃線</string>
     <string name="reader_marks_tab_bookmarks">書籤</string>
     <string name="reader_marks_tab_highlights">劃線</string>

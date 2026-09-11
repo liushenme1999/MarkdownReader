@@ -132,6 +132,7 @@ internal fun ReaderPagedMarkdownHost(
     onReaderTextSelectionActiveChange: (Boolean) -> Unit = {},
     onPageTextViewReady: (Int, TextView) -> Unit,
     pdfFullWidthImages: Boolean = false,
+    codeBlockWrap: Boolean = true,
 ) {
     val layoutDirection = LocalLayoutDirection.current
     val cameraDistancePx = with(LocalDensity.current) { 12f * density * 80f }
@@ -203,6 +204,7 @@ internal fun ReaderPagedMarkdownHost(
                 onDiagramTap = onDiagramTap,
                 onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange,
                 pdfFullWidthImages = pdfFullWidthImages,
+                codeBlockWrap = codeBlockWrap,
             )
         }
     }

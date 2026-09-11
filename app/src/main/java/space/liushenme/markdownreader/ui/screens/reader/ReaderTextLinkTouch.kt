@@ -49,6 +49,30 @@ internal object ReaderTextLinkTouch {
     }
 
     /**
+     * 按可视区域命中 [AsyncDrawableSpan]，避免 `\uFFFC` 的 getOffsetForPosition 偏到行尾。
+     */
+    fun findAsyncDrawableSpanAt(textView: TextView, x: Float, y: Float): AsyncDrawableSpan? {
+        val spannable = textView.text as? Spanned ?: return null
+        val layout = textView.layout ?: return null
+        if (spannable.isEmpty()) return null
+        val contentX = x - textView.totalPaddingLeft
+        if (contentX < 0f) return null
+        val maxContentX = (textView.width - textView.totalPaddingLeft - textView.totalPaddingRight).toFloat()
+        if (maxContentX > 0f && contentX > maxContentX) return null
+        val contentY = (y + textView.scrollY - textView.totalPaddingTop).toInt().coerceAtLeast(0)
+        val line = layout.getLineForVertical(contentY).coerceIn(0, layout.lineCount - 1)
+        val lineStart = layout.getLineStart(line).coerceIn(0, spannable.length)
+        val lineEnd = layout.getLineEnd(line).coerceAtMost(spannable.length)
+        return spannable.getSpans(lineStart, lineEnd, AsyncDrawableSpan::class.java)
+            .firstOrNull { drawableSpan ->
+                val spanStart = spannable.getSpanStart(drawableSpan)
+                val spanEnd = spannable.getSpanEnd(drawableSpan)
+                spanStart >= 0 && spanEnd > spanStart &&
+                    isTouchInDrawableSpanBounds(textView, layout, drawableSpan, spanStart, spanEnd, x, y)
+            }
+    }
+
+    /**
      * 图片占位符 `\uFFFC` 的 getOffsetForPosition 常偏到行尾；按 AsyncDrawableSpan / ImageSpan 可视区域命中外层链接。
      */
     private fun findLinkedDrawableClickableSpan(
@@ -115,7 +139,17 @@ internal object ReaderTextLinkTouch {
             is AsyncDrawableSpan -> {
                 val drawable = drawableSpan.drawable
                 if (drawable.hasResult()) {
-                    left + drawable.bounds.width()
+                    val dw = drawable.bounds.width().toFloat()
+                    val lineW = (textView.width - textView.totalPaddingLeft - textView.totalPaddingRight)
+                        .toFloat()
+                    // ReaderAsyncDrawableSpan 会把窄图水平居中
+                    if (drawableSpan is space.liushenme.markdownreader.markdown.ReaderAsyncDrawableSpan &&
+                        dw in 1f..lineW
+                    ) {
+                        val centeredLeft = left + (lineW - dw) / 2f
+                        return contentX >= centeredLeft && contentX <= centeredLeft + dw
+                    }
+                    left + dw
                 } else {
                     layout.getPrimaryHorizontal(spanEnd.coerceAtMost(textView.text.length))
                 }

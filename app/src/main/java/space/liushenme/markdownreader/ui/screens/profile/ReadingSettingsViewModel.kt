@@ -46,6 +46,12 @@ class ReadingSettingsViewModel @Inject constructor(
         initialValue = ReaderSettingsRepository.DEFAULT_LINE_SPACING_MULT,
     )
 
+    val codeBlockWrap = readerSettingsRepository.codeBlockWrap.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = ReaderSettingsRepository.DEFAULT_CODE_BLOCK_WRAP,
+    )
+
     val pageTurnMode = readerSettingsRepository.pageTurnMode.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -81,6 +87,10 @@ class ReadingSettingsViewModel @Inject constructor(
         viewModelScope.launch {
             readerSettingsRepository.setReaderLineSpacingMultiplier(snapped)
         }
+    }
+
+    fun setCodeBlockWrap(wrap: Boolean) {
+        viewModelScope.launch { readerSettingsRepository.setCodeBlockWrap(wrap) }
     }
 
     fun setPageTurnMode(mode: ReaderPageTurnMode) {
