@@ -186,9 +186,7 @@ internal fun ReaderImmersiveBottomBar(
     chromeBackground: Color,
     onToc: () -> Unit,
     onBookmarks: () -> Unit,
-    onThemeBackground: () -> Unit,
-    onFont: () -> Unit,
-    onPageTurn: () -> Unit
+    onReadingSettings: () -> Unit,
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -219,24 +217,10 @@ internal fun ReaderImmersiveBottomBar(
                     tint = iconTint
                 )
             }
-            IconButton(onClick = onThemeBackground) {
+            IconButton(onClick = onReadingSettings) {
                 Icon(
-                    imageVector = Icons.Default.Palette,
-                    contentDescription = stringResource(R.string.reader_chrome_theme_cd),
-                    tint = iconTint
-                )
-            }
-            IconButton(onClick = onFont) {
-                Icon(
-                    imageVector = Icons.Default.TextFields,
-                    contentDescription = stringResource(R.string.reader_chrome_font_cd),
-                    tint = iconTint
-                )
-            }
-            IconButton(onClick = onPageTurn) {
-                Icon(
-                    imageVector = Icons.Default.ImportContacts,
-                    contentDescription = stringResource(R.string.reader_chrome_page_turn_cd),
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = stringResource(R.string.reader_chrome_settings_cd),
                     tint = iconTint
                 )
             }

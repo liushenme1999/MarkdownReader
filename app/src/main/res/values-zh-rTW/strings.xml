@@ -194,6 +194,7 @@
     <string name="reader_chrome_theme_cd">閱讀背景</string>
     <string name="reader_chrome_font_cd">字型</string>
     <string name="reader_chrome_page_turn_cd">翻頁設定</string>
+    <string name="reader_chrome_settings_cd">閱讀設定</string>
     <string name="reader_sheet_reading_theme">閱讀主題</string>
     <string name="reader_sheet_font_settings">字型設定</string>
     <string name="reader_font_size">字型大小</string>

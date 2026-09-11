@@ -3,6 +3,8 @@ package space.liushenme.markdownreader.ui.screens.reader
 import android.app.Activity
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.drawable.ColorDrawable
+import android.os.Build
 import android.text.Spannable
 import android.text.SpannableString
 import android.text.Spanned
@@ -12,6 +14,7 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.ViewConfiguration
+import android.view.WindowManager
 import android.text.method.LinkMovementMethod
 import android.view.View
 import android.widget.TextView
@@ -75,6 +78,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.zIndex
 import androidx.core.graphics.ColorUtils
 import androidx.core.text.PrecomputedTextCompat
@@ -150,8 +154,7 @@ fun ReaderScreen(
     val readerHorizontalPaddingDp = if (isPdfBook) 0 else readerPaddingDp
     val readerBodyLineSpacing = if (isPdfBook) 1f else readerLineSpacingMultiplier
 
-    var showReaderThemeSheet by remember { mutableStateOf(false) }
-    var showReaderFontSheet by remember { mutableStateOf(false) }
+    var showReaderSettingsSheet by remember { mutableStateOf(false) }
     var showBookmarks by remember { mutableStateOf(false) }
     var showToc by remember { mutableStateOf(false) }
     var showTopBar by remember { mutableStateOf(false) }
@@ -159,7 +162,6 @@ fun ReaderScreen(
     var pendingHighlightSelection by remember {
         mutableStateOf<PendingHighlightPicker?>(null)
     }
-    var showReaderPageTurnSheet by remember { mutableStateOf(false) }
     var diagramPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     val lastHighlightColorArgb by viewModel.lastHighlightColorArgb.collectAsState()
@@ -1469,23 +1471,10 @@ fun ReaderScreen(
                     chromeBackground = systemBarChromeColor,
                     onToc = { showToc = true },
                     onBookmarks = { showBookmarks = true },
-                    onThemeBackground = { showReaderThemeSheet = true },
-                    onFont = { showReaderFontSheet = true },
-                    onPageTurn = { showReaderPageTurnSheet = true }
+                    onReadingSettings = { showReaderSettingsSheet = true },
                 )
             }
         }
-    }
-
-    if (showReaderPageTurnSheet) {
-        ReaderPageTurnSheet(
-            currentMode = pageTurnMode,
-            onModeSelected = { viewModel.setPageTurnMode(it) },
-            onDismiss = {
-                showReaderPageTurnSheet = false
-                if (immersiveReading) showTopBar = false
-            }
-        )
     }
 
     diagramPreviewBitmap?.let { bitmap ->
@@ -1495,29 +1484,24 @@ fun ReaderScreen(
         )
     }
 
-    if (showReaderThemeSheet) {
-        ReaderThemeSheet(
+    if (showReaderSettingsSheet) {
+        ReaderSettingsSheet(
             currentTheme = currentTheme,
-            onThemeChange = { viewModel.setTheme(it) },
-            onDismiss = {
-                showReaderThemeSheet = false
-                if (immersiveReading) showTopBar = false
-            }
-        )
-    }
-
-    if (showReaderFontSheet) {
-        ReaderFontSheet(
             fontSize = fontSize,
             readerPaddingDp = readerPaddingDp,
             readerLineSpacingMultiplier = readerLineSpacingMultiplier,
+            codeBlockWrap = codeBlockWrap,
+            pageTurnMode = pageTurnMode,
+            onThemeChange = { viewModel.setTheme(it) },
             onFontSizeChange = { viewModel.setFontSize(it) },
             onPaddingDpChange = { viewModel.setReaderPaddingDp(it) },
             onLineSpacingChange = { viewModel.setReaderLineSpacingMultiplier(it) },
+            onCodeBlockWrapChange = { viewModel.setCodeBlockWrap(it) },
+            onPageTurnModeChange = { viewModel.setPageTurnMode(it) },
             onDismiss = {
-                showReaderFontSheet = false
+                showReaderSettingsSheet = false
                 if (immersiveReading) showTopBar = false
-            }
+            },
         )
     }
 
@@ -1846,15 +1830,41 @@ private fun DiagramPreviewDialog(
     var offsetX by remember(bitmap) { mutableFloatStateOf(0f) }
     var offsetY by remember(bitmap) { mutableFloatStateOf(0f) }
     val image = remember(bitmap) { bitmap.asImageBitmap() }
+    // 深灰半透明遮罩让预览图保持突出，同时仍能看见模糊后的阅读页背景。
+    val glassTint = Color(0xFF20242B).copy(alpha = 0.72f)
 
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        val dialogView = LocalView.current
+        val blurRadiusPx = with(LocalDensity.current) { 56.dp.roundToPx() }
+        DisposableEffect(dialogView, blurRadiusPx) {
+            val window = (dialogView.parent as? DialogWindowProvider)?.window
+            window?.setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                runCatching {
+                    window?.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
+                    window?.attributes = window?.attributes?.apply {
+                        setBlurBehindRadius(blurRadiusPx)
+                    }
+                    window?.setBackgroundBlurRadius(blurRadiusPx)
+                }
+            }
+            onDispose {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    runCatching {
+                        window?.clearFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
+                        window?.setBackgroundBlurRadius(0)
+                    }
+                }
+            }
+        }
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.94f))
+                .background(glassTint)
                 .pointerInput(bitmap, scale, offsetX, offsetY) {
                     detectTapGestures { tap ->
                         val imageW = bitmap.width.toFloat().coerceAtLeast(1f)

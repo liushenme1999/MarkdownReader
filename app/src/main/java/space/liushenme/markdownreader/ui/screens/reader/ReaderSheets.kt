@@ -79,7 +79,11 @@ import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
+import space.liushenme.markdownreader.ui.components.ReaderPageTurnModeOption
+import space.liushenme.markdownreader.ui.components.ReaderSettingsGroupCard
+import space.liushenme.markdownreader.ui.components.ReaderSettingsSectionTitle
 import space.liushenme.markdownreader.ui.components.ReadingThemeCardOption
+import space.liushenme.markdownreader.ui.components.ReadingThemeGrid
 import space.liushenme.markdownreader.ui.components.ReaderWideSliderRow
 import space.liushenme.markdownreader.ui.components.MarkdownInlineHtmlText
 import space.liushenme.markdownreader.ui.components.iconTintForDeleteStrip
@@ -229,6 +233,144 @@ internal fun ReaderFontSheet(
                 steps = 29
             )
             Spacer(modifier = Modifier.height(32.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun ReaderSettingsSheet(
+    currentTheme: ReadingTheme,
+    fontSize: Int,
+    readerPaddingDp: Int,
+    readerLineSpacingMultiplier: Float,
+    codeBlockWrap: Boolean,
+    pageTurnMode: ReaderPageTurnMode,
+    onThemeChange: (ReadingTheme) -> Unit,
+    onFontSizeChange: (Int) -> Unit,
+    onPaddingDpChange: (Int) -> Unit,
+    onLineSpacingChange: (Float) -> Unit,
+    onCodeBlockWrapChange: (Boolean) -> Unit,
+    onPageTurnModeChange: (ReaderPageTurnMode) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .navigationBarsPadding()
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.reading_settings_title),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+            )
+
+            Column {
+                ReaderSettingsSectionTitle(
+                    stringResource(R.string.reading_settings_section_reading_theme),
+                )
+                ReaderSettingsGroupCard {
+                    ReadingThemeGrid(
+                        themes = ReadingTheme.allThemes(),
+                        selected = currentTheme,
+                        onSelect = onThemeChange,
+                        modifier = Modifier.padding(vertical = 12.dp),
+                    )
+                }
+            }
+
+            Column {
+                ReaderSettingsSectionTitle(
+                    stringResource(R.string.reading_settings_section_typography),
+                )
+                ReaderSettingsGroupCard {
+                    ReaderWideSliderRow(
+                        label = stringResource(R.string.reader_font_size),
+                        valueText = "$fontSize sp",
+                        value = fontSize.toFloat(),
+                        onValueChange = {
+                            onFontSizeChange(it.roundToInt().coerceIn(10, 40))
+                        },
+                        valueRange = 10f..40f,
+                        steps = 29,
+                        showDividerBelow = true,
+                    )
+                    ReaderWideSliderRow(
+                        label = stringResource(R.string.reader_page_margin),
+                        valueText = "$readerPaddingDp dp",
+                        value = readerPaddingDp.toFloat(),
+                        onValueChange = {
+                            onPaddingDpChange(it.roundToInt().coerceIn(8, 56))
+                        },
+                        valueRange = 8f..56f,
+                        steps = 47,
+                        showDividerBelow = true,
+                    )
+                    ReaderWideSliderRow(
+                        label = stringResource(R.string.reader_line_spacing),
+                        valueText = stringResource(
+                            R.string.reader_line_spacing_value,
+                            readerLineSpacingMultiplier,
+                        ),
+                        value = readerLineSpacingMultiplier,
+                        onValueChange = onLineSpacingChange,
+                        valueRange = 1f..2.5f,
+                        steps = 29,
+                        showDividerBelow = true,
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.reader_code_block_wrap),
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = stringResource(R.string.reader_code_block_wrap_summary),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                            )
+                        }
+                        Switch(
+                            checked = codeBlockWrap,
+                            onCheckedChange = onCodeBlockWrapChange,
+                        )
+                    }
+                }
+            }
+
+            Column {
+                ReaderSettingsSectionTitle(
+                    stringResource(R.string.reading_settings_section_page_turn),
+                )
+                ReaderSettingsGroupCard {
+                    Column(
+                        modifier = Modifier.padding(vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        ReaderPageTurnMode.selectableModes.forEachIndexed { index, mode ->
+                            ReaderPageTurnModeOption(
+                                mode = mode,
+                                selected = mode == pageTurnMode,
+                                onClick = { onPageTurnModeChange(mode) },
+                                showDividerBelow =
+                                    index < ReaderPageTurnMode.selectableModes.lastIndex,
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

@@ -612,6 +612,12 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
+    fun setCodeBlockWrap(enabled: Boolean) {
+        viewModelScope.launch {
+            readerSettingsRepository.setCodeBlockWrap(enabled)
+        }
+    }
+
     fun setPageTurnMode(mode: ReaderPageTurnMode) {
         viewModelScope.launch {
             readerSettingsRepository.setPageTurnMode(mode)

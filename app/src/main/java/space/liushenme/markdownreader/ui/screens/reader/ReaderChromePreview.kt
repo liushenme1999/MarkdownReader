@@ -133,9 +133,7 @@ internal fun ReaderChromePreview() {
                 chromeBackground = readingChromeShade(theme.backgroundColor),
                 onToc = { },
                 onBookmarks = { },
-                onThemeBackground = { },
-                onFont = { },
-                onPageTurn = { }
+                onReadingSettings = { },
             )
         }
     }

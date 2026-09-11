@@ -194,6 +194,7 @@
     <string name="reader_chrome_theme_cd">Reading theme</string>
     <string name="reader_chrome_font_cd">Font</string>
     <string name="reader_chrome_page_turn_cd">Page turn</string>
+    <string name="reader_chrome_settings_cd">Reading settings</string>
     <string name="reader_sheet_reading_theme">Reading theme</string>
     <string name="reader_sheet_font_settings">Font settings</string>
     <string name="reader_font_size">Font size</string>
