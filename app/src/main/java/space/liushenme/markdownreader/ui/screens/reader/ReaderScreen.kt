@@ -41,7 +41,6 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -132,7 +131,6 @@ fun ReaderScreen(
     val content by viewModel.content.collectAsState()
     val bookmarks by viewModel.bookmarks.collectAsState()
     val highlights by viewModel.highlights.collectAsState()
-    val readingProgress by viewModel.readingProgress.collectAsState()
     val readerLoadEpoch by viewModel.readerLoadEpoch.collectAsState()
     val currentTheme by viewModel.currentTheme.collectAsState()
     val fontSize by viewModel.fontSize.collectAsState()
@@ -209,19 +207,6 @@ fun ReaderScreen(
     val snackbarBookmarkRemoved = stringResource(R.string.snackbar_bookmark_removed)
     val backToBookshelfLabel = stringResource(R.string.reader_back_to_bookshelf)
     val totalChars = book?.totalChars?.takeIf { it > 0 } ?: content.length.coerceAtLeast(1)
-    val chapterEntry = remember(tocEntries, readingProgress, totalChars) {
-        val e = currentChapterEntryForProgress(tocEntries, readingProgress, totalChars)
-        android.util.Log.d(
-            "ReaderCoordDbg",
-            "title progress=$readingProgress totalChars=$totalChars contentLen=${content.length} " +
-                "pos=${(readingProgress * totalChars).toInt()} entrySrc=${e?.sourceOffset} title=${e?.title} " +
-                "tocSize=${tocEntries.size} firstToc=${tocEntries.firstOrNull()?.sourceOffset} " +
-                "lastToc=${tocEntries.lastOrNull()?.sourceOffset}",
-        )
-        e
-    }
-    val chapterTitle = chapterEntry?.title
-    val chapterTitleRaw = chapterEntry?.rawTitle ?: chapterTitle
 
     val pageSpecs = remember(
         readerContent,
@@ -1125,7 +1110,11 @@ fun ReaderScreen(
             if (!immersiveReading && !readerTextSelectionActive) {
                 ReaderTopAppBar(
                     title = book?.title ?: readingTitleFallback,
-                    chapterTitle = chapterTitleRaw,
+                    chapterTitle = rememberChapterTitleForProgress(
+                        viewModel = viewModel,
+                        tocEntries = tocEntries,
+                        totalChars = totalChars,
+                    ),
                     onNavigateBack = { navController.navigateUp() },
                     theme = currentTheme
                 )
@@ -1190,8 +1179,8 @@ fun ReaderScreen(
                             }
                         }
                         // 沉浸模式章节小标题常驻，不随大顶栏/底栏显隐改变布局（避免点击唤出工具栏时正文跳动）
-                        val immersiveChapterTitle = chapterTitleRaw.takeIf { immersiveReading && !isPdfBook }
-                        val readerPaddingTopDp = if (immersiveChapterTitle != null) {
+                        val showImmersiveChapterBar = immersiveReading && !isPdfBook
+                        val readerPaddingTopDp = if (showImmersiveChapterBar) {
                             minOf(ReaderChapterStripBodyTopPaddingDp, readerPaddingDp)
                         } else {
                             readerPaddingDp
@@ -1200,11 +1189,13 @@ fun ReaderScreen(
                         // 始终同一 Column 槽位：章节条显隐不得切换「裸 ReaderHost / Column 包一层」，
                         // 否则 AndroidView factory 会反复重建 → 周期性全量 Markwon。
                         Column(Modifier.fillMaxSize()) {
-                            if (immersiveChapterTitle != null) {
+                            if (showImmersiveChapterBar) {
                                 ReaderImmersiveChapterTitleBar(
-                                    title = immersiveChapterTitle,
+                                    viewModel = viewModel,
+                                    tocEntries = tocEntries,
+                                    totalChars = totalChars,
+                                    fallbackTitle = book?.title ?: readingTitleFallback,
                                     theme = currentTheme,
-                                    progressPercent = (readingProgress * 100).toInt(),
                                 )
                             }
                             key(bookId, pageTurnMode) {
@@ -1259,34 +1250,29 @@ fun ReaderScreen(
                                                 val restoreBlocking = !restoreCanceledThisScroll &&
                                                     (pendingScrollRestoreGlobalChar != null ||
                                                         pendingScrollRestorePdfPageIndex != null)
-                                                if (readerTv != null &&
-                                                    readerTv.allowReaderScrollSideEffects &&
-                                                    !readerTv.shouldSuppressReaderScrollSideEffects() &&
+                                                if (!restoreBlocking &&
                                                     !windowExpandInFlight &&
-                                                    !restoreBlocking
+                                                    readerTv?.shouldSuppressReaderScrollSideEffects() != true
                                                 ) {
-                                                    val now = System.currentTimeMillis()
-                                                    if (now - lastScrollProgressSaveMs >= 200L) {
-                                                        lastScrollProgressSaveMs = now
-                                                        // PDF 必须走页码反查；TXT/MD 用 currentTopGlobalChar 统一入口。
-                                                        val estimated = currentTopGlobalChar()
-                                                            ?: return@MarkdownReaderView
+                                                    val estimated = currentTopGlobalChar()
+                                                    if (estimated != null) {
                                                         lastScrollTopGlobalChar = estimated
-                                                        android.util.Log.d(
-                                                            "ReaderCoordDbg",
-                                                            "scrollTop estimated=$estimated scrollY=${readerTv.scrollY} " +
-                                                                "winStart=$displayWindowStartChar winEnd=$displayWindowEndChar " +
-                                                                "contentLen=${readerContent.length}",
-                                                        )
-                                                        val preview = if (isPdfBook) {
-                                                            null
-                                                        } else {
-                                                            previewPlainTextFromTextViewTop(readerTv)
+                                                        viewModel.updateVisibleReadingProgress(estimated)
+                                                        val now = System.currentTimeMillis()
+                                                        if (readerTv?.allowReaderScrollSideEffects == true &&
+                                                            now - lastScrollProgressSaveMs >= 200L
+                                                        ) {
+                                                            lastScrollProgressSaveMs = now
+                                                            val preview = if (isPdfBook) {
+                                                                null
+                                                            } else {
+                                                                readerTv?.let { previewPlainTextFromTextViewTop(it) }
+                                                            }
+                                                            viewModel.updateReadingProgressAtChar(
+                                                                estimated,
+                                                                preview,
+                                                            )
                                                         }
-                                                        viewModel.updateReadingProgressAtChar(
-                                                            estimated,
-                                                            preview,
-                                                        )
                                                     }
                                                 }
                                                 if (readerTv?.allowReaderScrollSideEffects != true ||
@@ -1413,32 +1399,6 @@ fun ReaderScreen(
 
             }
 
-            // 阅读进度：浮层，不随大顶栏/底栏挤占正文布局
-            if (immersiveReading && !showTopBar) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .height(32.dp)
-                        .wrapContentWidth(align = Alignment.End)
-                        .navigationBarsPadding()
-                        .padding(end = 16.dp, bottom = 10.dp)
-                        .zIndex(0.5f),
-                    contentAlignment = Alignment.CenterEnd
-                ) {
-                    Text(
-                        text = "${(readingProgress * 100).toInt()}%",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = currentTheme.textColor.copy(alpha = 0.7f),
-                        modifier = Modifier
-                            .background(
-                                color = currentTheme.backgroundColor.copy(alpha = 0.6f),
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .padding(vertical = 2.dp, horizontal = 8.dp)
-                    )
-                }
-            }
-
             // 大顶栏 / 底栏：浮层，显隐不改变正文与章节小标题的布局
             AnimatedVisibility(
                 visible = readerChromeVisible,
@@ -1470,7 +1430,11 @@ fun ReaderScreen(
                         )
                         ReaderTopAppBar(
                             title = book?.title ?: readingTitleFallback,
-                            chapterTitle = chapterTitleRaw,
+                            chapterTitle = rememberChapterTitleForProgress(
+                                viewModel = viewModel,
+                                tocEntries = tocEntries,
+                                totalChars = totalChars,
+                            ),
                             onNavigateBack = { navController.navigateUp() },
                             theme = currentTheme,
                             modifier = Modifier.fillMaxWidth()
@@ -1774,6 +1738,10 @@ fun ReaderScreen(
 
     // 目录
     if (showToc) {
+        val tocReadingProgress by viewModel.readingProgress.collectAsState()
+        val chapterEntry = remember(tocEntries, tocReadingProgress, totalChars) {
+            currentChapterEntryForProgress(tocEntries, tocReadingProgress, totalChars)
+        }
         TocSheet(
             entries = tocEntries,
             emptyTocMessage = emptyTocMessage,

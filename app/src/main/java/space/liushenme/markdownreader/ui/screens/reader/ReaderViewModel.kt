@@ -278,6 +278,17 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
+    /** 仅刷新界面进度，不立刻落盘（滚动时实时更新标题栏百分比）。 */
+    fun updateVisibleReadingProgress(globalChar: Int) {
+        val contentLen = _content.value.length
+        if (contentLen <= 0) return
+        val pos = globalChar.coerceIn(0, contentLen)
+        lastKnownReadingCharPos = pos
+        val progress = readingProgressForCharPos(pos, contentLen)
+        if ((_readingProgress.value * 100).toInt() == (progress * 100).toInt()) return
+        _readingProgress.value = progress
+    }
+
     /** 按全书源码字符下标更新进度（与书签记录字段一致：position + preview）。 */
     fun updateReadingProgressAtChar(globalChar: Int, previewText: String? = null) {
         val contentLen = _content.value.length
@@ -285,7 +296,7 @@ class ReaderViewModel @Inject constructor(
         val pos = globalChar.coerceIn(0, contentLen)
         lastKnownReadingCharPos = pos
         previewText?.let { lastKnownProgressPreview = normalizeReadingPreviewText(it) }
-        val progress = pos.toFloat() / contentLen
+        val progress = readingProgressForCharPos(pos, contentLen)
         _readingProgress.value = progress
         scheduleProgressPersist(progress, pos, lastKnownProgressPreview)
     }

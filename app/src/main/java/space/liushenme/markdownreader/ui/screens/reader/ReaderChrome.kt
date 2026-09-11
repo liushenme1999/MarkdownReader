@@ -104,6 +104,40 @@ import kotlin.math.roundToInt
 
 @Composable
 internal fun ReaderImmersiveChapterTitleBar(
+    viewModel: ReaderViewModel,
+    tocEntries: List<MarkdownTocEntry>,
+    totalChars: Int,
+    fallbackTitle: String,
+    theme: ReadingTheme,
+    modifier: Modifier = Modifier,
+) {
+    val readingProgress by viewModel.readingProgress.collectAsState()
+    val chapterEntry = remember(tocEntries, readingProgress, totalChars) {
+        currentChapterEntryForProgress(tocEntries, readingProgress, totalChars)
+    }
+    ReaderImmersiveChapterTitleBar(
+        title = chapterEntry?.rawTitle ?: chapterEntry?.title ?: fallbackTitle,
+        theme = theme,
+        progressPercent = (readingProgress * 100).toInt(),
+        modifier = modifier,
+    )
+}
+
+@Composable
+internal fun rememberChapterTitleForProgress(
+    viewModel: ReaderViewModel,
+    tocEntries: List<MarkdownTocEntry>,
+    totalChars: Int,
+): String? {
+    val readingProgress by viewModel.readingProgress.collectAsState()
+    val chapterEntry = remember(tocEntries, readingProgress, totalChars) {
+        currentChapterEntryForProgress(tocEntries, readingProgress, totalChars)
+    }
+    return chapterEntry?.rawTitle ?: chapterEntry?.title
+}
+
+@Composable
+internal fun ReaderImmersiveChapterTitleBar(
     title: String,
     theme: ReadingTheme,
     progressPercent: Int,
