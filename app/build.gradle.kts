@@ -212,9 +212,17 @@ listOf("debug", "release").forEach { buildType ->
 
             val renamedGradleApk = gradleOutputDir.resolve(targetName)
             if (renamedGradleApk.isFile) {
-                // 复制到 app/<buildType>/ 供 README / Studio 定位；保留历史 MD阅读器_*.apk
+                // 复制到 app/<buildType>/ 供 README / Studio 定位；只保留当前版本 APK
                 studioOutputDir.mkdirs()
                 renamedGradleApk.copyTo(studioOutputDir.resolve(targetName), overwrite = true)
+                studioOutputDir.listFiles()
+                    ?.filter {
+                        it.isFile &&
+                            it.extension.equals("apk", ignoreCase = true) &&
+                            it.name.startsWith("${baseName}_") &&
+                            it.name != targetName
+                    }
+                    ?.forEach { it.delete() }
             }
 
             // Studio 的 listing redirect 常在 assemble 末尾写入 app-release.apk，必须在此之后清理
