@@ -40,4 +40,38 @@ class GitHubRepoUrlParserTest {
         assertNull(GitHubRepoUrlParser.parse(""))
         assertNull(GitHubRepoUrlParser.parse("not a url"))
     }
+
+    @Test
+    fun canonicalBrowseUrl_normalizesGitSuffixHttpWwwAndSlash() {
+        assertEquals(
+            "https://github.com/owner/repo",
+            GitHubRepoUrlParser.canonicalBrowseUrl("https://github.com/owner/repo.git"),
+        )
+        assertEquals(
+            "https://github.com/owner/repo",
+            GitHubRepoUrlParser.canonicalBrowseUrl("http://github.com/owner/repo/"),
+        )
+        assertEquals(
+            "https://github.com/owner/repo",
+            GitHubRepoUrlParser.canonicalBrowseUrl("https://www.github.com/owner/repo.git"),
+        )
+    }
+
+    @Test
+    fun sameRepo_matchesEquivalentGithubUrls() {
+        assertEquals(
+            true,
+            GitHubRepoUrlParser.sameRepo(
+                "https://github.com/owner/repo.git",
+                "http://www.github.com/owner/repo",
+            ),
+        )
+        assertEquals(
+            false,
+            GitHubRepoUrlParser.sameRepo(
+                "https://github.com/owner/repo",
+                "https://github.com/owner/other",
+            ),
+        )
+    }
 }

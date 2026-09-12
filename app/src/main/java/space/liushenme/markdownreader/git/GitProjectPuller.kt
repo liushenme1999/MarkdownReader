@@ -17,14 +17,14 @@ object GitProjectPuller {
         localPath: String,
         branch: String,
         onProgress: (GitProgress) -> Unit = {},
-    ): GitPullResult {
+    ): GitPullResult = GitRepoLock.withLock(GitRepoLock.keyForPath(localPath)) {
         val dir = File(localPath)
         if (!dir.isDirectory || !File(dir, ".git").exists()) {
             throw GitCloneException("本地仓库不存在或已损坏")
         }
 
         onProgress(GitProgress(GitProgress.Phase.FETCHING))
-        return try {
+        try {
             Git.open(dir).use { git ->
                 val repo = git.repository
                 val previous = repo.resolve("HEAD")?.name.orEmpty()

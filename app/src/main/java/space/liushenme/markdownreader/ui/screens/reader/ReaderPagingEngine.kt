@@ -112,11 +112,11 @@ internal fun estimateTargetCharsPerPage(fontSize: Int, screenHeightDp: Int, scre
     return (lines * charsPerLine).coerceIn(900, 14_000)
 }
 
-/** 将正文切成多段用于横向分页；返回 (片段, 在全文中的起始下标)。 */
-internal fun splitMarkdownToPages(content: String, targetChars: Int): List<Pair<String, Int>> {
-    if (content.isEmpty()) return listOf("" to 0)
-    if (targetChars < 200) return listOf(content to 0)
-    val result = mutableListOf<Pair<String, Int>>()
+/** 将正文切成多段用于横向分页；只存区间，渲染时再 substring。 */
+internal fun splitMarkdownToPages(content: String, targetChars: Int): List<IntRange> {
+    if (content.isEmpty()) return listOf(0 until 0)
+    if (targetChars < 200) return listOf(0 until content.length)
+    val result = mutableListOf<IntRange>()
     var idx = 0
     while (idx < content.length) {
         val start = idx
@@ -136,10 +136,17 @@ internal fun splitMarkdownToPages(content: String, targetChars: Int): List<Pair<
         if (end <= start) {
             end = (start + 1).coerceAtMost(content.length)
         }
-        result += content.substring(start, end) to start
+        result += start until end
         idx = end
     }
     return result
+}
+
+internal fun pageSlice(content: String, range: IntRange): String {
+    if (content.isEmpty() || range.first >= content.length) return ""
+    val start = range.first.coerceIn(0, content.length)
+    val end = (range.last + 1).coerceIn(start, content.length)
+    return content.substring(start, end)
 }
 
 // ============== 章节惰性渲染窗口工具（仅用于 VerticalScroll 模式） ==============
@@ -941,7 +948,27 @@ internal fun resolveGlobalCharPos(
 }
 
 internal fun readingProgressForCharPos(charPos: Int, contentLength: Int): Float =
-    (charPos.toFloat() / contentLength.coerceAtLeast(1)).coerceIn(0f, 1f)
+    readingProgressForViewport(charPos, contentLength)
+
+/** 视口顶部进度（字符 / 全文）。已读完由用户确认后单独写成 100%。 */
+internal fun readingProgressForViewport(
+    topChar: Int,
+    contentLength: Int,
+): Float {
+    if (contentLength <= 0) return 0f
+    return (topChar.toFloat() / contentLength).coerceIn(0f, 1f)
+}
+
+/** 用户已确认读完且仍停在文末时显示 100%，否则按视口顶计算。 */
+internal fun displayedReadingProgress(
+    topChar: Int,
+    contentLength: Int,
+    finishedConfirmed: Boolean,
+): Float {
+    if (contentLength <= 0) return 0f
+    if (finishedConfirmed) return 1f
+    return readingProgressForViewport(topChar, contentLength)
+}
 
 /** layout 已基于当前文本测量完成。 */
 internal fun isReaderTextViewLayoutReady(
@@ -1391,8 +1418,7 @@ internal fun applyStashedSourceScrollRestoreIfAny(
     // 前置段显示长度 = 新显示长度 - 旧显示长度（旧窗口对齐章节边界，不会与前置段合并渲染），
     // 取该边界处行顶像素即前置段高度，叠加到旧 scrollY 上即可精确还原，无需比例/指纹映射。
     val oldDisplayedLen = tv.getTag(R.id.reader_pending_expand_old_displayed_len) as? Int
-    android.util.Log.d(
-        "ReaderRestoreDbg2",
+    readerRestoreDbg(
         "enter anchorScrollY=$anchorScrollY anchorWinStart=$anchorWindowStart " +
             "winStart=$windowStart winEnd=$windowEnd len=$len oldDisplayedLen=$oldDisplayedLen " +
             "srcOff=$sourceOffset fp=${(tv.getTag(R.id.reader_pending_expand_fingerprint) as? String)?.take(12)}",
@@ -1401,10 +1427,7 @@ internal fun applyStashedSourceScrollRestoreIfAny(
         // 时序 guard：向上扩窗是纯前置插入，前置段（含章节标题）渲染后显示长度必然增加。
         // 若新显示长度未超过旧长度，说明新内容还没写进 TextView，本次不恢复也不清 stash，等就绪帧再来。
         if (oldDisplayedLen != null && len <= oldDisplayedLen) {
-            android.util.Log.d(
-                "ReaderRestoreDbg2",
-                "expandUp SKIP notReady len=$len oldDisplayedLen=$oldDisplayedLen",
-            )
+            readerRestoreDbg("expandUp SKIP notReady len=$len oldDisplayedLen=$oldDisplayedLen")
             return false
         }
         val layout = tv.layout
@@ -1427,8 +1450,7 @@ internal fun applyStashedSourceScrollRestoreIfAny(
                     .coerceIn(0, (layout.lineCount - 1).coerceAtLeast(0))
                 val lineTop = layout.getLineTop(line)
                 val inLineOffset = (anchorScrollY - (anchorLineTop ?: anchorScrollY)).coerceAtLeast(0)
-                android.util.Log.d(
-                    "ReaderRestoreDbg2",
+                readerRestoreDbg(
                     "expandUp fingerprint idx=$fingerprintIdx expected=$expectedViewportTopIdx " +
                         "lineTop=$lineTop inLineOffset=$inLineOffset",
                 )
@@ -1439,14 +1461,13 @@ internal fun applyStashedSourceScrollRestoreIfAny(
             val boundaryLine = layout.getLineForOffset(lengthDiffBoundary)
                 .coerceIn(0, (layout.lineCount - 1).coerceAtLeast(0))
             val prependedHeight = layout.getLineTop(boundaryLine)
-            android.util.Log.d(
-                "ReaderRestoreDbg2",
+            readerRestoreDbg(
                 "expandUp exact boundaryOffset=$lengthDiffBoundary prependedHeight=$prependedHeight " +
                     "anchorScrollY=$anchorScrollY -> targetScrollY=${anchorScrollY + prependedHeight}",
             )
             scrollTextViewPreservingScrollY(tv, anchorScrollY + prependedHeight)
         } else {
-            android.util.Log.d("ReaderRestoreDbg2", "expandUp FALLBACK heightAccum")
+            readerRestoreDbg("expandUp FALLBACK heightAccum")
             // 缺少旧长度或 layout 未就绪时回退到高度累加实现。
             restoreTextViewScrollAfterWindowChange(
                 tv = tv,
@@ -1467,10 +1488,7 @@ internal fun applyStashedSourceScrollRestoreIfAny(
         // 向下扩窗是后缀追加：新显示长度应变长。未变说明 Markwon 尚未 setText，
         // 此时若恢复会把用户正在滑的 scrollY 拽回 stash 时刻并清掉 stash → 滑动抖动/回弹。
         if (oldDisplayedLen != null && len <= oldDisplayedLen) {
-            android.util.Log.d(
-                "ReaderRestoreDbg2",
-                "expandDown SKIP notReady len=$len oldDisplayedLen=$oldDisplayedLen",
-            )
+            readerRestoreDbg("expandDown SKIP notReady len=$len oldDisplayedLen=$oldDisplayedLen")
             return false
         }
         scrollTextViewPreservingScrollY(tv, anchorScrollY)
@@ -1498,8 +1516,7 @@ internal fun applyStashedSourceScrollRestoreIfAny(
             fingerprint = fingerprint,
             expectedIndex = expectedIndex.coerceIn(0, (len - 1).coerceAtLeast(0)),
         )
-        android.util.Log.d(
-            "ReaderRestoreDbg2",
+        readerRestoreDbg(
             "fingerprint branch fp='${fingerprint.take(16)}' expected=$expectedIndex idx=$idx",
         )
         if (idx != null && idx >= 0) {
@@ -1526,7 +1543,7 @@ internal fun applyStashedSourceScrollRestoreIfAny(
         displayedLen = len,
         renderPlainText = renderPlainText,
     )
-    android.util.Log.d("ReaderRestoreDbg2", "PROPORTIONAL fallthrough displayed=$displayed srcOff=$sourceOffset")
+    readerRestoreDbg("PROPORTIONAL fallthrough displayed=$displayed srcOff=$sourceOffset")
     scrollTextViewToCharOffset(tv, displayed)
     clearPendingSourceScrollRestore(tv)
     return true
@@ -1702,7 +1719,7 @@ internal fun jumpToGlobalCharInPager(
     tocEntries: List<MarkdownTocEntry>,
     preferredTocEntry: MarkdownTocEntry? = null,
     bookmarkPreviewText: String? = null,
-    pageSpecs: List<Pair<String, Int>>,
+    pageSpecs: List<IntRange>,
     pagerState: PagerState,
     pageTextViews: MutableMap<Int, TextView>,
     assignActiveTextView: (TextView) -> Unit,
@@ -1720,11 +1737,11 @@ internal fun jumpToGlobalCharInPager(
         pageIndexForGlobalChar(pageSpecs, charPos.coerceIn(0, (contentLen - 1).coerceAtLeast(0)))
             .coerceIn(0, pageSpecs.lastIndex)
     }
-    val globalStart = pageSpecs[page].second
+    val globalStart = pageSpecs[page].first
     val safeCharPos = charPos.coerceIn(0, (contentLen - 1).coerceAtLeast(0))
 
     // PDF 经 Markwon 渲染后 TextView 长度与 HTML 片段长度无关，不能按源码长度校验。
-    val expectedLen = if (pdfJumpByPageIndex) null else pageSpecs[page].first.length
+    val expectedLen = if (pdfJumpByPageIndex) null else pageSpecs[page].count()
     scope.launch {
         pagerState.scrollToPage(page)
         val tv = awaitPagerPageTextView(
@@ -1810,8 +1827,8 @@ internal fun highlightsForPageSlice(
     }
 }
 
-internal fun pageIndexForGlobalChar(pages: List<Pair<String, Int>>, charPos: Int): Int =
-    pages.indexOfLast { it.second <= charPos }.coerceAtLeast(0)
+internal fun pageIndexForGlobalChar(pages: List<IntRange>, charPos: Int): Int =
+    pages.indexOfLast { it.first <= charPos }.coerceAtLeast(0)
 
 /** 横向 PDF：目录项下标与 [PdfReaderContent.splitToPages] 页序一致；书签等回退按源码偏移推算。 */
 internal fun pdfPageIndexForTocOrBookmark(

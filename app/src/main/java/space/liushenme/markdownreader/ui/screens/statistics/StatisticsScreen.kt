@@ -36,6 +36,7 @@ import androidx.navigation.NavController
 import androidx.navigation.compose.rememberNavController
 import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.entity.BookEntity
+import space.liushenme.markdownreader.data.local.entity.isFinishedReading
 import space.liushenme.markdownreader.data.repository.ReadingTrendAggregator
 import space.liushenme.markdownreader.ui.components.ShelfStyleTopBarBackground
 import space.liushenme.markdownreader.ui.components.ShelfStyleTopAppBar
@@ -675,7 +676,11 @@ private fun BookProgressItem(book: BookEntity, onClick: () -> Unit) {
             )
 
             Text(
-                text = "${(book.readingProgress * 100).toInt()}%",
+                text = if (book.isFinishedReading()) {
+                    stringResource(R.string.bookshelf_finished)
+                } else {
+                    "${(book.readingProgress * 100).toInt()}%"
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
             )

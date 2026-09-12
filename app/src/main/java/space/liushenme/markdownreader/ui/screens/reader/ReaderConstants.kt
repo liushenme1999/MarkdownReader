@@ -106,7 +106,13 @@ internal fun readingChromeShade(readingBackground: Color): Color =
 internal const val READER_OPEN_DBG = "ReaderOpenDbg"
 
 internal fun readerOpenDbg(msg: String) {
+    if (!space.liushenme.markdownreader.BuildConfig.DEBUG) return
     android.util.Log.d(READER_OPEN_DBG, "${android.os.SystemClock.uptimeMillis()} $msg")
+}
+
+internal fun readerRestoreDbg(msg: String) {
+    if (!space.liushenme.markdownreader.BuildConfig.DEBUG) return
+    android.util.Log.d("ReaderRestoreDbg2", msg)
 }
 
 /** [TextView] 上用于判断是否需要重新执行 Markwon 渲染的 tag key（不含划线） */

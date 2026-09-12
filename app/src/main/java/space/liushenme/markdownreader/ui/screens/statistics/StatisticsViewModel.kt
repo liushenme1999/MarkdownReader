@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import space.liushenme.markdownreader.data.local.entity.BookEntity
+import space.liushenme.markdownreader.data.local.entity.isFinishedReading
 import space.liushenme.markdownreader.data.repository.BookRepository
 import space.liushenme.markdownreader.data.repository.BookmarkRepository
 import space.liushenme.markdownreader.data.repository.HighlightRepository
@@ -52,7 +53,7 @@ class StatisticsViewModel @Inject constructor(
                 readingProgressRepository.observeTotalReadTimeMinutes(),
                 readingProgressRepository.observeTotalReadChars(),
             ) { books, bookmarks, highlights, totalMinutesFromDb, totalCharsFromDb ->
-                val finishedBooks = books.count { it.readingProgress >= 0.95f }
+                val finishedBooks = books.count { it.isFinishedReading() }
                 val charsFromBooks = books.sumOf { (it.readingProgress * it.totalChars).toInt() }
                 val totalReadChars = if (totalCharsFromDb > 0) totalCharsFromDb else charsFromBooks
                 val totalReadMinutes = if (totalMinutesFromDb > 0) {

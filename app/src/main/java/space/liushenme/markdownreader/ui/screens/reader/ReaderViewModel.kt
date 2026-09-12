@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.backup.BookContentSync
 import space.liushenme.markdownreader.data.local.entity.BookEntity
+import space.liushenme.markdownreader.data.local.entity.isFinishedReading
 import space.liushenme.markdownreader.data.local.entity.BookmarkEntity
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.data.repository.BookRepository
@@ -146,6 +147,19 @@ class ReaderViewModel @Inject constructor(
     private var readingForeground: Boolean = false
     /** 最近一次按视口顶部更新的全书字符下标，退出时优先落盘，避免 float 反算偏差。 */
     private var lastKnownReadingCharPos: Int = 0
+    /** 视口已到最后一页或文末；不单独把进度抬到 100%。 */
+    private var lastKnownReachedEnd: Boolean = false
+    /**
+     * 用户已确认读完，或打开时库里已是已读完。
+     * 仍停在文末时进度保持 100%；离开文末后清除，进度改跟视口。
+     */
+    private var finishedLatch: Boolean = false
+    /** 当次阅读页已问过或已读完打开，不再弹出「标记已读完」。 */
+    private var finishPromptDismissedThisSession: Boolean = false
+    /** 首屏定位完成前不弹窗，避免恢复到文末被当成新触发。 */
+    private var finishPromptEnabled: Boolean = false
+    private val _showMarkFinishedPrompt = MutableStateFlow(false)
+    val showMarkFinishedPrompt: StateFlow<Boolean> = _showMarkFinishedPrompt.asStateFlow()
     /** 与书签 previewText 同格式的视口顶预览，打开书时与书签跳转共用定位。 */
     private var lastKnownProgressPreview: String = ""
 
@@ -173,6 +187,10 @@ class ReaderViewModel @Inject constructor(
         bookmarks.value = emptyList()
         highlights.value = emptyList()
         _structuredToc.value = null
+        finishPromptEnabled = false
+        finishPromptDismissedThisSession = false
+        finishedLatch = false
+        _showMarkFinishedPrompt.value = false
 
         loadBookJob = viewModelScope.launch {
             val bookEntity = bookRepository.getBookById(bookId)
@@ -206,6 +224,12 @@ class ReaderViewModel @Inject constructor(
                 }
                 .takeIf { it.isNotEmpty() }
             _readingProgress.value = latestBook.readingProgress
+            val alreadyFinished = latestBook.readingProgress.isFinishedReading()
+            lastKnownReachedEnd = alreadyFinished
+            finishedLatch = alreadyFinished
+            finishPromptDismissedThisSession = alreadyFinished
+            finishPromptEnabled = false
+            _showMarkFinishedPrompt.value = false
             lastKnownReadingCharPos = resolveStoredCharPos(
                 currentPosition = latestBook.currentPosition,
                 readingProgress = latestBook.readingProgress,
@@ -286,39 +310,119 @@ class ReaderViewModel @Inject constructor(
     }
 
     /** 仅刷新界面进度，不立刻落盘（滚动时实时更新标题栏百分比）。 */
-    fun updateVisibleReadingProgress(globalChar: Int) {
+    fun updateVisibleReadingProgress(globalChar: Int, reachedEnd: Boolean = false) {
         val contentLen = _content.value.length
         if (contentLen <= 0) return
         val pos = globalChar.coerceIn(0, contentLen)
         lastKnownReadingCharPos = pos
-        val progress = readingProgressForCharPos(pos, contentLen)
-        if ((_readingProgress.value * 100).toInt() == (progress * 100).toInt()) return
+        val progress = applyViewportProgress(pos, contentLen, reachedEnd)
+        if ((_readingProgress.value * 100).toInt() == (progress * 100).toInt()) {
+            maybeShowMarkFinishedPrompt()
+            return
+        }
         _readingProgress.value = progress
+        maybeShowMarkFinishedPrompt()
     }
 
     /** 按全书源码字符下标更新进度（与书签记录字段一致：position + preview）。 */
-    fun updateReadingProgressAtChar(globalChar: Int, previewText: String? = null) {
+    fun updateReadingProgressAtChar(
+        globalChar: Int,
+        previewText: String? = null,
+        reachedEnd: Boolean = false,
+    ) {
         val contentLen = _content.value.length
         if (contentLen <= 0) return
         val pos = globalChar.coerceIn(0, contentLen)
         lastKnownReadingCharPos = pos
         previewText?.let { lastKnownProgressPreview = normalizeReadingPreviewText(it) }
-        val progress = readingProgressForCharPos(pos, contentLen)
+        val progress = applyViewportProgress(pos, contentLen, reachedEnd)
         _readingProgress.value = progress
-        scheduleProgressPersist(progress, pos, lastKnownProgressPreview)
+        if (finishPromptEnabled) {
+            scheduleProgressPersist(progress, pos, lastKnownProgressPreview)
+        }
+        maybeShowMarkFinishedPrompt()
     }
 
-    fun updateReadingProgressAtCharNow(globalChar: Int, previewText: String? = null) {
+    fun updateReadingProgressAtCharNow(
+        globalChar: Int,
+        previewText: String? = null,
+        reachedEnd: Boolean = false,
+    ) {
         val contentLen = _content.value.length
         if (contentLen <= 0) return
         val pos = globalChar.coerceIn(0, contentLen)
         lastKnownReadingCharPos = pos
         previewText?.let { lastKnownProgressPreview = normalizeReadingPreviewText(it) }
-        val progress = pos.toFloat() / contentLen
+        val progress = applyViewportProgress(pos, contentLen, reachedEnd)
         _readingProgress.value = progress
         progressPersistJob?.cancel()
         progressPersistJob = null
         viewModelScope.launch {
+            persistReadingProgress(progress, pos, lastKnownProgressPreview)
+        }
+        maybeShowMarkFinishedPrompt()
+    }
+
+    /** 首屏定位完成后再允许「标记已读完」弹窗。 */
+    fun setFinishPromptEnabled(enabled: Boolean) {
+        finishPromptEnabled = enabled
+        if (enabled) {
+            maybeShowMarkFinishedPrompt()
+        } else {
+            _showMarkFinishedPrompt.value = false
+        }
+    }
+
+    fun onDocumentEndChanged(atEnd: Boolean) {
+        lastKnownReachedEnd = atEnd
+        if (finishPromptEnabled && !atEnd) {
+            finishedLatch = false
+            _showMarkFinishedPrompt.value = false
+            return
+        }
+        maybeShowMarkFinishedPrompt()
+    }
+
+    fun markAsFinished() {
+        val contentLen = _content.value.length
+        if (contentLen <= 0) return
+        finishedLatch = true
+        finishPromptDismissedThisSession = true
+        lastKnownReachedEnd = true
+        _showMarkFinishedPrompt.value = false
+        val pos = lastKnownReadingCharPos.coerceIn(0, contentLen)
+        _readingProgress.value = 1f
+        progressPersistJob?.cancel()
+        progressPersistJob = null
+        viewModelScope.launch {
+            persistReadingProgress(1f, pos, lastKnownProgressPreview)
+        }
+    }
+
+    fun dismissFinishPrompt() {
+        finishPromptDismissedThisSession = true
+        _showMarkFinishedPrompt.value = false
+    }
+
+    /**
+     * 退出时把当前内存进度同步写入。已确认的 100% 不再用视口顶重算。
+     */
+    fun flushVisibleProgressBlocking(
+        globalChar: Int? = null,
+        previewText: String? = null,
+    ) {
+        val contentLen = _content.value.length
+        if (contentLen <= 0) return
+        if (globalChar != null) {
+            lastKnownReadingCharPos = globalChar.coerceIn(0, contentLen)
+        }
+        previewText?.let { lastKnownProgressPreview = normalizeReadingPreviewText(it) }
+        val pos = lastKnownReadingCharPos.coerceIn(0, contentLen)
+        val progress = progressToPersist()
+        _readingProgress.value = progress
+        progressPersistJob?.cancel()
+        progressPersistJob = null
+        runBlocking {
             persistReadingProgress(progress, pos, lastKnownProgressPreview)
         }
     }
@@ -335,13 +439,23 @@ class ReaderViewModel @Inject constructor(
         lastKnownProgressPreview.takeIf { it.isNotBlank() }
 
     /** 退出阅读页时同步落盘，避免 ON_PAUSE 异步写入未完成。 */
-    fun persistReadingPositionBlocking(globalChar: Int, previewText: String? = null) {
+    fun persistReadingPositionBlocking(
+        globalChar: Int,
+        previewText: String? = null,
+        reachedEnd: Boolean? = null,
+    ) {
         val contentLen = _content.value.length
         if (contentLen <= 0) return
         val pos = globalChar.coerceIn(0, contentLen)
         lastKnownReadingCharPos = pos
+        if (reachedEnd != null) {
+            lastKnownReachedEnd = reachedEnd
+            if (finishPromptEnabled && !reachedEnd) {
+                finishedLatch = false
+            }
+        }
         previewText?.let { lastKnownProgressPreview = normalizeReadingPreviewText(it) }
-        val progress = pos.toFloat() / contentLen
+        val progress = progressToPersist()
         _readingProgress.value = progress
         progressPersistJob?.cancel()
         progressPersistJob = null
@@ -378,9 +492,39 @@ class ReaderViewModel @Inject constructor(
         progressPersistJob = null
         val contentLen = _content.value.length.coerceAtLeast(1)
         val pos = lastKnownReadingCharPos.coerceIn(0, contentLen)
-        val progress = readingProgressForCharPos(pos, contentLen)
+        val progress = progressToPersist()
         _readingProgress.value = progress
         persistReadingProgress(progress, pos, lastKnownProgressPreview)
+    }
+
+    private fun applyViewportProgress(
+        pos: Int,
+        contentLen: Int,
+        reachedEnd: Boolean,
+    ): Float {
+        lastKnownReachedEnd = reachedEnd
+        if (finishPromptEnabled && !reachedEnd) {
+            finishedLatch = false
+            _showMarkFinishedPrompt.value = false
+        }
+        return displayedReadingProgress(pos, contentLen, finishedLatch)
+    }
+
+    private fun progressToPersist(): Float {
+        val current = _readingProgress.value
+        return when {
+            finishedLatch -> 1f
+            current.isFinishedReading() -> 1f
+            else -> current
+        }
+    }
+
+    private fun maybeShowMarkFinishedPrompt() {
+        if (!finishPromptEnabled) return
+        if (!lastKnownReachedEnd) return
+        if (finishPromptDismissedThisSession) return
+        if (finishedLatch || _readingProgress.value.isFinishedReading()) return
+        _showMarkFinishedPrompt.value = true
     }
 
     fun addBookmark(previewText: String, note: String? = null) {

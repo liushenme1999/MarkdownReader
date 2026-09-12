@@ -65,6 +65,52 @@ object GitHubRepoUrlParser {
         )
     }
 
+    /** 规范化为不含 `.git` 的 HTTPS 浏览地址；无法解析时返回弱规范化结果。 */
+    fun canonicalBrowseUrl(raw: String): String? {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return null
+        parse(trimmed)?.httpsBrowseUrl?.let { return it }
+        val weak = weakNormalize(trimmed)
+        return weak.takeIf { it.isNotEmpty() }
+    }
+
+    fun sameRepo(a: String, b: String): Boolean {
+        val left = canonicalBrowseUrl(a) ?: return false
+        val right = canonicalBrowseUrl(b) ?: return false
+        return left.equals(right, ignoreCase = true)
+    }
+
+    /** 查库 / 清墓碑时同时尝试的 URL 形态。 */
+    fun lookupUrls(raw: String): List<String> {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return emptyList()
+        val parsed = parse(trimmed)
+        return buildList {
+            parsed?.httpsBrowseUrl?.let { add(it) }
+            parsed?.cloneUrl?.let { add(it) }
+            add(trimmed)
+            val weak = weakNormalize(trimmed)
+            if (weak.isNotEmpty()) add(weak)
+        }.distinct()
+    }
+
+    internal fun weakNormalize(raw: String): String {
+        var value = raw.trim().trimEnd('/')
+        value = value.removePrefix("git+")
+        if (value.startsWith("git@github.com:", ignoreCase = true)) {
+            value = "https://github.com/" +
+                value.removePrefix("git@github.com:").removePrefix("git@GITHUB.COM:")
+        }
+        if (value.startsWith("http://", ignoreCase = true)) {
+            value = "https://" + value.substring(7)
+        }
+        value = value.replace(Regex("^https://www\\.github\\.com/", RegexOption.IGNORE_CASE), "https://github.com/")
+        if (value.endsWith(".git", ignoreCase = true)) {
+            value = value.dropLast(4)
+        }
+        return value
+    }
+
     private fun parseOwnerRepoShorthand(input: String): ParsedRepo? {
         if (input.contains("://") || input.contains('@') || input.contains(' ')) return null
         val parts = input.trim('/').split('/')

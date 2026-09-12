@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -37,6 +38,8 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -63,6 +66,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -76,6 +80,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavController
 import kotlinx.coroutines.flow.collectLatest
 import space.liushenme.markdownreader.R
+import space.liushenme.markdownreader.data.local.entity.isFinishedReading
 import space.liushenme.markdownreader.git.GitPathUtils
 import space.liushenme.markdownreader.git.GitTreeNode
 import space.liushenme.markdownreader.navigation.AppRoutes
@@ -113,6 +118,9 @@ fun ProjectBrowserScreen(
 
     LaunchedEffect(Unit) {
         viewModel.toastMessages.collectLatest { snackbarHostState.showSnackbar(it) }
+    }
+    LaunchedEffect(Unit) {
+        viewModel.gitPullToasts.collectLatest { snackbarHostState.showSnackbar(it) }
     }
     LaunchedEffect(Unit) {
         viewModel.openReaderRequests.collectLatest { bookId ->
@@ -161,12 +169,24 @@ fun ProjectBrowserScreen(
                                     onClick = { showMoreMenu = true },
                                     enabled = !busy,
                                 ) {
-                                    Icon(
-                                        Icons.Default.MoreVert,
-                                        contentDescription = stringResource(
-                                            R.string.git_project_more_cd,
-                                        ),
-                                    )
+                                    BadgedBox(
+                                        badge = {
+                                            if (project?.hasRemoteUpdate == true) {
+                                                Badge(containerColor = Color(0xFFE53935))
+                                            }
+                                        },
+                                    ) {
+                                        Icon(
+                                            Icons.Default.MoreVert,
+                                            contentDescription = stringResource(
+                                                if (project?.hasRemoteUpdate == true) {
+                                                    R.string.bookshelf_git_update_available_cd
+                                                } else {
+                                                    R.string.git_project_more_cd
+                                                },
+                                            ),
+                                        )
+                                    }
                                 }
                                 DropdownMenu(
                                     expanded = showMoreMenu,
@@ -191,7 +211,18 @@ fun ProjectBrowserScreen(
                                     )
                                     DropdownMenuItem(
                                         text = {
-                                            Text(stringResource(R.string.git_project_pull_cd))
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(stringResource(R.string.git_project_pull_cd))
+                                                if (project?.hasRemoteUpdate == true) {
+                                                    Spacer(Modifier.width(8.dp))
+                                                    Box(
+                                                        Modifier
+                                                            .size(8.dp)
+                                                            .clip(CircleShape)
+                                                            .background(Color(0xFFE53935)),
+                                                    )
+                                                }
+                                            }
                                         },
                                         leadingIcon = {
                                             Icon(Icons.Default.Sync, contentDescription = null)
@@ -544,7 +575,11 @@ private fun ContinueReadingItem(
 ) {
     val relativePath = entry.relativePath
     val fileName = GitPathUtils.fileName(relativePath)
-    val progressText = "${(entry.readingProgress.coerceIn(0f, 1f) * 100).toInt()}%"
+    val progressText = if (entry.readingProgress.isFinishedReading()) {
+        stringResource(R.string.bookshelf_finished)
+    } else {
+        "${(entry.readingProgress.coerceIn(0f, 1f) * 100).toInt()}%"
+    }
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier

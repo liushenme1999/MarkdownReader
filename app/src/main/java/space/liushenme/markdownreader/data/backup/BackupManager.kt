@@ -109,7 +109,8 @@ class BackupManager @Inject constructor(
      * 书架下拉刷新：拉取云端最新备份中的阅读进度，与本机取较新一侧；
      * 若本机有更靠前进度则再上传元数据备份，把云端更新为最新。
      */
-    suspend fun syncReadingProgress(): Result<ProgressSyncResult> = mutex.withLock {
+    suspend fun syncReadingProgress(): Result<ProgressSyncResult> {
+        val result = mutex.withLock {
         withContext(Dispatchers.IO) {
             runCatching {
                 val config = webDavConfigRepository.current()
@@ -141,7 +142,7 @@ class BackupManager @Inject constructor(
                 // 跨设备：云端有、本机无的 Git 项目在同步时浅克隆到本机（与完整恢复一致）
                 val gitMetaPulled = mergeGitProjectsFromBackup(
                     unpackDir = unpackDir,
-                    cloneMissing = true,
+                    cloneMissing = false,
                 )
                 if (gitMetaPulled > 0) pulledCount += gitMetaPulled
                 if (localGitProjectsNeedPush(unpackDir)) needPush = true
@@ -217,6 +218,8 @@ class BackupManager @Inject constructor(
                 cleanupTemp()
             }
         }
+        }
+        return result
     }
 
     /** 调用方须已持有 [mutex] */
@@ -491,6 +494,7 @@ class BackupManager @Inject constructor(
 
         val deletedHashes = deletedBookDao.getAllHashes().toSet()
         val idMap = LinkedHashMap<Long, Long>()
+        val webDavBookIds = LinkedHashSet<Long>()
         for (remote in books) {
             val remoteHash = remoteStableHash(remote)
                 ?: remote.contentHash.takeIf { it.isNotBlank() }
@@ -498,8 +502,13 @@ class BackupManager @Inject constructor(
             val localId = mergeBook(remote)
             if (localId > 0L) {
                 idMap[remote.id] = localId
+                val local = bookDao.getBookById(localId)
+                if (local?.gitProjectId == null) {
+                    webDavBookIds.add(localId)
+                }
             }
         }
+        fetchRestoredBookContents(webDavBookIds)
         rematchGitBooks()
         refreshGitDocumentBundles()
 
@@ -540,13 +549,21 @@ class BackupManager @Inject constructor(
     /** @return 本机 books.id */
     private suspend fun mergeBook(remote: BookEntity): Long {
         val resolvedHash = resolveRemoteContentHash(remote)
-        if (resolvedHash.isNotBlank() && deletedBookDao.getByHash(resolvedHash) != null) {
-            bookDao.getBookByContentHash(resolvedHash)?.let { stale ->
-                ParsedBookStorage.deleteBundleDir(stale.parsedBundlePath)
-                stale.coverImagePath?.let { path -> runCatching { File(path).delete() } }
-                bookDao.deleteBook(stale)
+        if (resolvedHash.isNotBlank()) {
+            val tomb = deletedBookDao.getByHash(resolvedHash)
+            if (tomb != null) {
+                val existing = bookDao.getBookByContentHash(resolvedHash)
+                if (existing != null && wasReaddedAfterTombstone(existing.addTime, tomb.deletedAt)) {
+                    deletedBookDao.deleteByHash(resolvedHash)
+                } else {
+                    existing?.let { stale ->
+                        ParsedBookStorage.deleteBundleDir(stale.parsedBundlePath)
+                        stale.coverImagePath?.let { path -> runCatching { File(path).delete() } }
+                        bookDao.deleteBook(stale)
+                    }
+                    return 0L
+                }
             }
-            return 0L
         }
         var local = if (resolvedHash.isNotBlank()) {
             bookDao.getBookByContentHash(resolvedHash)
@@ -582,9 +599,6 @@ class BackupManager @Inject constructor(
                 ),
             )
             adoptPackedBundle(remote.id, newId)
-            if (resolvedGitProjectId == null) {
-                bookContentSync.ensureLocalBookContent(newId)
-            }
             val inserted = bookDao.getBookById(newId) ?: return newId
             val withHash = inserted.copy(
                 contentHash = bookContentSync.upgradeContentHashIfNeeded(inserted),
@@ -594,9 +608,6 @@ class BackupManager @Inject constructor(
         }
 
         adoptPackedBundle(remote.id, local.id)
-        if (resolvedGitProjectId == null) {
-            bookContentSync.ensureLocalBookContent(local.id)
-        }
 
         // 以阅读位置/进度为主：本机若只是最近打开过但进度更旧，仍应采用云端更靠前的进度
         val preferRemoteProgress = shouldPreferRemoteProgress(remote, local)
@@ -641,11 +652,19 @@ class BackupManager @Inject constructor(
             gitRelativePath = resolvedGitPath,
         )
         bookDao.updateBook(merged)
-        if (resolvedGitProjectId == null && !localCanonicalBundleHasBody(local.id)) {
-            bookContentSync.ensureLocalBookContent(local.id)
-            bookDao.updateBook(remapBookPaths(merged))
-        }
         return local.id
+    }
+
+    private suspend fun fetchRestoredBookContents(bookIds: Collection<Long>) {
+        if (bookIds.isEmpty()) return
+        bookContentSync.ensureLocalBookContents(bookIds)
+        for (bookId in bookIds) {
+            val book = bookDao.getBookById(bookId) ?: continue
+            val hashed = book.copy(
+                contentHash = bookContentSync.upgradeContentHashIfNeeded(book),
+            )
+            bookDao.updateBook(remapBookPaths(hashed))
+        }
     }
 
     /**
@@ -743,11 +762,6 @@ class BackupManager @Inject constructor(
         dst.parentFile?.mkdirs()
         if (dst.exists()) dst.deleteRecursively()
         src.copyRecursively(dst, overwrite = true)
-    }
-
-    private fun localCanonicalBundleHasBody(bookId: Long): Boolean {
-        val bundleDir = File(context.filesDir, "$PARSED_BOOKS_DIR/$bookId")
-        return File(bundleDir, ParsedBookStorage.BODY_FILE).isFile
     }
 
     /**
@@ -874,6 +888,11 @@ class BackupManager @Inject constructor(
                 ?: local.contentHash.takeIf { it.isNotBlank() }
                 ?: continue
             if (hash !in hashes) continue
+            val tomb = deletedBookDao.getByHash(hash)
+            if (tomb != null && wasReaddedAfterTombstone(local.addTime, tomb.deletedAt)) {
+                deletedBookDao.deleteByHash(hash)
+                continue
+            }
             ParsedBookStorage.deleteBundleDir(local.parsedBundlePath)
             local.coverImagePath?.let { path -> runCatching { File(path).delete() } }
             bookDao.deleteBook(local)
@@ -896,16 +915,26 @@ class BackupManager @Inject constructor(
         )
         for (remote in remotes) {
             if (remote.remoteUrl.isBlank()) continue
-            val existing = deletedGitProjectDao.getByRemoteUrl(remote.remoteUrl)
+            val canonical = GitHubRepoUrlParser.canonicalBrowseUrl(remote.remoteUrl)
+                ?: remote.remoteUrl.trim()
+            val existing = findDeletedGitProject(canonical)
             if (existing == null || remote.deletedAt >= existing.deletedAt) {
-                deletedGitProjectDao.upsert(remote.toEntity())
+                deletedGitProjectDao.upsert(
+                    DeletedGitProjectEntity(remoteUrl = canonical, deletedAt = remote.deletedAt),
+                )
             }
         }
-        val urls = deletedGitProjectDao.getAllRemoteUrls().toSet()
-        if (urls.isEmpty()) return 0
+        val tombstones = deletedGitProjectDao.getAll()
+        if (tombstones.isEmpty()) return 0
         var removed = 0
         for (local in gitProjectDao.getAllProjectsList()) {
-            if (local.remoteUrl !in urls) continue
+            val tomb = tombstones.firstOrNull {
+                GitHubRepoUrlParser.sameRepo(it.remoteUrl, local.remoteUrl)
+            } ?: continue
+            if (wasReaddedAfterTombstone(local.addTime, tomb.deletedAt)) {
+                revokeGitProjectTombstones(local.remoteUrl)
+                continue
+            }
             removeLocalGitProject(local)
             removed++
         }
@@ -936,17 +965,43 @@ class BackupManager @Inject constructor(
 
     /** 本机有云端备份尚未包含的墓碑，或云端仍残留已删条目时需要推送。 */
     private suspend fun localTombstonesNeedPush(unpackDir: File): Boolean {
-        val remoteBooks = readJsonList(
+        val remoteBookTombs = readJsonList(
             File(unpackDir, "deleted_books.json"),
             DeletedBookBackup::class.java,
-        ).map { it.contentHash }.toSet()
+        )
+        val remoteBooks = remoteBookTombs.map { it.contentHash }.toSet()
         if (deletedBookDao.getAll().any { it.contentHash !in remoteBooks }) return true
+        // 本机已重新导入、墓碑已撤销，但云端 deleted_books 仍在，需要推送去掉
+        if (remoteBookTombs.any { remote ->
+                remote.contentHash.isNotBlank() &&
+                    deletedBookDao.getByHash(remote.contentHash) == null &&
+                    bookDao.getBookByContentHash(remote.contentHash) != null
+            }
+        ) {
+            return true
+        }
 
-        val remoteProjects = readJsonList(
+        val remoteProjectTombs = readJsonList(
             File(unpackDir, "deleted_git_projects.json"),
             DeletedGitProjectBackup::class.java,
-        ).map { it.remoteUrl }.toSet()
-        if (deletedGitProjectDao.getAll().any { it.remoteUrl !in remoteProjects }) return true
+        )
+        val remoteProjects = remoteProjectTombs.map { it.remoteUrl }.toSet()
+        if (deletedGitProjectDao.getAll().any { localTomb ->
+                remoteProjects.none { GitHubRepoUrlParser.sameRepo(it, localTomb.remoteUrl) }
+            }
+        ) {
+            return true
+        }
+        if (remoteProjectTombs.any { remote ->
+                remote.remoteUrl.isNotBlank() &&
+                    findDeletedGitProject(remote.remoteUrl) == null &&
+                    gitProjectDao.getAllProjectsList().any {
+                        GitHubRepoUrlParser.sameRepo(it.remoteUrl, remote.remoteUrl)
+                    }
+            }
+        ) {
+            return true
+        }
 
         val deletedHashes = deletedBookDao.getAllHashes().toSet()
         if (deletedHashes.isNotEmpty()) {
@@ -965,7 +1020,12 @@ class BackupManager @Inject constructor(
                 File(unpackDir, "git_projects.json"),
                 GitProjectBackup::class.java,
             )
-            if (projects.any { it.remoteUrl in deletedUrls }) return true
+            if (projects.any { project ->
+                    deletedUrls.any { GitHubRepoUrlParser.sameRepo(it, project.remoteUrl) }
+                }
+            ) {
+                return true
+            }
         }
         return false
     }
@@ -980,33 +1040,37 @@ class BackupManager @Inject constructor(
         val remotes = readJsonList(File(unpackDir, "git_projects.json"), GitProjectBackup::class.java)
         if (remotes.isEmpty()) return 0
         val deletedUrls = deletedGitProjectDao.getAllRemoteUrls().toSet()
-        var pulled = 0
-        for (remote in remotes) {
-            if (remote.remoteUrl.isBlank()) continue
-            if (remote.remoteUrl in deletedUrls) continue
-            val changed = mergeGitProject(remote, cloneMissing = cloneMissing)
-            if (changed) pulled++
+        val pending = remotes.filter { remote ->
+            remote.remoteUrl.isNotBlank() &&
+                deletedUrls.none { GitHubRepoUrlParser.sameRepo(it, remote.remoteUrl) }
         }
-        return pulled
+        val outcomes = mapLimitedParallel(pending, GIT_RESTORE_CLONE_PARALLELISM) { remote ->
+            mergeGitProject(remote, cloneMissing = cloneMissing)
+        }
+        return outcomes.count { it }
     }
 
     private suspend fun mergeGitProject(
         remote: GitProjectBackup,
         cloneMissing: Boolean,
     ): Boolean {
-        val canonicalUrl = GitHubRepoUrlParser.parse(remote.remoteUrl)?.httpsBrowseUrl
+        val canonicalUrl = GitHubRepoUrlParser.canonicalBrowseUrl(remote.remoteUrl)
             ?: remote.remoteUrl
-        if (deletedGitProjectDao.getByRemoteUrl(canonicalUrl) != null ||
-            deletedGitProjectDao.getByRemoteUrl(remote.remoteUrl) != null
-        ) {
+        if (findDeletedGitProject(canonicalUrl) != null) {
             return false
         }
         var local = gitProjectDao.getByRemoteUrl(canonicalUrl)
             ?: gitProjectDao.getByRemoteUrl(remote.remoteUrl)
+            ?: gitProjectDao.getAllProjectsList().firstOrNull {
+                GitHubRepoUrlParser.sameRepo(it.remoteUrl, remote.remoteUrl)
+            }
         if (local == null) {
-            if (!cloneMissing) return false
             return runCatching {
-                cloneGitProjectFromBackup(remote)
+                if (cloneMissing) {
+                    cloneGitProjectFromBackup(remote)
+                } else {
+                    insertGitProjectMetadataFromBackup(remote)
+                }
                 true
             }.onFailure {
                 Log.w(TAG, "恢复克隆 Git 项目失败 ${remote.remoteUrl}: ${it.localizedMessage}", it)
@@ -1061,13 +1125,15 @@ class BackupManager @Inject constructor(
             remote.lastOpenedRelativePath != local.lastOpenedRelativePath
     }
 
-    private suspend fun cloneGitProjectFromBackup(remote: GitProjectBackup) {
+    private suspend fun insertGitProjectMetadataFromBackup(remote: GitProjectBackup): GitProjectEntity {
         val parsed = GitHubRepoUrlParser.parse(remote.remoteUrl)
-            ?: throw GitCloneException("无法识别的 GitHub 仓库地址：${remote.remoteUrl}")
-        val resolvedTitle = parsed.repo.ifBlank { remote.title }
+        val canonical = parsed?.httpsBrowseUrl
+            ?: GitHubRepoUrlParser.canonicalBrowseUrl(remote.remoteUrl)
+            ?: remote.remoteUrl
+        val resolvedTitle = parsed?.repo?.ifBlank { remote.title } ?: remote.title
         val placeholder = GitProjectEntity(
             title = resolvedTitle,
-            remoteUrl = parsed.httpsBrowseUrl,
+            remoteUrl = canonical,
             defaultBranch = remote.defaultBranch,
             localPath = "",
             addTime = remote.addTime,
@@ -1085,9 +1151,15 @@ class BackupManager @Inject constructor(
             ),
         )
         val projectId = gitProjectDao.insert(placeholder)
+        return placeholder.copy(id = projectId)
+    }
+
+    private suspend fun cloneGitProjectFromBackup(remote: GitProjectBackup) {
+        val local = insertGitProjectMetadataFromBackup(remote)
+        val projectId = local.id
         try {
             recloneExistingGitProject(
-                local = placeholder.copy(id = projectId),
+                local = local,
                 remote = remote,
             )
         } catch (e: Exception) {
@@ -1123,6 +1195,7 @@ class BackupManager @Inject constructor(
                 defaultBranch = result.branch.ifBlank { remote.defaultBranch.ifBlank { local.defaultBranch } },
                 lastCommitSha = result.commitSha.ifBlank { remote.lastCommitSha.ifBlank { local.lastCommitSha } },
                 lastPulledAt = Date(),
+                hasRemoteUpdate = false,
             ),
         )
     }
@@ -1141,11 +1214,15 @@ class BackupManager @Inject constructor(
 
     private suspend fun localGitProjectsNeedPush(unpackDir: File): Boolean {
         val remotes = readJsonList(File(unpackDir, "git_projects.json"), GitProjectBackup::class.java)
-        val remoteByUrl = remotes.associateBy { it.remoteUrl }
+        val remoteByUrl = remotes.associateBy {
+            GitHubRepoUrlParser.canonicalBrowseUrl(it.remoteUrl) ?: it.remoteUrl
+        }
         val deletedUrls = deletedGitProjectDao.getAllRemoteUrls().toSet()
         for (local in gitProjectDao.getAllProjectsList()) {
-            if (local.remoteUrl in deletedUrls) continue
-            val remote = remoteByUrl[local.remoteUrl]
+            if (deletedUrls.any { GitHubRepoUrlParser.sameRepo(it, local.remoteUrl) }) continue
+            val localKey = GitHubRepoUrlParser.canonicalBrowseUrl(local.remoteUrl) ?: local.remoteUrl
+            val remote = remoteByUrl[localKey]
+                ?: remotes.firstOrNull { GitHubRepoUrlParser.sameRepo(it.remoteUrl, local.remoteUrl) }
             if (remote == null) {
                 // 本机已导入、云端尚无：需推送，否则另一台设备同步时看不到该项目
                 return true
@@ -1171,7 +1248,7 @@ class BackupManager @Inject constructor(
         val path = remote.gitRelativePath ?: return null
         if (path.isBlank() || remote.contentHash.isBlank()) return null
         return gitProjectDao.getAllProjectsList().firstOrNull { project ->
-            BookContentHasher.hashForGitDocument(project.remoteUrl, path) == remote.contentHash
+            BookContentHasher.matchesGitDocument(remote.contentHash, project.remoteUrl, path)
         }?.id
     }
 
@@ -1182,10 +1259,10 @@ class BackupManager @Inject constructor(
         for (book in books) {
             val path = book.gitRelativePath ?: continue
             val match = projects.firstOrNull { project ->
-                BookContentHasher.hashForGitDocument(project.remoteUrl, path) == book.contentHash ||
+                BookContentHasher.matchesGitDocument(book.contentHash, project.remoteUrl, path) ||
                     book.gitProjectId == project.id
             } ?: projects.firstOrNull { project ->
-                book.contentHash == BookContentHasher.hashForGitDocument(project.remoteUrl, path)
+                BookContentHasher.matchesGitDocument(book.contentHash, project.remoteUrl, path)
             }
             val project = match ?: continue
             val expectedPath = GitDocumentOpener.gitFilePath(project.id, path)
@@ -1210,6 +1287,29 @@ class BackupManager @Inject constructor(
             }.onFailure {
                 Log.w(TAG, "刷新 Git 文档失败 project=${project.id}: ${it.localizedMessage}", it)
             }
+        }
+    }
+
+    private fun wasReaddedAfterTombstone(addedAt: Date?, deletedAt: Long): Boolean {
+        val added = addedAt?.time ?: return false
+        return added >= deletedAt
+    }
+
+    private suspend fun revokeGitProjectTombstones(remoteUrl: String) {
+        for (url in GitHubRepoUrlParser.lookupUrls(remoteUrl)) {
+            deletedGitProjectDao.deleteByRemoteUrl(url)
+        }
+        deletedGitProjectDao.getAll()
+            .filter { GitHubRepoUrlParser.sameRepo(it.remoteUrl, remoteUrl) }
+            .forEach { deletedGitProjectDao.deleteByRemoteUrl(it.remoteUrl) }
+    }
+
+    private suspend fun findDeletedGitProject(remoteUrl: String): DeletedGitProjectEntity? {
+        for (url in GitHubRepoUrlParser.lookupUrls(remoteUrl)) {
+            deletedGitProjectDao.getByRemoteUrl(url)?.let { return it }
+        }
+        return deletedGitProjectDao.getAll().firstOrNull {
+            GitHubRepoUrlParser.sameRepo(it.remoteUrl, remoteUrl)
         }
     }
 

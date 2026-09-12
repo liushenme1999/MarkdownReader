@@ -4,8 +4,11 @@ import android.graphics.Paint
 
 /** 供表格行 span 抵消 [android.widget.TextView.setLineSpacing] 对行高的放大。 */
 internal object ReaderTableSpacing {
-    @Volatile
-    var lineSpacingMultiplier: Float = 1.5f
+    private val multiplier = ThreadLocal.withInitial { 1.5f }
+
+    var lineSpacingMultiplier: Float
+        get() = multiplier.get() ?: 1.5f
+        set(value) { multiplier.set(value) }
 
     /** 将 font metrics 高度设为 contentHeight，使乘以 multiplier 后接近 contentHeight。 */
     fun compensateLineSpacing(fm: Paint.FontMetricsInt, multiplier: Float) {

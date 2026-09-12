@@ -144,6 +144,7 @@ fun BookshelfScreen(
     val layoutMode by viewModel.layoutMode.collectAsState()
     val gridColumns by viewModel.gridColumns.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
+    val pullingProjectIds by viewModel.pullingProjectIds.collectAsState()
     val gitImporting by viewModel.gitImporting.collectAsState()
     val gitImportProgress by viewModel.gitImportProgress.collectAsState()
     val context = LocalContext.current
@@ -210,6 +211,9 @@ fun BookshelfScreen(
     val shelfItems = remember(displayedBooks, displayedProjects) {
         mergeShelfItems(displayedBooks, displayedProjects)
     }
+    val gitUpdateByProjectId = remember(gitProjects) {
+        gitProjects.associate { it.id to it.hasRemoteUpdate }
+    }
 
     val importTarget = remember(selectedGroup) {
         BookImportTarget.fromSelectedGroup(selectedGroup)
@@ -230,6 +234,11 @@ fun BookshelfScreen(
 
     LaunchedEffect(Unit) {
         viewModel.toastMessages.collectLatest { msg ->
+            snackbarHostState.showSnackbar(msg)
+        }
+    }
+    LaunchedEffect(Unit) {
+        viewModel.gitPullToasts.collectLatest { msg ->
             snackbarHostState.showSnackbar(msg)
         }
     }
@@ -491,7 +500,15 @@ fun BookshelfScreen(
                     .padding(contentPadding),
             ) {
                 if (books.isEmpty() && gitProjects.isEmpty()) {
-                    EmptyBookshelf(onImportClick = { openImportChooser() })
+                    // 空态也要可滚动，否则 PullToRefreshBox 收不到下拉手势
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        item(key = "empty_bookshelf") {
+                            EmptyBookshelf(
+                                onImportClick = { openImportChooser() },
+                                modifier = Modifier.fillParentMaxSize(),
+                            )
+                        }
+                    }
                 } else {
                     fun onBookClick(book: BookEntity, selected: Boolean) {
                         if (selectionMode) {
@@ -577,6 +594,8 @@ fun BookshelfScreen(
                                                 selectionMode = selectionMode,
                                                 isPinned = project.isPinned,
                                                 isFavorite = project.isFavorite,
+                                                hasRemoteUpdate = project.hasRemoteUpdate,
+                                                isPulling = project.id in pullingProjectIds,
                                                 onClick = { onProjectClick(project, selected) },
                                                 onLongClick = { onProjectLongClick(project) },
                                             )
@@ -589,6 +608,8 @@ fun BookshelfScreen(
                                                 coverImageCache = coverImageCache,
                                                 selected = selected,
                                                 selectionMode = selectionMode,
+                                                hasRemoteUpdate = book.gitProjectId
+                                                    ?.let { gitUpdateByProjectId[it] } == true,
                                                 onClick = { onBookClick(book, selected) },
                                                 onLongClick = { onBookLongClick(book) },
                                             )
@@ -642,6 +663,8 @@ fun BookshelfScreen(
                                                 selectionMode = selectionMode,
                                                 isPinned = project.isPinned,
                                                 isFavorite = project.isFavorite,
+                                                hasRemoteUpdate = project.hasRemoteUpdate,
+                                                isPulling = project.id in pullingProjectIds,
                                                 onClick = { onProjectClick(project, selected) },
                                                 onLongClick = { onProjectLongClick(project) },
                                             )
@@ -654,6 +677,8 @@ fun BookshelfScreen(
                                                 selected = selected,
                                                 selectionMode = selectionMode,
                                                 coverImageCache = coverImageCache,
+                                                hasRemoteUpdate = book.gitProjectId
+                                                    ?.let { gitUpdateByProjectId[it] } == true,
                                                 onClick = { onBookClick(book, selected) },
                                                 onLongClick = { onBookLongClick(book) },
                                             )
@@ -733,8 +758,9 @@ fun BookshelfScreen(
     if (showRemoveConfirm) {
         BookshelfRemoveConfirmDialog(
             selectedCount = selectionCount,
-            onConfirm = {
-                viewModel.deleteSelection(selectedIds, selectedProjectIds)
+            showDeleteCloudBackup = selectedIds.isNotEmpty(),
+            onConfirm = { deleteCloudBackup ->
+                viewModel.deleteSelection(selectedIds, selectedProjectIds, deleteCloudBackup)
                 showRemoveConfirm = false
                 exitSelection()
             },

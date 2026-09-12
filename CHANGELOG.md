@@ -6,6 +6,28 @@
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-09-12
+
+### 新增
+
+- Git 项目有远程新提交时，书架卡片右下角与项目页更多菜单显示红点；在项目页「拉取更新」后清除
+- 翻到最后一页或滚到文末时询问是否标记已读完；确认后进度为 100%，书架与统计显示「已读完」
+- 移出书架可勾选「同时删除云端备份」；未勾选只删本机，勾选后删除 WebDAV 正文并写入墓碑
+
+### 优化
+
+- 删除后又重新导入的书，下拉同步不再被云端墓碑再次删掉
+- 备份 / 恢复时多本书原文与多个 Git 克隆并行处理，加快完成速度
+- 书架下拉刷新只同步 WebDAV 阅读进度，不再拉取 Git 仓库
+- 书架为空时也能下拉同步进度
+- Git 拉取改为后台任务：离开项目页不中断，多个项目可并行拉取
+- 同一项目已有后台 Git 操作时不再重复拉取 / 克隆，仅提示稍候
+- 进度同步不再补克隆缺失仓库；打开项目时再按需克隆
+- Git 克隆 / 拉取 / 切分支按仓库互斥，避免并发损坏本地仓
+- Git 墓碑与文档哈希按规范化 URL 对齐，兼容旧的 `.git` / `http` 形态
+- 阅读器调试日志仅 Debug 输出；代码块 / 表格渲染不再依赖进程级全局宽度
+- 左右翻页只保存字符区间，避免每页复制一份正文
+
 ## [1.0.5] - 2026-09-11
 
 ### 新增
@@ -137,7 +159,8 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.5...HEAD
+[Unreleased]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.6...HEAD
+[1.0.6]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.2...v1.0.3

@@ -60,14 +60,18 @@ class BookRepository @Inject constructor(
         }
     }
 
-    suspend fun deleteBook(book: BookEntity) {
+    suspend fun deleteBook(book: BookEntity, deleteCloudBackup: Boolean = false) {
         val id = book.id
         val hash = tombstoneHash(book)
-        recordTombstone(hash)
+        if (deleteCloudBackup) {
+            recordTombstone(hash)
+        }
         deleteStoredAssets(book)
         bookDao.deleteBook(book)
-        syncScope.launch {
-            bookContentSync.deleteRemoteBookContent(hash, fallbackNumericId = id)
+        if (deleteCloudBackup) {
+            syncScope.launch {
+                bookContentSync.deleteRemoteBookContent(hash, fallbackNumericId = id)
+            }
         }
     }
 
@@ -86,23 +90,30 @@ class BookRepository @Inject constructor(
 
     suspend fun getBookCount(): Int = bookDao.getBookCount()
 
-    suspend fun deleteBooksByIds(ids: Collection<Long>) {
+    suspend fun deleteBooksByIds(
+        ids: Collection<Long>,
+        deleteCloudBackup: Boolean = false,
+    ) {
         if (ids.isEmpty()) return
         val snapshots = ids.mapNotNull { bookDao.getBookById(it) }
         val now = System.currentTimeMillis()
         for (book in snapshots) {
             val hash = tombstoneHash(book)
-            deletedBookDao.upsert(DeletedBookEntity(contentHash = hash, deletedAt = now))
+            if (deleteCloudBackup) {
+                deletedBookDao.upsert(DeletedBookEntity(contentHash = hash, deletedAt = now))
+            }
             deleteStoredAssets(book)
         }
         bookDao.deleteBooksByIds(ids.toList())
-        syncScope.launch {
-            snapshots.forEach { book ->
-                val hash = tombstoneHash(book)
-                bookContentSync.deleteRemoteBookContent(
-                    hash,
-                    fallbackNumericId = book.id,
-                )
+        if (deleteCloudBackup) {
+            syncScope.launch {
+                snapshots.forEach { book ->
+                    val hash = tombstoneHash(book)
+                    bookContentSync.deleteRemoteBookContent(
+                        hash,
+                        fallbackNumericId = book.id,
+                    )
+                }
             }
         }
     }

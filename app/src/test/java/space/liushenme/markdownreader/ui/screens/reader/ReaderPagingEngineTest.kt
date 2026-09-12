@@ -216,8 +216,8 @@ class ReaderPagingEngineTest {
         val content = "a\n\n" + "b".repeat(500)
         val pages = splitMarkdownToPages(content, targetChars = 200)
         assertTrue(pages.size >= 2)
-        assertEquals(0, pages.first().second)
-        val joined = pages.joinToString("") { it.first }
+        assertEquals(0, pages.first().first)
+        val joined = pages.joinToString("") { pageSlice(content, it) }
         assertEquals(content, joined)
     }
 
@@ -240,6 +240,18 @@ class ReaderPagingEngineTest {
     @Test
     fun readingProgressForCharPos_mapsLinearly() {
         assertEquals(0.5f, readingProgressForCharPos(500, 1000), 0.001f)
+    }
+
+    @Test
+    fun readingProgressForViewport_usesViewportTopOnly() {
+        assertEquals(0.8f, readingProgressForViewport(800, 1000), 0.001f)
+        assertEquals(0f, readingProgressForViewport(0, 1000), 0.001f)
+    }
+
+    @Test
+    fun displayedReadingProgress_isCompleteOnlyWhenFinishedConfirmed() {
+        assertEquals(1f, displayedReadingProgress(800, 1000, finishedConfirmed = true), 0.001f)
+        assertEquals(0.8f, displayedReadingProgress(800, 1000, finishedConfirmed = false), 0.001f)
     }
 
     @Test

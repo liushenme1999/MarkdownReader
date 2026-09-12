@@ -103,7 +103,8 @@ import kotlin.math.roundToInt
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun ReaderPagedMarkdownHost(
-    pages: List<Pair<String, Int>>,
+    sourceContent: String,
+    pages: List<IntRange>,
     pageTurnMode: ReaderPageTurnMode,
     pagerState: PagerState,
     theme: ReadingTheme,
@@ -166,9 +167,11 @@ internal fun ReaderPagedMarkdownHost(
             else -> Modifier.fillMaxSize()
         }
 
-        val (slice, globalStart) = pages[pageIndex]
+        val range = pages[pageIndex]
+        val slice = pageSlice(sourceContent, range)
+        val globalStart = range.first
         val globalEndExclusive = if (pageIndex + 1 < pages.size) {
-            pages[pageIndex + 1].second
+            pages[pageIndex + 1].first
         } else {
             Int.MAX_VALUE
         }

@@ -24,7 +24,7 @@ object GitProjectCloner {
         destination: File,
         branch: String?,
         onProgress: (GitProgress) -> Unit = {},
-    ): GitCloneResult {
+    ): GitCloneResult = GitRepoLock.withLock(GitRepoLock.keyForPath(destination.absolutePath)) {
         if (destination.exists()) {
             destination.deleteRecursively()
         }
@@ -41,7 +41,7 @@ object GitProjectCloner {
             )
         }
 
-        return try {
+        try {
             val cmd = Git.cloneRepository()
                 .setURI(cloneUrl)
                 .setDirectory(destination)

@@ -40,13 +40,18 @@ object PdfReaderContent {
 
     /**
      * 横向翻页：每页仅含一张 PDF 页图（按 `<img … pdf_page_…>` 切分）。
-     * 返回 (片段, 在全文中的起始下标)。
+     * 返回在 [sanitizeStoredBody] 后正文中的字符区间。
      */
-    fun splitToPages(body: String): List<Pair<String, Int>> {
-        val matches = pageImageMatches(sanitizeStoredBody(body))
-        if (matches.isEmpty()) return listOf(sanitizeStoredBody(body).trim() to 0)
+    fun splitToPages(body: String): List<IntRange> {
+        val sanitized = sanitizeStoredBody(body)
+        val matches = pageImageMatches(sanitized)
+        if (matches.isEmpty()) {
+            val trimmed = sanitized.trim()
+            val start = sanitized.indexOf(trimmed).coerceAtLeast(0)
+            return listOf(start until (start + trimmed.length))
+        }
         return matches.map { match ->
-            match.value.trim() to match.range.first
+            match.range.first until (match.range.last + 1)
         }
     }
 

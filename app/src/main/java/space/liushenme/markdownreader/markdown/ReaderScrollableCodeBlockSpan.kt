@@ -71,7 +71,6 @@ internal class ReaderScrollableCodeBlockSpan(
     fun prepareForTouch(paint: Paint, viewportPx: Int) {
         if (viewportPx > 1) {
             lastViewportWidth = viewportPx
-            ReaderCodeBlockSettings.viewportWidthPx = viewportPx
         }
         ensureLayout(paint)
         syncScrollX()
@@ -129,7 +128,7 @@ internal class ReaderScrollableCodeBlockSpan(
                 ReaderTableSpacing.lineSpacingMultiplier,
             )
         }
-        val viewport = ReaderCodeBlockSettings.viewportWidthPx.coerceAtLeast(1)
+        val viewport = resolvedViewportWidth()
         lastViewportWidth = viewport
         syncScrollX()
         return viewport
@@ -147,10 +146,10 @@ internal class ReaderScrollableCodeBlockSpan(
         paint: Paint,
     ) {
         val viewport = SpanUtils.width(canvas, text).takeIf { it > 0 }
+            ?: lastViewportWidth.takeIf { it > 1 }
             ?: ReaderCodeBlockSettings.viewportWidthPx
         if (viewport > 0) {
             lastViewportWidth = viewport
-            ReaderCodeBlockSettings.viewportWidthPx = viewport
         }
         val layout = ensureLayout(paint)
         syncScrollX()

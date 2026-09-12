@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -43,6 +44,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -58,6 +61,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import androidx.navigation.compose.rememberNavController
 import space.liushenme.markdownreader.data.local.entity.BookEntity
+import space.liushenme.markdownreader.data.local.entity.isFinishedReading
 import space.liushenme.markdownreader.ui.theme.BookCoverColors
 import space.liushenme.markdownreader.navigation.AppRoutes
 import space.liushenme.markdownreader.ui.theme.MainNavigationBarBackground
@@ -87,7 +91,8 @@ internal fun ManagementBarButton(
 
 @Composable
 internal fun EmptyBookshelf(
-    onImportClick: () -> Unit
+    onImportClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val shelfBg = shelfStylePageBackground()
 
@@ -113,7 +118,7 @@ internal fun EmptyBookshelf(
     )
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .background(shelfBg)
             .padding(32.dp),
@@ -226,6 +231,22 @@ internal fun ImportBookCard(
     }
 }
 
+@Composable
+internal fun GitUpdateDot(
+    visible: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    if (!visible) return
+    val label = stringResource(R.string.bookshelf_git_update_available_cd)
+    Box(
+        modifier
+            .size(8.dp)
+            .clip(CircleShape)
+            .background(Color(0xFFE53935))
+            .semantics { contentDescription = label },
+    )
+}
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 internal fun GitProjectCard(
@@ -238,6 +259,8 @@ internal fun GitProjectCard(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
+    hasRemoteUpdate: Boolean = false,
+    isPulling: Boolean = false,
 ) {
     val borderColor = MaterialTheme.colorScheme.primary
     val shape = RoundedCornerShape(10.dp)
@@ -310,6 +333,27 @@ internal fun GitProjectCard(
                         .size(16.dp),
                 )
             }
+            if (hasRemoteUpdate && !isPulling && !(selectionMode && selected)) {
+                GitUpdateDot(
+                    visible = true,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(
+                            end = if (isFavorite) 28.dp else 8.dp,
+                            bottom = 8.dp,
+                        ),
+                )
+            }
+            if (isPulling && !(selectionMode && selected)) {
+                CircularProgressIndicator(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(8.dp)
+                        .size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
             if (selectionMode && selected) {
                 Box(
                     modifier = Modifier
@@ -360,6 +404,8 @@ internal fun GitProjectListCard(
     isFavorite: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    hasRemoteUpdate: Boolean = false,
+    isPulling: Boolean = false,
 ) {
     val borderColor = MaterialTheme.colorScheme.primary
     Surface(
@@ -408,6 +454,25 @@ internal fun GitProjectListCard(
                             .size(12.dp),
                     )
                 }
+                GitUpdateDot(
+                    visible = hasRemoteUpdate && !isPulling && !selected,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(
+                            end = if (isFavorite) 16.dp else 3.dp,
+                            bottom = 3.dp,
+                        ),
+                )
+                if (isPulling && !selected) {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(3.dp)
+                            .size(12.dp),
+                        strokeWidth = 1.5.dp,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -450,7 +515,8 @@ internal fun BookCard(
     selectionMode: Boolean,
     coverImageCache: LruCache<String, ImageBitmap>,
     onClick: () -> Unit,
-    onLongClick: () -> Unit
+    onLongClick: () -> Unit,
+    hasRemoteUpdate: Boolean = false,
 ) {
     val coverColor = BookCoverColors[book.coverColor % BookCoverColors.size]
     var coverImage by remember(book.id, book.coverImagePath) {
@@ -613,7 +679,11 @@ internal fun BookCard(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "${(book.readingProgress * 100).toInt()}%",
+                        text = if (book.isFinishedReading()) {
+                            stringResource(R.string.bookshelf_finished)
+                        } else {
+                            "${(book.readingProgress * 100).toInt()}%"
+                        },
                         style = MaterialTheme.typography.labelSmall.copy(
                             color = Color.White,
                             fontSize = 10.sp
@@ -643,6 +713,18 @@ internal fun BookCard(
                         .align(Alignment.BottomEnd)
                         .padding(end = 8.dp, bottom = 8.dp)
                         .size(16.dp),
+                )
+            }
+
+            if (hasRemoteUpdate && !(selectionMode && selected)) {
+                GitUpdateDot(
+                    visible = true,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(
+                            end = if (book.isFavorite) 28.dp else 8.dp,
+                            bottom = 8.dp,
+                        ),
                 )
             }
 
@@ -737,6 +819,7 @@ internal fun BookSearchResultCard(
     selected: Boolean = false,
     selectionMode: Boolean = false,
     onLongClick: (() -> Unit)? = null,
+    hasRemoteUpdate: Boolean = false,
 ) {
     val coverColor = BookCoverColors[book.coverColor % BookCoverColors.size]
     var coverImage by remember(book.id, book.coverImagePath) {
@@ -836,6 +919,15 @@ internal fun BookSearchResultCard(
                             .size(12.dp),
                     )
                 }
+                GitUpdateDot(
+                    visible = hasRemoteUpdate && !(selectionMode && selected),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(
+                            end = if (book.isFavorite) 16.dp else 3.dp,
+                            bottom = 3.dp,
+                        ),
+                )
             }
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -855,6 +947,13 @@ internal fun BookSearchResultCard(
                 )
                 if (book.readingProgress > 0f) {
                     Spacer(modifier = Modifier.height(6.dp))
+                    if (book.isFinishedReading()) {
+                        Text(
+                            text = stringResource(R.string.bookshelf_finished),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                     LinearProgressIndicator(
                         progress = { book.readingProgress.coerceIn(0f, 1f) },
                         modifier = Modifier

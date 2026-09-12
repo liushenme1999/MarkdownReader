@@ -4,6 +4,7 @@ import android.text.Layout
 import android.text.Spanned
 import android.util.Log
 import android.widget.TextView
+import space.liushenme.markdownreader.BuildConfig
 
 /**
  * 表格行间空白排查日志。Logcat 过滤：`adb logcat -s ReaderTableDbg`
@@ -33,6 +34,7 @@ internal object ReaderTableDebug {
         fmAscent: Int?,
         fmDescent: Int?,
     ) {
+        if (!BuildConfig.DEBUG) return
         val n = ++getSizeCount
         if (n % GET_SIZE_LOG_EVERY != 1) return
         Log.d(
@@ -52,6 +54,7 @@ internal object ReaderTableDebug {
         afterDescent: Int?,
         metricsReady: Boolean,
     ) {
+        if (!BuildConfig.DEBUG) return
         val n = ++chooseHeightCount
         if (n % CHOOSE_HEIGHT_LOG_EVERY != 1) return
         if (skipped != null) {
@@ -72,6 +75,7 @@ internal object ReaderTableDebug {
 
     /** 在 setText / invalidate 后 dump 真实 Layout 行距。 */
     fun scheduleDump(textView: TextView, reason: String) {
+        if (!BuildConfig.DEBUG) return
         val gen = ++dumpGeneration
         textView.post {
             if (gen != dumpGeneration) return@post
@@ -89,6 +93,7 @@ internal object ReaderTableDebug {
     }
 
     fun dumpTableLayout(textView: TextView, reason: String) {
+        if (!BuildConfig.DEBUG) return
         val text = textView.text
         if (text !is Spanned) {
             Log.d(TAG, "dump($reason) text not Spanned")

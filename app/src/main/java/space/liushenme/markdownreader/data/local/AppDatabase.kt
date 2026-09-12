@@ -35,7 +35,7 @@ import space.liushenme.markdownreader.data.local.entity.ShelfGroupEntity
         DeletedBookEntity::class,
         DeletedGitProjectEntity::class,
     ],
-    version = 17,
+    version = 18,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -278,6 +278,14 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE git_projects ADD COLUMN hasRemoteUpdate INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -302,6 +310,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_14_15,
                         MIGRATION_15_16,
                         MIGRATION_16_17,
+                        MIGRATION_17_18,
                     )
                     .build()
                 INSTANCE = instance

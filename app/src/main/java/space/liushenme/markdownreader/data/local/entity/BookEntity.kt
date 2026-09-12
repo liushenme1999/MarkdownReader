@@ -55,3 +55,10 @@ data class BookEntity(
     /** 仓库内相对路径，如 docs/guide.md */
     val gitRelativePath: String? = null,
 )
+
+/** 阅读进度达到该阈值视为读完（用户确认后落成 1f）。 */
+const val FINISHED_READING_PROGRESS = 0.995f
+
+fun BookEntity.isFinishedReading(): Boolean = readingProgress.isFinishedReading()
+
+fun Float.isFinishedReading(): Boolean = this >= FINISHED_READING_PROGRESS

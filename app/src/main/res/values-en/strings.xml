@@ -96,7 +96,9 @@
     <string name="bookshelf_import">Import</string>
     <string name="bookshelf_import_cd">Import book</string>
     <string name="bookshelf_unread">Unread</string>
+    <string name="bookshelf_finished">Finished</string>
     <string name="bookshelf_pinned_cd">Pinned</string>
+    <string name="bookshelf_git_update_available_cd">Git update available</string>
     <string name="bookshelf_no_results">No matching books</string>
     <string name="bookshelf_try_other_keywords">Try different keywords</string>
     <string name="bookshelf_exit_management_cd">Exit management</string>
@@ -107,7 +109,8 @@
     <string name="bookshelf_action_favorite">Favorite</string>
     <string name="bookshelf_action_group">Group</string>
     <string name="dialog_remove_from_shelf_title">Remove from library</string>
-    <string name="dialog_remove_from_shelf_message">Remove %1$d selected book(s) from your library?</string>
+    <string name="dialog_remove_from_shelf_message">Remove %1$d selected item(s) from your library?</string>
+    <string name="dialog_remove_delete_cloud_backup">Also delete cloud backup</string>
     <string name="dialog_set_group_title">Set group</string>
     <string name="dialog_group_existing_label">Existing groups</string>
     <string name="dialog_group_ungroup">Ungroup</string>
@@ -128,6 +131,7 @@
     <string name="dialog_github_cloning_detail">%1$s</string>
     <string name="bookshelf_menu_github_import">Git import</string>
     <string name="bookshelf_toast_git_pulled">Updated %1$d Git project(s)</string>
+    <string name="bookshelf_toast_git_pull_failed">%1$d Git project(s) failed to update</string>
     <string name="git_project_browser_title">Project files</string>
     <string name="git_project_more_cd">More</string>
     <string name="git_project_change_branch">Change branch</string>
@@ -156,6 +160,10 @@
     <string name="toast_git_pull_uptodate">Already up to date</string>
     <string name="toast_git_pull_success">Updated to %1$s</string>
     <string name="toast_git_pull_failed">Update failed: %1$s</string>
+    <string name="toast_git_pull_uptodate_project">“%1$s” is already up to date</string>
+    <string name="toast_git_pull_success_project">“%1$s” updated to %2$s</string>
+    <string name="toast_git_pull_failed_project">“%1$s” failed to update: %2$s</string>
+    <string name="toast_git_project_busy">This project is already syncing. Please wait.</string>
     <string name="toast_git_open_failed">Failed to open document: %1$s</string>
     <string name="toast_git_project_deleted">Deleted project “%1$s”</string>
     <string name="toast_git_branch_list_failed">Failed to list branches: %1$s</string>
@@ -219,6 +227,10 @@
     <string name="selection_placeholder_diagram">[Diagram]</string>
     <string name="selection_placeholder_image">[Image]</string>
     <string name="bookmark_default_preview">Bookmark</string>
+    <string name="reader_mark_finished_title">Mark as finished?</string>
+    <string name="reader_mark_finished_message">You\'ve reached the end. Mark this as finished and set progress to 100%?</string>
+    <string name="reader_mark_finished_confirm">Mark as finished</string>
+    <string name="reader_mark_finished_later">Not now</string>
     <string name="reader_error_book_not_found">Book not found. It may have been deleted.</string>
     <string name="reader_error_cannot_read_body">Cannot read content (permission lost or invalid path). Remove the book from the library and import the file again.</string>
     <string name="bookmark_note_optional">Bookmark note (optional)</string>

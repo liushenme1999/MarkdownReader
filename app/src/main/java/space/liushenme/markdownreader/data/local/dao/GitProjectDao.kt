@@ -30,6 +30,9 @@ interface GitProjectDao {
     @Query("SELECT * FROM git_projects WHERE id = :id")
     suspend fun getById(id: Long): GitProjectEntity?
 
+    @Query("SELECT * FROM git_projects WHERE id = :id")
+    fun observeById(id: Long): Flow<GitProjectEntity?>
+
     @Query("SELECT * FROM git_projects WHERE remoteUrl = :remoteUrl LIMIT 1")
     suspend fun getByRemoteUrl(remoteUrl: String): GitProjectEntity?
 
@@ -59,4 +62,7 @@ interface GitProjectDao {
 
     @Query("UPDATE git_projects SET isFavorite = :isFavorite WHERE id IN (:ids)")
     suspend fun updateFavoriteByIds(ids: List<Long>, isFavorite: Boolean)
+
+    @Query("UPDATE git_projects SET hasRemoteUpdate = :hasRemoteUpdate WHERE id = :id")
+    suspend fun updateHasRemoteUpdate(id: Long, hasRemoteUpdate: Boolean)
 }

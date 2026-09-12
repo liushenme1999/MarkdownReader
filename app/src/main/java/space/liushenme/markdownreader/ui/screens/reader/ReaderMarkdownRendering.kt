@@ -908,7 +908,13 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         onOpenPositionReady?.invoke()
     }
 
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        ReaderTableSpacing.lineSpacingMultiplier = lineSpacingMultiplier
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+    }
+
     override fun onDraw(canvas: Canvas) {
+        ReaderTableSpacing.lineSpacingMultiplier = lineSpacingMultiplier
         // 纯色底画在文字下；下划线画在文字上。不用 LineBackgroundSpan，避免 ParagraphStyle 卡死布局。
         drawReaderHighlightDecorations(this, canvas, underText = true)
         super.onDraw(canvas)
@@ -2016,10 +2022,6 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         val snapChar = viewportAnchorChar
         val snapInLineOffset = viewportAnchorInLineOffset
         super.onLayout(changed, left, top, right, bottom)
-        if (changed) {
-            val viewport = (width - paddingLeft - paddingRight).coerceAtLeast(0)
-            if (viewport > 0) ReaderCodeBlockSettings.viewportWidthPx = viewport
-        }
         if (scrollToTop) {
             // 不清意图：等 finishMarkdownRender 匹配新内容后再清，确保新窗口首帧也在顶部。
             if (scrollY != 0) super.scrollTo(0, 0)

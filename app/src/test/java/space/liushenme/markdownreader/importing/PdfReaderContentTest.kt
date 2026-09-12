@@ -46,7 +46,7 @@ class PdfReaderContentTest {
         assertEquals(pages.size, toc.size)
         toc.forEachIndexed { index, entry ->
             assertEquals(index, PdfReaderContent.pageIndexForSourceOffset(body, entry.sourceOffset))
-            assertEquals(entry.sourceOffset, pages[index].second)
+            assertEquals(entry.sourceOffset, pages[index].first)
         }
     }
 
@@ -59,7 +59,7 @@ class PdfReaderContentTest {
         }
         val pages = PdfReaderContent.splitToPages(body)
         assertEquals(2, pages.size)
-        assertTrue(pages[0].first.contains("pdf_page_001"))
-        assertTrue(pages[1].first.contains("pdf_page_002"))
+        assertTrue(body.substring(pages[0]).contains("pdf_page_001"))
+        assertTrue(body.substring(pages[1]).contains("pdf_page_002"))
     }
 }

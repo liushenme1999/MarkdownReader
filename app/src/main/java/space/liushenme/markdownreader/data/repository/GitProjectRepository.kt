@@ -13,6 +13,7 @@ import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.data.local.entity.DeletedBookEntity
 import space.liushenme.markdownreader.data.local.entity.DeletedGitProjectEntity
 import space.liushenme.markdownreader.data.local.entity.GitProjectEntity
+import space.liushenme.markdownreader.git.GitHubRepoUrlParser
 import space.liushenme.markdownreader.git.GitProjectStorage
 import space.liushenme.markdownreader.git.GitRecentOpenedPaths
 import space.liushenme.markdownreader.importing.ParsedBookStorage
@@ -30,14 +31,26 @@ class GitProjectRepository @Inject constructor(
 
     suspend fun getById(id: Long): GitProjectEntity? = gitProjectDao.getById(id)
 
-    suspend fun getByRemoteUrl(remoteUrl: String): GitProjectEntity? =
-        gitProjectDao.getByRemoteUrl(remoteUrl)
+    fun observeById(id: Long): Flow<GitProjectEntity?> = gitProjectDao.observeById(id)
+
+    suspend fun getByRemoteUrl(remoteUrl: String): GitProjectEntity? {
+        for (url in GitHubRepoUrlParser.lookupUrls(remoteUrl)) {
+            gitProjectDao.getByRemoteUrl(url)?.let { return it }
+        }
+        return gitProjectDao.getAllProjectsList().firstOrNull { local ->
+            GitHubRepoUrlParser.sameRepo(local.remoteUrl, remoteUrl)
+        }
+    }
 
     suspend fun insert(project: GitProjectEntity): Long {
-        if (project.remoteUrl.isNotBlank()) {
-            deletedGitProjectDao.deleteByRemoteUrl(project.remoteUrl)
+        val canonical = GitHubRepoUrlParser.canonicalBrowseUrl(project.remoteUrl)
+            ?: project.remoteUrl
+        if (canonical.isNotBlank()) {
+            clearTombstonesForRemote(canonical)
         }
-        return gitProjectDao.insert(project)
+        return gitProjectDao.insert(
+            if (canonical == project.remoteUrl) project else project.copy(remoteUrl = canonical),
+        )
     }
 
     suspend fun update(project: GitProjectEntity) = gitProjectDao.update(project)
@@ -87,13 +100,20 @@ class GitProjectRepository @Inject constructor(
         gitProjectDao.updateFavoriteByIds(ids.toList(), isFavorite)
     }
 
+    suspend fun updateHasRemoteUpdate(id: Long, hasRemoteUpdate: Boolean) {
+        gitProjectDao.updateHasRemoteUpdate(id, hasRemoteUpdate)
+    }
+
     /** 删除项目、关联书籍解析包，以及本地 clone 目录。 */
     suspend fun deleteProjectCascade(project: GitProjectEntity) {
         val now = System.currentTimeMillis()
         if (project.remoteUrl.isNotBlank()) {
+            val canonical = GitHubRepoUrlParser.canonicalBrowseUrl(project.remoteUrl)
+                ?: project.remoteUrl
+            clearTombstonesForRemote(canonical)
             deletedGitProjectDao.upsert(
                 DeletedGitProjectEntity(
-                    remoteUrl = project.remoteUrl,
+                    remoteUrl = canonical,
                     deletedAt = now,
                 ),
             )
@@ -118,6 +138,15 @@ class GitProjectRepository @Inject constructor(
         }
         GitProjectStorage.deleteProjectDir(project.localPath)
         gitProjectDao.delete(project)
+    }
+
+    private suspend fun clearTombstonesForRemote(remoteUrl: String) {
+        for (url in GitHubRepoUrlParser.lookupUrls(remoteUrl)) {
+            deletedGitProjectDao.deleteByRemoteUrl(url)
+        }
+        deletedGitProjectDao.getAll()
+            .filter { GitHubRepoUrlParser.sameRepo(it.remoteUrl, remoteUrl) }
+            .forEach { deletedGitProjectDao.deleteByRemoteUrl(it.remoteUrl) }
     }
 
     suspend fun deleteProjectsByIds(ids: Collection<Long>) {

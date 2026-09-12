@@ -143,6 +143,7 @@ fun ReaderScreen(
     val codeBlockWrap by viewModel.codeBlockWrap.collectAsState()
     val loadError by viewModel.loadError.collectAsState()
     val pageTurnMode by viewModel.pageTurnMode.collectAsState()
+    val showMarkFinishedPrompt by viewModel.showMarkFinishedPrompt.collectAsState()
     val configuration = LocalConfiguration.current
 
     val importFormat = book?.let { ImportedBookFormat.fromStored(it.importFormat) }
@@ -364,9 +365,11 @@ fun ReaderScreen(
         if (pageTurnMode == ReaderPageTurnMode.VerticalScroll) return displayedHighlights
         if (pageSpecs.isEmpty()) return emptyList()
         val pageIdx = pagerState.currentPage.coerceIn(0, pageSpecs.lastIndex)
-        val (slice, globalStart) = pageSpecs[pageIdx]
+        val range = pageSpecs[pageIdx]
+        val slice = pageSlice(readerContent, range)
+        val globalStart = range.first
         val globalEnd = if (pageIdx + 1 < pageSpecs.size) {
-            pageSpecs[pageIdx + 1].second
+            pageSpecs[pageIdx + 1].first
         } else {
             Int.MAX_VALUE
         }
@@ -412,9 +415,9 @@ fun ReaderScreen(
         val tv = readerTextView.value
         if (pageTurnMode != ReaderPageTurnMode.VerticalScroll && pageSpecs.isNotEmpty()) {
             val page = pagerState.currentPage.coerceIn(0, pageSpecs.lastIndex)
-            val pageStart = pageSpecs[page].second
+            val pageStart = pageSpecs[page].first
             if (isPdfBook) return pageStart.coerceIn(0, readerContent.length)
-            val pageEnd = pageSpecs.getOrNull(page + 1)?.second ?: readerContent.length
+            val pageEnd = pageSpecs.getOrNull(page + 1)?.first ?: readerContent.length
             return globalSourceCharAtTextViewTop(
                 sourceContent = readerContent,
                 windowStart = pageStart,
@@ -439,6 +442,38 @@ fun ReaderScreen(
             renderPlainText = renderPlainText,
             tocEntries = tocEntries,
         )
+    }
+
+    fun documentReachedEnd(): Boolean {
+        if (readerContent.isEmpty()) return false
+        if (pageTurnMode != ReaderPageTurnMode.VerticalScroll && pageSpecs.isNotEmpty()) {
+            return pagerState.currentPage >= pageSpecs.lastIndex
+        }
+        val tv = readerTextView.value ?: return false
+        return isReaderTextViewAtScrollBottom(tv) && displayWindowEndChar >= readerContent.length
+    }
+
+    fun reachedEndForChar(charPos: Int): Boolean {
+        if (readerContent.isEmpty()) return false
+        if (pageTurnMode != ReaderPageTurnMode.VerticalScroll && pageSpecs.isNotEmpty()) {
+            val lastStart = pageSpecs.last().first
+            return charPos >= lastStart
+        }
+        return charPos >= (readerContent.length - 1).coerceAtLeast(0) &&
+            displayWindowEndChar >= readerContent.length
+    }
+
+    LaunchedEffect(readerLoadEpoch, pageTurnMode) {
+        viewModel.setFinishPromptEnabled(false)
+    }
+
+    LaunchedEffect(coverUntilPositionRestore, pageTurnMode, readerContent, readerLoadEpoch) {
+        if (pageTurnMode != ReaderPageTurnMode.VerticalScroll) return@LaunchedEffect
+        if (readerContent.isEmpty()) return@LaunchedEffect
+        if (!coverUntilPositionRestore) {
+            viewModel.setFinishPromptEnabled(true)
+            viewModel.onDocumentEndChanged(documentReachedEnd())
+        }
     }
 
     // 与 TAG_READER_RENDER_SIG / reader_markdown_render_complete 一致（不含划线）。
@@ -495,11 +530,14 @@ fun ReaderScreen(
                 viewModel.updateReadingProgressAtChar(
                     charPos,
                     if (isPdfBook) null else viewModel.readingPreviewForRestore(),
+                    reachedEndForChar(charPos),
                 )
             },
             pdfJumpByPageIndex = isPdfBook,
             pdfPageIndex = pdfPageIndex,
         )
+        viewModel.setFinishPromptEnabled(true)
+        viewModel.onDocumentEndChanged(reachedEndForChar(charPos))
     }
 
     LaunchedEffect(pagerState.currentPage, pageTurnMode, content) {
@@ -510,8 +548,11 @@ fun ReaderScreen(
     LaunchedEffect(pageTurnMode, pageSpecs, pagerState, totalChars) {
         if (pageTurnMode == ReaderPageTurnMode.VerticalScroll || pageSpecs.isEmpty()) return@LaunchedEffect
         snapshotFlow { pagerState.currentPage }.distinctUntilChanged().collect { page ->
-            val start = pageSpecs.getOrNull(page)?.second ?: return@collect
-            viewModel.updateReadingProgressAtChar(start)
+            val start = pageSpecs.getOrNull(page)?.first ?: return@collect
+            viewModel.updateReadingProgressAtChar(
+                start,
+                reachedEnd = page >= pageSpecs.lastIndex,
+            )
         }
     }
 
@@ -800,8 +841,7 @@ fun ReaderScreen(
             prefetchUpTargetChar = -1
             return@LaunchedEffect
         }
-        android.util.Log.d(
-            "ReaderRestoreDbg2",
+        readerRestoreDbg(
             "prefetchUp trigger target=$target newStart=$newStart scrollY=${tv.scrollY}",
         )
         prefetchUpTargetChar = -1
@@ -813,8 +853,7 @@ fun ReaderScreen(
         // boundaryOffset = 新显示长度 - 旧显示长度 即前置段字符数，是字符级精确的。
         // 抓当前锚点（target 在顶部、scrollY≈0），onLayout 首帧走 length-diff 分支即可绘制前精确置顶、不闪。
         val prefetchAnchor = captureTextViewScrollAnchor(tv, displayWindowStartChar)
-        android.util.Log.d(
-            "ReaderRestoreDbg2",
+        readerRestoreDbg(
             "prefetch stash anchor scrollY=${prefetchAnchor.scrollY} lineTop=${prefetchAnchor.lineTop} " +
                 "winStart=${prefetchAnchor.windowStart} tvLen=${tv.text?.length}",
         )
@@ -1035,7 +1074,7 @@ fun ReaderScreen(
     val view = LocalView.current
     val lifecycleOwner = LocalLifecycleOwner.current
     ShelfStyleSystemBarsEffect(systemBarChromeColor)
-    val persistTopPositionNow by rememberUpdatedState {
+    val persistVisibleProgressNow by rememberUpdatedState {
         val tv = readerTextView.value
         val preview = if (isPdfBook) {
             null
@@ -1044,7 +1083,7 @@ fun ReaderScreen(
         }
         val topChar = currentTopGlobalChar()
             ?: lastScrollTopGlobalChar.takeIf { it >= 0 }
-        topChar?.let { viewModel.persistReadingPositionBlocking(it, preview) }
+        viewModel.flushVisibleProgressBlocking(topChar, preview)
     }
 
     DisposableEffect(lifecycleOwner, bookId) {
@@ -1052,7 +1091,7 @@ fun ReaderScreen(
             when (event) {
                 Lifecycle.Event.ON_RESUME -> viewModel.onReadingResumed()
                 Lifecycle.Event.ON_PAUSE -> {
-                    persistTopPositionNow()
+                    persistVisibleProgressNow()
                     viewModel.onReadingPaused()
                 }
                 else -> Unit
@@ -1063,7 +1102,7 @@ fun ReaderScreen(
             viewModel.onReadingResumed()
         }
         onDispose {
-            persistTopPositionNow()
+            persistVisibleProgressNow()
             viewModel.onReadingPaused()
             lifecycleOwner.lifecycle.removeObserver(observer)
         }
@@ -1072,7 +1111,7 @@ fun ReaderScreen(
     DisposableEffect(bookId) {
         val previous = MarkdownLinkDispatcher.onBeforeOpenWebUrl
         MarkdownLinkDispatcher.onBeforeOpenWebUrl = {
-            persistTopPositionNow()
+            persistVisibleProgressNow()
             viewModel.onReadingPaused()
         }
         onDispose {
@@ -1169,7 +1208,11 @@ fun ReaderScreen(
                                 val preview = tv?.let { previewPlainTextFromTextViewTop(it) }
                                 val topChar = currentTopGlobalChar()
                                 if (topChar != null) {
-                                    viewModel.updateReadingProgressAtCharNow(topChar, preview)
+                                    viewModel.updateReadingProgressAtCharNow(
+                                        topChar,
+                                        preview,
+                                        documentReachedEnd(),
+                                    )
                                 }
                                 when (
                                     viewModel.toggleBookmarkAtSwipe(
@@ -1262,7 +1305,11 @@ fun ReaderScreen(
                                                     val estimated = currentTopGlobalChar()
                                                     if (estimated != null) {
                                                         lastScrollTopGlobalChar = estimated
-                                                        viewModel.updateVisibleReadingProgress(estimated)
+                                                        val atEnd = documentReachedEnd()
+                                                        viewModel.updateVisibleReadingProgress(
+                                                            estimated,
+                                                            atEnd,
+                                                        )
                                                         val now = System.currentTimeMillis()
                                                         if (readerTv?.allowReaderScrollSideEffects == true &&
                                                             now - lastScrollProgressSaveMs >= 200L
@@ -1276,6 +1323,7 @@ fun ReaderScreen(
                                                             viewModel.updateReadingProgressAtChar(
                                                                 estimated,
                                                                 preview,
+                                                                atEnd,
                                                             )
                                                         }
                                                     }
@@ -1328,6 +1376,7 @@ fun ReaderScreen(
                                         )
                                     } else {
                                         ReaderPagedMarkdownHost(
+                                            sourceContent = readerContent,
                                             pages = pageSpecs,
                                             pageTurnMode = pageTurnMode,
                                             pagerState = pagerState,
@@ -1477,6 +1526,13 @@ fun ReaderScreen(
         }
     }
 
+    if (showMarkFinishedPrompt) {
+        ReaderMarkFinishedDialog(
+            onConfirm = { viewModel.markAsFinished() },
+            onDismiss = { viewModel.dismissFinishPrompt() },
+        )
+    }
+
     diagramPreviewBitmap?.let { bitmap ->
         DiagramPreviewDialog(
             bitmap = bitmap,
@@ -1512,9 +1568,9 @@ fun ReaderScreen(
         val windowEnd: Int
         if (pageTurnMode != ReaderPageTurnMode.VerticalScroll && pageSpecs.isNotEmpty()) {
             val pageIdx = pagerState.currentPage.coerceIn(0, pageSpecs.lastIndex)
-            windowStart = pageSpecs[pageIdx].second
+            windowStart = pageSpecs[pageIdx].first
             windowEnd = if (pageIdx + 1 < pageSpecs.size) {
-                pageSpecs[pageIdx + 1].second
+                pageSpecs[pageIdx + 1].first
             } else {
                 contentLen
             }
@@ -1558,7 +1614,11 @@ fun ReaderScreen(
                 pageTextViews = pageTextViews,
                 assignActiveTextView = { readerTextView.value = it },
                 onProgress = {
-                    viewModel.updateReadingProgressAtChar(charPos, bookmarkPreview)
+                    viewModel.updateReadingProgressAtChar(
+                        charPos,
+                        bookmarkPreview,
+                        reachedEndForChar(charPos),
+                    )
                 },
                 pdfJumpByPageIndex = isPdfBook,
                 pdfPageIndex = pdfPageIndex,
@@ -1582,7 +1642,11 @@ fun ReaderScreen(
                 },
                 onPendingPdfPageIndex = { pendingScrollRestorePdfPageIndex = it },
                 onProgress = {
-                    viewModel.updateReadingProgressAtChar(charPos, null)
+                    viewModel.updateReadingProgressAtChar(
+                        charPos,
+                        null,
+                        reachedEndForChar(charPos),
+                    )
                 },
             )
         } else {
@@ -1607,7 +1671,11 @@ fun ReaderScreen(
                 },
                 onAnchorGlobalChar = { queueScrollRestore(it) },
                 onProgress = {
-                    viewModel.updateReadingProgressAtChar(charPos, bookmarkPreview)
+                    viewModel.updateReadingProgressAtChar(
+                        charPos,
+                        bookmarkPreview,
+                        reachedEndForChar(charPos),
+                    )
                 },
             )
         }
@@ -1759,7 +1827,7 @@ fun ReaderScreen(
                             pagerState = pagerState,
                             pageTextViews = pageTextViews,
                             assignActiveTextView = { readerTextView.value = it },
-                            onProgress = { viewModel.updateReadingProgressAtChar(charPos) },
+                            onProgress = { viewModel.updateReadingProgressAtChar(charPos, reachedEnd = reachedEndForChar(charPos)) },
                             pdfJumpByPageIndex = isPdfBook,
                             pdfPageIndex = pdfPageIndex,
                         )
@@ -1781,7 +1849,7 @@ fun ReaderScreen(
                                 displayWindowEndChar = end
                             },
                             onPendingPdfPageIndex = { pendingScrollRestorePdfPageIndex = it },
-                            onProgress = { viewModel.updateReadingProgressAtChar(charPos) },
+                            onProgress = { viewModel.updateReadingProgressAtChar(charPos, reachedEnd = reachedEndForChar(charPos)) },
                         )
                     } else {
                         // 目录跳转：目标章节严格置顶，走独立置顶通道，不与 offset/anchor 恢复竞争。
@@ -1804,7 +1872,7 @@ fun ReaderScreen(
                         requestReaderScrollToTop(readerTextView.value)
                         displayWindowStartChar = winStart
                         displayWindowEndChar = winEnd.coerceAtLeast((winStart + 1).coerceAtMost(contentLen))
-                        viewModel.updateReadingProgressAtChar(charPos)
+                        viewModel.updateReadingProgressAtChar(charPos, reachedEnd = reachedEndForChar(charPos))
                         // 目标章节渲染完成后台预扩上文，避免下滑看前文时撞硬顶停顿。
                         prefetchUpTargetChar = if (winStart > 0) winStart else -1
                     }
@@ -1819,6 +1887,28 @@ fun ReaderScreen(
         )
     }
 
+}
+
+@Composable
+private fun ReaderMarkFinishedDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.reader_mark_finished_title)) },
+        text = { Text(stringResource(R.string.reader_mark_finished_message)) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(stringResource(R.string.reader_mark_finished_confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.reader_mark_finished_later))
+            }
+        },
+    )
 }
 
 @Composable

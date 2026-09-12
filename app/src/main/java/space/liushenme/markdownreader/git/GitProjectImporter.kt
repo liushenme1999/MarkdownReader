@@ -54,18 +54,21 @@ class GitProjectImporter @Inject constructor(
         val projectId = gitProjectRepository.insert(placeholder)
         val dest = GitProjectStorage.projectDir(context, projectId)
         try {
-            val result = GitProjectCloner.clone(
-                cloneUrl = parsed.cloneUrl,
-                destination = dest,
-                branch = branch,
-                onProgress = onProgress,
-            )
+            val result = GitRepoLock.withLock(GitRepoLock.keyForRemote(parsed.httpsBrowseUrl)) {
+                GitProjectCloner.clone(
+                    cloneUrl = parsed.cloneUrl,
+                    destination = dest,
+                    branch = branch,
+                    onProgress = onProgress,
+                )
+            }
             val updated = placeholder.copy(
                 id = projectId,
                 localPath = dest.absolutePath,
                 defaultBranch = result.branch,
                 lastCommitSha = result.commitSha,
                 lastPulledAt = Date(),
+                hasRemoteUpdate = false,
             )
             gitProjectRepository.update(updated)
             GitImportOutcome(
@@ -105,6 +108,7 @@ class GitProjectImporter @Inject constructor(
         val hadRepo = GitProjectStorage.hasValidRepo(project.localPath)
         val ready = ensureCloned(project, onProgress)
         if (!hadRepo) {
+            gitProjectRepository.updateHasRemoteUpdate(ready.id, false)
             return@withContext GitPullResult(
                 previousSha = "",
                 currentSha = ready.lastCommitSha,
@@ -123,6 +127,7 @@ class GitProjectImporter @Inject constructor(
                 title = refreshedTitle,
                 lastCommitSha = result.currentSha.ifEmpty { ready.lastCommitSha },
                 lastPulledAt = Date(),
+                hasRemoteUpdate = false,
             ),
         )
         result
@@ -164,6 +169,7 @@ class GitProjectImporter @Inject constructor(
                 defaultBranch = result.branch,
                 lastCommitSha = result.commitSha.ifEmpty { ready.lastCommitSha },
                 lastPulledAt = Date(),
+                hasRemoteUpdate = false,
             ),
         )
         result
@@ -188,12 +194,14 @@ class GitProjectImporter @Inject constructor(
             ?: throw GitCloneException("无法识别的 GitHub 仓库地址")
         val dest = GitProjectStorage.projectDir(context, project.id)
         val branch = project.defaultBranch.trim().takeIf { it.isNotEmpty() }
-        val result = GitProjectCloner.clone(
-            cloneUrl = parsed.cloneUrl,
-            destination = dest,
-            branch = branch,
-            onProgress = onProgress,
-        )
+        val result = GitRepoLock.withLock(GitRepoLock.keyForRemote(parsed.httpsBrowseUrl)) {
+            GitProjectCloner.clone(
+                cloneUrl = parsed.cloneUrl,
+                destination = dest,
+                branch = branch,
+                onProgress = onProgress,
+            )
+        }
         val updated = project.copy(
             title = parsed.repo.ifBlank { project.title },
             remoteUrl = parsed.httpsBrowseUrl,
@@ -201,6 +209,7 @@ class GitProjectImporter @Inject constructor(
             defaultBranch = result.branch.ifBlank { project.defaultBranch },
             lastCommitSha = result.commitSha.ifBlank { project.lastCommitSha },
             lastPulledAt = Date(),
+            hasRemoteUpdate = false,
         )
         gitProjectRepository.update(updated)
         return updated

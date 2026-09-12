@@ -48,6 +48,7 @@ fun BookshelfSearchScreen(
     viewModel: BookshelfViewModel = hiltViewModel(),
 ) {
     val books by viewModel.books.collectAsState()
+    val gitProjects by viewModel.gitProjects.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
     val coverImageCache = remember { LruCache<String, ImageBitmap>(20) }
     val shelfBg = shelfStylePageBackground()
@@ -63,6 +64,9 @@ fun BookshelfSearchScreen(
                     book.shelfGroup.lowercase(Locale.getDefault()).contains(query)
             }
         }
+    }
+    val gitUpdateByProjectId = remember(gitProjects) {
+        gitProjects.associate { it.id to it.hasRemoteUpdate }
     }
 
     Scaffold(
@@ -141,6 +145,8 @@ fun BookshelfSearchScreen(
                             BookSearchResultCard(
                                 book = book,
                                 coverImageCache = coverImageCache,
+                                hasRemoteUpdate = book.gitProjectId
+                                    ?.let { gitUpdateByProjectId[it] } == true,
                                 onClick = {
                                     navController.navigate(AppRoutes.reader(book.id))
                                 },

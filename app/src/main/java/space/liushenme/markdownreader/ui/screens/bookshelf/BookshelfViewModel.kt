@@ -16,10 +16,13 @@ import space.liushenme.markdownreader.data.repository.GitProjectRepository
 import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
 import space.liushenme.markdownreader.data.repository.ShelfGroupRepository
 import space.liushenme.markdownreader.git.GitCloneException
-import space.liushenme.markdownreader.git.GitDocumentOpener
 import space.liushenme.markdownreader.git.GitHubRepoUrlParser
 import space.liushenme.markdownreader.git.GitProgress
 import space.liushenme.markdownreader.git.GitProjectImporter
+import space.liushenme.markdownreader.git.GitProjectPullCoordinator
+import space.liushenme.markdownreader.git.GitProjectRemote
+import space.liushenme.markdownreader.git.GitProjectStorage
+import space.liushenme.markdownreader.git.GitRepoLock
 import space.liushenme.markdownreader.model.BookshelfGridColumns
 import space.liushenme.markdownreader.model.BookshelfLayoutMode
 import space.liushenme.markdownreader.importing.BookContentLoader
@@ -35,14 +38,23 @@ import space.liushenme.markdownreader.markdown.NetworkImageCache
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Date
@@ -54,10 +66,10 @@ class BookshelfViewModel @Inject constructor(
     private val bookRepository: BookRepository,
     private val gitProjectRepository: GitProjectRepository,
     private val gitProjectImporter: GitProjectImporter,
-    private val gitDocumentOpener: GitDocumentOpener,
     private val shelfGroupRepository: ShelfGroupRepository,
     private val readerSettingsRepository: ReaderSettingsRepository,
     private val backupManager: BackupManager,
+    private val gitPullCoordinator: GitProjectPullCoordinator,
     @ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
@@ -81,6 +93,11 @@ class BookshelfViewModel @Inject constructor(
 
     private val toastChannel = Channel<String>(Channel.BUFFERED)
     val toastMessages = toastChannel.receiveAsFlow()
+    val gitPullToasts = gitPullCoordinator.toasts
+
+    val pullingProjectIds = gitPullCoordinator.activePulls
+        .map { it.keys }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
 
     private val readerOpenRequestChannel = Channel<Long>(Channel.BUFFERED)
     val readerOpenRequests = readerOpenRequestChannel.receiveAsFlow()
@@ -94,12 +111,18 @@ class BookshelfViewModel @Inject constructor(
     private val _gitImporting = MutableStateFlow(false)
     val gitImporting: StateFlow<Boolean> = _gitImporting.asStateFlow()
 
+    private val remoteCheckMutex = Mutex()
+
     init {
         viewModelScope.launch {
             shelfGroupRepository.syncFromBooks()
         }
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { gitProjectImporter.refreshDisplayTitlesIfNeeded() }
+        }
+        viewModelScope.launch {
+            delay(600)
+            checkRemoteGitUpdates()
         }
     }
 
@@ -161,7 +184,6 @@ class BookshelfViewModel @Inject constructor(
             val result = withContext(Dispatchers.IO) {
                 backupManager.syncReadingProgress()
             }
-            val gitPulled = withContext(Dispatchers.IO) { pullAllGitProjects() }
             _isRefreshing.value = false
             result.fold(
                 onSuccess = { sync ->
@@ -178,19 +200,13 @@ class BookshelfViewModel @Inject constructor(
                             )
                         sync.pushed ->
                             appContext.getString(R.string.bookshelf_toast_sync_pushed)
-                        gitPulled > 0 ->
-                            appContext.getString(R.string.bookshelf_toast_git_pulled, gitPulled)
                         else ->
                             appContext.getString(R.string.bookshelf_toast_sync_uptodate)
                     }
                     toastChannel.trySend(msg)
+                    checkRemoteGitUpdates()
                 },
                 onFailure = {
-                    if (gitPulled > 0) {
-                        toastChannel.trySend(
-                            appContext.getString(R.string.bookshelf_toast_git_pulled, gitPulled),
-                        )
-                    }
                     toastChannel.trySend(
                         appContext.getString(
                             R.string.bookshelf_toast_sync_failed,
@@ -202,23 +218,47 @@ class BookshelfViewModel @Inject constructor(
         }
     }
 
-    /** @return 有新提交的项目数 */
-    private suspend fun pullAllGitProjects(): Int {
-        val projects = gitProjectRepository.getAllProjectsList()
-        var changed = 0
-        for (project in projects) {
-            runCatching {
-                val result = gitProjectImporter.pull(project)
-                if (result.changed) {
-                    changed++
-                    val refreshed = gitProjectRepository.getById(project.id) ?: project
-                    gitDocumentOpener.refreshOpenedDocuments(appContext, refreshed)
+    private suspend fun checkRemoteGitUpdates() {
+        remoteCheckMutex.withLock {
+            withContext(Dispatchers.IO) {
+                val projects = gitProjectRepository.getAllProjectsList()
+                if (projects.isEmpty()) return@withContext
+                val semaphore = Semaphore(2)
+                coroutineScope {
+                    projects.map { project ->
+                        async {
+                            semaphore.withPermit {
+                                checkOneRemoteUpdate(project)
+                            }
+                        }
+                    }.awaitAll()
                 }
-            }.onFailure {
-                // 单个项目失败不中断其余
             }
         }
-        return changed
+    }
+
+    private suspend fun checkOneRemoteUpdate(project: GitProjectEntity) {
+        val parsed = GitHubRepoUrlParser.parse(project.remoteUrl) ?: return
+        val branch = project.defaultBranch.trim()
+        if (branch.isEmpty()) return
+        val remoteSha = run {
+            val pathKey = GitRepoLock.keyForPath(project.localPath)
+            if (pathKey.isNotEmpty()) {
+                GitRepoLock.withLock(pathKey) {
+                    GitProjectRemote.checkBranchHead(parsed.cloneUrl, branch)
+                }
+            } else {
+                GitProjectRemote.checkBranchHead(parsed.cloneUrl, branch)
+            }
+        } ?: return
+        val flag = GitProjectRemote.shouldMarkRemoteUpdate(
+            localSha = project.lastCommitSha,
+            remoteSha = remoteSha,
+            hasLocalRepo = GitProjectStorage.hasValidRepo(project.localPath),
+        )
+        if (flag != project.hasRemoteUpdate) {
+            gitProjectRepository.updateHasRemoteUpdate(project.id, flag)
+        }
     }
 
     fun importFromLocalUris(
@@ -547,22 +587,29 @@ class BookshelfViewModel @Inject constructor(
         }
     }
 
-    fun deleteBook(book: BookEntity) {
+    fun deleteBook(book: BookEntity, deleteCloudBackup: Boolean = false) {
         viewModelScope.launch {
-            bookRepository.deleteBook(book)
+            bookRepository.deleteBook(book, deleteCloudBackup)
         }
     }
 
-    fun deleteBooks(ids: Set<Long>) {
+    fun deleteBooks(ids: Set<Long>, deleteCloudBackup: Boolean = false) {
         if (ids.isEmpty()) return
         viewModelScope.launch {
-            bookRepository.deleteBooksByIds(ids)
+            bookRepository.deleteBooksByIds(ids, deleteCloudBackup)
         }
     }
 
-    fun deleteSelection(bookIds: Set<Long>, projectIds: Set<Long>) {
+    fun deleteSelection(
+        bookIds: Set<Long>,
+        projectIds: Set<Long>,
+        deleteCloudBackup: Boolean = false,
+    ) {
         viewModelScope.launch {
-            if (bookIds.isNotEmpty()) bookRepository.deleteBooksByIds(bookIds)
+            if (projectIds.isNotEmpty()) gitPullCoordinator.cancelAll(projectIds)
+            if (bookIds.isNotEmpty()) {
+                bookRepository.deleteBooksByIds(bookIds, deleteCloudBackup)
+            }
             if (projectIds.isNotEmpty()) gitProjectRepository.deleteProjectsByIds(projectIds)
         }
     }

@@ -33,4 +33,6 @@ data class GitProjectEntity(
     val lastOpenedAt: Date? = null,
     /** 最近打开路径历史 JSON 数组（新→旧），如 ["a.md","b.md"] */
     val recentOpenedPathsJson: String = "[]",
+    /** 远程分支 HEAD 与本地 lastCommitSha 不一致，或本地尚无工作区 */
+    val hasRemoteUpdate: Boolean = false,
 )

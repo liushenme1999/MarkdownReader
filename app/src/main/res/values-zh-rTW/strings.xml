@@ -96,7 +96,9 @@
     <string name="bookshelf_import">匯入</string>
     <string name="bookshelf_import_cd">匯入書籍</string>
     <string name="bookshelf_unread">未讀</string>
+    <string name="bookshelf_finished">已讀完</string>
     <string name="bookshelf_pinned_cd">已置頂</string>
+    <string name="bookshelf_git_update_available_cd">有 Git 更新</string>
     <string name="bookshelf_no_results">未找到符合的書籍</string>
     <string name="bookshelf_try_other_keywords">嘗試其他關鍵字</string>
     <string name="bookshelf_exit_management_cd">退出管理</string>
@@ -107,7 +109,8 @@
     <string name="bookshelf_action_favorite">收藏</string>
     <string name="bookshelf_action_group">分組</string>
     <string name="dialog_remove_from_shelf_title">移出書架</string>
-    <string name="dialog_remove_from_shelf_message">確定將選中的 %1$d 本書從書架移除嗎？</string>
+    <string name="dialog_remove_from_shelf_message">確定將選中的 %1$d 本從書架移除嗎？</string>
+    <string name="dialog_remove_delete_cloud_backup">同時刪除雲端備份</string>
     <string name="dialog_set_group_title">設定分組</string>
     <string name="dialog_group_existing_label">既有分組</string>
     <string name="dialog_group_ungroup">取消分組</string>
@@ -128,6 +131,7 @@
     <string name="dialog_github_cloning_detail">%1$s</string>
     <string name="bookshelf_menu_github_import">Git 匯入</string>
     <string name="bookshelf_toast_git_pulled">已從 Git 更新 %1$d 個專案</string>
+    <string name="bookshelf_toast_git_pull_failed">有 %1$d 個 Git 專案更新失敗</string>
     <string name="git_project_browser_title">專案檔案</string>
     <string name="git_project_more_cd">更多</string>
     <string name="git_project_change_branch">更改分支</string>
@@ -156,6 +160,10 @@
     <string name="toast_git_pull_uptodate">已是最新</string>
     <string name="toast_git_pull_success">已更新到 %1$s</string>
     <string name="toast_git_pull_failed">更新失敗：%1$s</string>
+    <string name="toast_git_pull_uptodate_project">「%1$s」已是最新</string>
+    <string name="toast_git_pull_success_project">「%1$s」已更新到 %2$s</string>
+    <string name="toast_git_pull_failed_project">「%1$s」更新失敗：%2$s</string>
+    <string name="toast_git_project_busy">該專案正在同步 Git，請稍候</string>
     <string name="toast_git_open_failed">開啟文件失敗：%1$s</string>
     <string name="toast_git_project_deleted">已刪除專案「%1$s」</string>
     <string name="toast_git_branch_list_failed">取得分支失敗：%1$s</string>
@@ -219,6 +227,10 @@
     <string name="selection_placeholder_diagram">[圖表]</string>
     <string name="selection_placeholder_image">[圖片]</string>
     <string name="bookmark_default_preview">書籤</string>
+    <string name="reader_mark_finished_title">標記為已讀完？</string>
+    <string name="reader_mark_finished_message">已經到這篇的結尾，要標記為已讀完並把進度設為 100% 嗎？</string>
+    <string name="reader_mark_finished_confirm">標記已讀完</string>
+    <string name="reader_mark_finished_later">暫不標記</string>
     <string name="reader_error_book_not_found">找不到該書，可能已被刪除。</string>
     <string name="reader_error_cannot_read_body">無法讀取正文（檔案權限失效或路徑無效）。請返回書架刪除該書後，使用「匯入」重新選擇檔案。</string>
     <string name="bookmark_note_optional">書籤備註（可選）</string>

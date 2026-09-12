@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -27,6 +29,8 @@ import space.liushenme.markdownreader.git.GitDocumentOpener
 import space.liushenme.markdownreader.git.GitPathUtils
 import space.liushenme.markdownreader.git.GitProgress
 import space.liushenme.markdownreader.git.GitProjectImporter
+import space.liushenme.markdownreader.git.GitProjectOpKind
+import space.liushenme.markdownreader.git.GitProjectPullCoordinator
 import space.liushenme.markdownreader.git.GitProjectStorage
 import space.liushenme.markdownreader.git.GitRecentOpenedPaths
 import space.liushenme.markdownreader.git.GitTreeNode
@@ -45,6 +49,7 @@ class ProjectBrowserViewModel @Inject constructor(
     private val gitProjectRepository: GitProjectRepository,
     private val gitProjectImporter: GitProjectImporter,
     private val gitDocumentOpener: GitDocumentOpener,
+    private val gitPullCoordinator: GitProjectPullCoordinator,
     readerSettingsRepository: ReaderSettingsRepository,
     @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
@@ -73,15 +78,36 @@ class ProjectBrowserViewModel @Inject constructor(
             GitProjectRecentReadCount.DEFAULT,
         )
 
-    private val _busy = MutableStateFlow(false)
-    val busy: StateFlow<Boolean> = _busy.asStateFlow()
+    private val _pageBusy = MutableStateFlow(false)
+    private val _pageProgress = MutableStateFlow<GitProgress?>(null)
+    private val _pageBusyStatusRes = MutableStateFlow<Int?>(null)
 
-    private val _progress = MutableStateFlow<GitProgress?>(null)
-    val progress: StateFlow<GitProgress?> = _progress.asStateFlow()
+    private val pullingState = gitPullCoordinator.activePulls
+        .map { it[projectId] }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            gitPullCoordinator.activePulls.value[projectId],
+        )
+
+    val busy: StateFlow<Boolean> = combine(_pageBusy, pullingState) { page, pulling ->
+        page || pulling != null
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    val progress: StateFlow<GitProgress?> = combine(_pageProgress, pullingState) { page, pulling ->
+        pulling?.progress ?: page
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /** 忙碌时顶部进度条旁的说明文案资源 id */
-    private val _busyStatusRes = MutableStateFlow<Int?>(null)
-    val busyStatusRes: StateFlow<Int?> = _busyStatusRes.asStateFlow()
+    val busyStatusRes: StateFlow<Int?> = combine(_pageBusyStatusRes, pullingState) { page, pulling ->
+        when (pulling?.kind) {
+            GitProjectOpKind.PULL -> R.string.git_project_pulling_title
+            GitProjectOpKind.CLONE -> R.string.dialog_github_cloning_title
+            null -> page
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val gitPullToasts = gitPullCoordinator.toasts
 
     private val _remoteBranches = MutableStateFlow<List<String>>(emptyList())
     val remoteBranches: StateFlow<List<String>> = _remoteBranches.asStateFlow()
@@ -100,7 +126,30 @@ class ProjectBrowserViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
+            gitProjectRepository.observeById(projectId).collect { latest ->
+                if (latest != null) {
+                    _projectState.value = latest
+                }
+            }
+        }
+        viewModelScope.launch {
             refreshProjectAndTree()
+        }
+        viewModelScope.launch {
+            var wasPulling = pullingState.value != null
+            pullingState.collect { pulling ->
+                val now = pulling != null
+                if (wasPulling && !now) {
+                    val refreshed = withContext(Dispatchers.IO) {
+                        gitProjectRepository.getById(projectId)
+                    }
+                    if (refreshed != null && GitProjectStorage.hasValidRepo(refreshed.localPath)) {
+                        applyProjectState(refreshed)
+                        reloadTree(refreshed)
+                    }
+                }
+                wasPulling = now
+            }
         }
     }
 
@@ -111,43 +160,15 @@ class ProjectBrowserViewModel @Inject constructor(
 
     fun pull() {
         val p = _projectState.value ?: return
-        if (_busy.value) return
-        viewModelScope.launch {
-            _busy.value = true
-            _busyStatusRes.value = R.string.git_project_pulling_title
-            _progress.value = GitProgress(GitProgress.Phase.FETCHING)
-            try {
-                val result = gitProjectImporter.pull(p) { prog ->
-                    _progress.value = prog
-                }
-                val refreshed = gitProjectRepository.getById(p.id)
-                if (refreshed != null) {
-                    applyProjectState(refreshed)
-                    if (result.changed) {
-                        withContext(Dispatchers.IO) {
-                            gitDocumentOpener.refreshOpenedDocuments(appContext, refreshed)
-                        }
-                        reloadTree(refreshed)
-                        val shortSha = refreshed.lastCommitSha.take(7)
-                        toastChannel.trySend(
-                            appContext.getString(R.string.toast_git_pull_success, shortSha),
-                        )
-                    } else {
-                        toastChannel.trySend(appContext.getString(R.string.toast_git_pull_uptodate))
-                    }
-                }
-            } catch (e: Exception) {
-                toastChannel.trySend(mapGitError(e, R.string.toast_git_pull_failed))
-            } finally {
-                _busy.value = false
-                _progress.value = null
-                _busyStatusRes.value = null
-            }
+        if (remindIfGitBusy()) return
+        if (!gitPullCoordinator.requestPull(p)) {
+            toastChannel.trySend(appContext.getString(R.string.toast_git_project_busy))
         }
     }
 
     fun loadRemoteBranches() {
         val p = _projectState.value ?: return
+        if (remindIfGitBusy()) return
         if (_loadingBranches.value) return
         viewModelScope.launch {
             _loadingBranches.value = true
@@ -169,18 +190,18 @@ class ProjectBrowserViewModel @Inject constructor(
     fun checkoutBranch(branch: String) {
         val p = _projectState.value ?: return
         val target = branch.trim()
-        if (target.isEmpty() || _busy.value) return
+        if (target.isEmpty() || remindIfGitBusy()) return
         if (target == p.defaultBranch) {
             toastChannel.trySend(appContext.getString(R.string.toast_git_branch_already_current))
             return
         }
         viewModelScope.launch {
-            _busy.value = true
-            _busyStatusRes.value = R.string.git_project_switching_branch_title
-            _progress.value = GitProgress(GitProgress.Phase.FETCHING, detail = target)
+            _pageBusy.value = true
+            _pageBusyStatusRes.value = R.string.git_project_switching_branch_title
+            _pageProgress.value = GitProgress(GitProgress.Phase.FETCHING, detail = target)
             try {
                 gitProjectImporter.checkoutBranch(p, target) { prog ->
-                    _progress.value = prog
+                    _pageProgress.value = prog
                 }
                 val refreshed = gitProjectRepository.getById(p.id)
                 if (refreshed != null) {
@@ -196,18 +217,18 @@ class ProjectBrowserViewModel @Inject constructor(
             } catch (e: Exception) {
                 toastChannel.trySend(mapGitError(e, R.string.toast_git_branch_switch_failed))
             } finally {
-                _busy.value = false
-                _progress.value = null
-                _busyStatusRes.value = null
+                _pageBusy.value = false
+                _pageProgress.value = null
+                _pageBusyStatusRes.value = null
             }
         }
     }
 
     fun openDocument(relativePath: String) {
         val p = _projectState.value ?: return
-        if (_busy.value) return
+        if (remindIfGitBusy()) return
         viewModelScope.launch {
-            _busy.value = true
+            _pageBusy.value = true
             try {
                 val bookId = withContext(Dispatchers.IO) {
                     gitDocumentOpener.openOrRefresh(appContext, p, relativePath)
@@ -230,15 +251,16 @@ class ProjectBrowserViewModel @Inject constructor(
                     ),
                 )
             } finally {
-                _busy.value = false
+                _pageBusy.value = false
             }
         }
     }
 
     fun deleteProject() {
         val p = _projectState.value ?: return
+        gitPullCoordinator.cancel(p.id)
         viewModelScope.launch {
-            _busy.value = true
+            _pageBusy.value = true
             try {
                 withContext(Dispatchers.IO) {
                     gitProjectRepository.deleteProjectCascade(p)
@@ -255,7 +277,7 @@ class ProjectBrowserViewModel @Inject constructor(
                     ),
                 )
             } finally {
-                _busy.value = false
+                _pageBusy.value = false
             }
         }
     }
@@ -288,27 +310,26 @@ class ProjectBrowserViewModel @Inject constructor(
             return
         }
         applyProjectState(p)
+        if (gitPullCoordinator.isBusy(p.id)) {
+            toastChannel.trySend(appContext.getString(R.string.toast_git_project_busy))
+            if (GitProjectStorage.hasValidRepo(p.localPath)) {
+                reloadTree(p)
+            }
+            return
+        }
         if (GitProjectStorage.hasValidRepo(p.localPath)) {
             reloadTree(p)
             return
         }
-        _busy.value = true
-        _busyStatusRes.value = R.string.dialog_github_cloning_title
-        _progress.value = GitProgress(GitProgress.Phase.CLONING)
-        try {
-            val ready = gitProjectImporter.ensureCloned(p) { prog ->
-                _progress.value = prog
-            }
-            applyProjectState(ready)
-            reloadTree(ready)
-        } catch (e: Exception) {
-            reloadTree(p)
-            toastChannel.trySend(mapGitError(e, R.string.toast_git_pull_failed))
-        } finally {
-            _busy.value = false
-            _progress.value = null
-            _busyStatusRes.value = null
+        if (!gitPullCoordinator.requestEnsureCloned(p)) {
+            toastChannel.trySend(appContext.getString(R.string.toast_git_project_busy))
         }
+    }
+
+    private fun remindIfGitBusy(): Boolean {
+        if (!_pageBusy.value && !gitPullCoordinator.isBusy(projectId)) return false
+        toastChannel.trySend(appContext.getString(R.string.toast_git_project_busy))
+        return true
     }
 
     private suspend fun applyProjectState(project: GitProjectEntity) {

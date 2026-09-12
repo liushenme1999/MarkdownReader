@@ -3,6 +3,7 @@ package space.liushenme.markdownreader.data.local
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import space.liushenme.markdownreader.git.GitHubRepoUrlParser
 import space.liushenme.markdownreader.importing.ParsedBookStorage
 
 object BookContentHasher {
@@ -57,5 +58,18 @@ object BookContentHasher {
 
     /** Git 文档稳定身份：不随 pull 后正文变化，避免唯一索引冲突。 */
     fun hashForGitDocument(remoteUrl: String, relativePath: String): String =
-        sha256Hex("git|$remoteUrl|$relativePath")
+        sha256Hex("git|${canonicalGitRemoteUrl(remoteUrl)}|$relativePath")
+
+    /** 兼容旧备份里按原始 URL 计算的哈希。 */
+    fun matchesGitDocument(contentHash: String, remoteUrl: String, relativePath: String): Boolean {
+        if (contentHash.isBlank() || relativePath.isBlank()) return false
+        if (hashForGitDocument(remoteUrl, relativePath) == contentHash) return true
+        if (sha256Hex("git|$remoteUrl|$relativePath") == contentHash) return true
+        return GitHubRepoUrlParser.lookupUrls(remoteUrl).any { candidate ->
+            sha256Hex("git|$candidate|$relativePath") == contentHash
+        }
+    }
+
+    private fun canonicalGitRemoteUrl(remoteUrl: String): String =
+        GitHubRepoUrlParser.canonicalBrowseUrl(remoteUrl) ?: remoteUrl.trim()
 }

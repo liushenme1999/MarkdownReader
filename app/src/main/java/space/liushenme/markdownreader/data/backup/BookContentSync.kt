@@ -53,7 +53,7 @@ class BookContentSync @Inject constructor(
                 val remote = WebDav(booksUrl + "$hash.zip", auth)
                 if (!overwrite && remote.exists()) return@runCatching
 
-                val zip = File(tempDir, "up_$hash.zip")
+                val zip = File(tempDir, "up_${hash}_$bookId.zip")
                 if (zip.exists()) zip.delete()
                 BackupZip.zipDirectory(bundle, zip)
                 remote.upload(zip)
@@ -65,7 +65,16 @@ class BookContentSync @Inject constructor(
 
     /** 仅为远程尚不存在的书籍补齐正文，不覆盖已有远程包 */
     suspend fun uploadMissingBookContents(bookIds: Collection<Long>) = withContext(Dispatchers.IO) {
-        bookIds.forEach { uploadBookContent(it, overwrite = false) }
+        mapLimitedParallel(bookIds, WEBDAV_TRANSFER_PARALLELISM) { bookId ->
+            uploadBookContent(bookId, overwrite = false)
+        }
+    }
+
+    /** 并行补齐本地缺失的 WebDAV 正文（已有正文会跳过）。 */
+    suspend fun ensureLocalBookContents(bookIds: Collection<Long>) = withContext(Dispatchers.IO) {
+        mapLimitedParallel(bookIds.distinct(), WEBDAV_TRANSFER_PARALLELISM) { bookId ->
+            ensureLocalBookContent(bookId)
+        }
     }
 
     /**
@@ -81,28 +90,26 @@ class BookContentSync @Inject constructor(
             WebDav(booksUrl, auth).makeAsDir()
 
             val books = bookDao.getAllBooksList().filter { it.gitProjectId == null }
-            var success = 0
-            var skipped = 0
-            var failed = 0
-            for (book in books) {
+            val outcomes = mapLimitedParallel(books, WEBDAV_TRANSFER_PARALLELISM) { book ->
                 val bundle = ParsedBookStorage.bundleDir(context, book.id)
                 if (!File(bundle, ParsedBookStorage.BODY_FILE).isFile) {
-                    skipped++
-                    continue
+                    return@mapLimitedParallel ContentOutcome.SKIPPED
                 }
                 runCatching {
                     val hash = upgradeContentHashIfNeeded(book)
-                    val zip = File(tempDir, "up_$hash.zip")
+                    val zip = File(tempDir, "up_${hash}_${book.id}.zip")
                     if (zip.exists()) zip.delete()
                     BackupZip.zipDirectory(bundle, zip)
                     WebDav(booksUrl + "$hash.zip", auth).upload(zip)
                     zip.delete()
-                    success++
+                    ContentOutcome.SUCCESS
                 }.onFailure {
-                    failed++
                     Log.w(TAG, "备份正文失败 bookId=${book.id}: ${it.localizedMessage}", it)
-                }
+                }.getOrDefault(ContentOutcome.FAILED)
             }
+            val success = outcomes.count { it == ContentOutcome.SUCCESS }
+            val skipped = outcomes.count { it == ContentOutcome.SKIPPED }
+            val failed = outcomes.count { it == ContentOutcome.FAILED }
             if (books.isEmpty()) error("书架为空，没有可备份的正文")
             if (success == 0 && skipped == books.size) {
                 error("本地没有可上传的正文文件，请确认本机书籍能正常打开")
@@ -128,27 +135,26 @@ class BookContentSync @Inject constructor(
             val books = bookDao.getAllBooksList().filter { it.gitProjectId == null }
             if (books.isEmpty()) error("书架为空，请先恢复日常备份（书架/进度）")
 
-            var success = 0
-            var skipped = 0
-            var failed = 0
-            for (book in books) {
+            val outcomes = mapLimitedParallel(books, WEBDAV_TRANSFER_PARALLELISM) { book ->
                 val bundle = ParsedBookStorage.bundleDir(context, book.id)
                 val hasBody = File(bundle, ParsedBookStorage.BODY_FILE).isFile
                 if (onlyMissing && hasBody) {
                     upgradeContentHashIfNeeded(book)
                     persistCanonicalPaths(book.id)
-                    skipped++
-                    continue
+                    return@mapLimitedParallel ContentOutcome.SKIPPED
                 }
                 val ok = downloadBookContent(book, booksUrl, auth)
                 if (ok) {
                     upgradeContentHashIfNeeded(bookDao.getBookById(book.id) ?: book)
                     persistCanonicalPaths(book.id)
-                    success++
+                    ContentOutcome.SUCCESS
                 } else {
-                    failed++
+                    ContentOutcome.FAILED
                 }
             }
+            val success = outcomes.count { it == ContentOutcome.SUCCESS }
+            val skipped = outcomes.count { it == ContentOutcome.SKIPPED }
+            val failed = outcomes.count { it == ContentOutcome.FAILED }
             if (success == 0 && failed > 0 && skipped == 0) {
                 error("正文恢复全部失败。请先在源设备点击「备份正文」")
             }
@@ -253,7 +259,7 @@ class BookContentSync @Inject constructor(
             for (name in hashCandidates) {
                 val remote = WebDav(booksUrl + "$name.zip", auth)
                 if (!remote.exists()) continue
-                val localZip = File(tempDir, "dl_$name.zip")
+                val localZip = File(tempDir, "dl_${book.id}_$name.zip")
                 if (localZip.exists()) localZip.delete()
                 remote.downloadTo(localZip.absolutePath, true)
                 zip = localZip
@@ -321,6 +327,8 @@ class BookContentSync @Inject constructor(
         val root = webDavConfigRepository.rootUrl(config)
         return if (WebDav(root, auth).check()) auth else null
     }
+
+    private enum class ContentOutcome { SUCCESS, SKIPPED, FAILED }
 
     companion object {
         private const val TAG = "BookContentSync"

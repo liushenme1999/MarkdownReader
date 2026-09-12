@@ -15,12 +15,12 @@ data class GitCheckoutResult(
 object GitProjectBranches {
 
     /** 通过 ls-remote 拉取远程全部分支名（不含 refs/heads/ 前缀）。 */
-    fun listRemoteBranches(localPath: String): List<String> {
+    fun listRemoteBranches(localPath: String): List<String> = GitRepoLock.withLock(GitRepoLock.keyForPath(localPath)) {
         val dir = File(localPath)
         if (!dir.isDirectory || !File(dir, ".git").exists()) {
             throw GitCloneException("本地仓库不存在或已损坏")
         }
-        return try {
+        try {
             Git.open(dir).use { git ->
                 val refs = git.lsRemote()
                     .setRemote("origin")
@@ -69,7 +69,7 @@ object GitProjectBranches {
         localPath: String,
         branch: String,
         onProgress: (GitProgress) -> Unit = {},
-    ): GitCheckoutResult {
+    ): GitCheckoutResult = GitRepoLock.withLock(GitRepoLock.keyForPath(localPath)) {
         val trackBranch = branch.trim()
         if (trackBranch.isEmpty()) {
             throw GitCloneException("分支名不能为空")
@@ -80,7 +80,7 @@ object GitProjectBranches {
         }
 
         onProgress(GitProgress(GitProgress.Phase.FETCHING, detail = trackBranch))
-        return try {
+        try {
             Git.open(dir).use { git ->
                 val repo = git.repository
                 val remoteRef = "refs/remotes/origin/$trackBranch"
