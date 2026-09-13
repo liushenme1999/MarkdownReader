@@ -3,11 +3,7 @@ package space.liushenme.markdownreader.data.backup
 import android.content.Context
 import android.util.Log
 import androidx.datastore.preferences.core.booleanPreferencesKey
-import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.floatPreferencesKey
-import androidx.datastore.preferences.core.intPreferencesKey
-import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.google.gson.reflect.TypeToken
@@ -42,6 +38,7 @@ import space.liushenme.markdownreader.data.local.entity.GitProjectEntity
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.data.local.entity.ReadingProgressEntity
 import space.liushenme.markdownreader.data.local.entity.ShelfGroupEntity
+import space.liushenme.markdownreader.data.preferences.PreferenceNumbers
 import space.liushenme.markdownreader.data.preferences.readerPreferencesDataStore
 import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
 import space.liushenme.markdownreader.data.repository.WebDavConfig
@@ -819,13 +816,6 @@ class BackupManager @Inject constructor(
         ).type
         val map: Map<String, Any> = BackupGson.gson.fromJson(prefsFile.readText(), type) ?: return
 
-        val intKeys = setOf(
-            "reader_font_size",
-            "reader_reader_padding_dp",
-            "reader_last_highlight_color",
-        )
-        val floatKeys = setOf("reader_line_spacing_multiplier")
-
         dataStore.edit { prefs ->
             for ((name, value) in map) {
                 if (name in WebDavConfigRepository.WEBDAV_PREF_KEYS) continue
@@ -833,22 +823,7 @@ class BackupManager @Inject constructor(
                 when (value) {
                     is Boolean -> prefs[booleanPreferencesKey(name)] = value
                     is String -> prefs[stringPreferencesKey(name)] = value
-                    is Number -> when {
-                        name in intKeys -> prefs[intPreferencesKey(name)] = value.toInt()
-                        name in floatKeys -> prefs[floatPreferencesKey(name)] = value.toFloat()
-                        value is Int -> prefs[intPreferencesKey(name)] = value
-                        value is Long -> prefs[longPreferencesKey(name)] = value
-                        value is Float -> prefs[floatPreferencesKey(name)] = value
-                        value is Double -> {
-                            val asLong = value.toLong()
-                            if (value == asLong.toDouble()) {
-                                prefs[longPreferencesKey(name)] = asLong
-                            } else {
-                                prefs[doublePreferencesKey(name)] = value
-                            }
-                        }
-                        else -> prefs[doublePreferencesKey(name)] = value.toDouble()
-                    }
+                    is Number -> PreferenceNumbers.writeNumber(prefs, name, value)
                     is List<*> -> {
                         prefs[stringSetPreferencesKey(name)] =
                             value.map { it.toString() }.toSet()

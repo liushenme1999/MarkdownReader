@@ -22,6 +22,8 @@
 - 跨设备恢复 PDF 时，不再把 `{本机书籍 id}.zip` 误当成正文；缺页图或哈希对不上会重新拉取，避免打开后看到另一本 Markdown
 - 正式包打开「颜色与背景」因 R8 抹掉 Gson TypeToken 泛型而闪退
 - 卸载重装后获取 WebDAV 备份列表时，坚果云 HTTP/2 将 PROPFIND 流重置为 CANCEL 的问题
+- 恢复 WebDAV 备份后阅读设置因 Gson 把整数写成 Long，再按 Int 读取而闪退
+- 恢复 WebDAV 备份后阅读设置因 Gson 把整数写成 Long，再按 Int 读取而闪退
 
 ## [1.0.6] - 2026-09-12
 

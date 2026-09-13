@@ -6,6 +6,8 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import space.liushenme.markdownreader.data.preferences.floatPref
+import space.liushenme.markdownreader.data.preferences.intPref
 import space.liushenme.markdownreader.data.preferences.readerPreferencesDataStore
 import space.liushenme.markdownreader.model.AppLanguage
 import space.liushenme.markdownreader.model.AppThemeMode
@@ -46,10 +48,10 @@ class ReaderSettingsRepository @Inject constructor(
     val readingStyleState: Flow<ReadingStyleState> = dataStore.data.map { prefs ->
         ReadingThemeStorage.migrateToStyleState(
             stylesJson = prefs[KEY_READING_STYLES],
-            selectedIndex = prefs[KEY_READING_STYLE_INDEX],
-            textColorArgb = prefs[KEY_TEXT_COLOR],
-            bgColorArgb = prefs[KEY_BG_COLOR],
-            bgAlpha = prefs[KEY_BG_ALPHA],
+            selectedIndex = prefs.intPref(KEY_READING_STYLE_INDEX),
+            textColorArgb = prefs.intPref(KEY_TEXT_COLOR),
+            bgColorArgb = prefs.intPref(KEY_BG_COLOR),
+            bgAlpha = prefs.intPref(KEY_BG_ALPHA),
             bgImage = prefs[KEY_BG_IMAGE],
             legacyName = prefs[KEY_READING_THEME],
         )
@@ -58,15 +60,15 @@ class ReaderSettingsRepository @Inject constructor(
     val readingTheme: Flow<ReadingTheme> = readingStyleState.map { it.current }
 
     val fontSize: Flow<Int> = dataStore.data.map { prefs ->
-        prefs[KEY_FONT_SIZE] ?: DEFAULT_FONT_SIZE
+        prefs.intPref(KEY_FONT_SIZE) ?: DEFAULT_FONT_SIZE
     }
 
     val readerPaddingDp: Flow<Int> = dataStore.data.map { prefs ->
-        prefs[KEY_READER_PADDING_DP] ?: DEFAULT_PADDING_DP
+        prefs.intPref(KEY_READER_PADDING_DP) ?: DEFAULT_PADDING_DP
     }
 
     val readerLineSpacingMultiplier: Flow<Float> = dataStore.data.map { prefs ->
-        prefs[KEY_LINE_SPACING_MULT] ?: DEFAULT_LINE_SPACING_MULT
+        prefs.floatPref(KEY_LINE_SPACING_MULT) ?: DEFAULT_LINE_SPACING_MULT
     }
 
     /** 围栏/缩进代码块是否自动换行；关闭后代码块可左右滑动。默认开启。 */
@@ -76,7 +78,7 @@ class ReaderSettingsRepository @Inject constructor(
 
     /** 上次选用的划线颜色 ARGB；缺省为默认黄。 */
     val lastHighlightColorArgb: Flow<Int> = dataStore.data.map { prefs ->
-        prefs[KEY_LAST_HIGHLIGHT_COLOR] ?: DEFAULT_HIGHLIGHT_COLOR_ARGB
+        prefs.intPref(KEY_LAST_HIGHLIGHT_COLOR) ?: DEFAULT_HIGHLIGHT_COLOR_ARGB
     }
 
     /** 上次选用的划线样式；缺省为背景色。 */
@@ -89,12 +91,12 @@ class ReaderSettingsRepository @Inject constructor(
     }
 
     val bookshelfGridColumns: Flow<Int> = dataStore.data.map { prefs ->
-        BookshelfGridColumns.coerce(prefs[KEY_BOOKSHELF_GRID_COLUMNS] ?: BookshelfGridColumns.DEFAULT)
+        BookshelfGridColumns.coerce(prefs.intPref(KEY_BOOKSHELF_GRID_COLUMNS) ?: BookshelfGridColumns.DEFAULT)
     }
 
     val gitProjectRecentReadCount: Flow<Int> = dataStore.data.map { prefs ->
         GitProjectRecentReadCount.coerce(
-            prefs[KEY_GIT_PROJECT_RECENT_READ_COUNT] ?: GitProjectRecentReadCount.DEFAULT,
+            prefs.intPref(KEY_GIT_PROJECT_RECENT_READ_COUNT) ?: GitProjectRecentReadCount.DEFAULT,
         )
     }
 
