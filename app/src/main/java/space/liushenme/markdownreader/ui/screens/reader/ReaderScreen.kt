@@ -137,6 +137,7 @@ fun ReaderScreen(
     val highlights by viewModel.highlights.collectAsState()
     val readerLoadEpoch by viewModel.readerLoadEpoch.collectAsState()
     val currentTheme by viewModel.currentTheme.collectAsState()
+    val readingStyleState by viewModel.readingStyleState.collectAsState()
     val fontSize by viewModel.fontSize.collectAsState()
     val readerPaddingDp by viewModel.readerPaddingDp.collectAsState()
     val readerLineSpacingMultiplier by viewModel.readerLineSpacingMultiplier.collectAsState()
@@ -147,7 +148,7 @@ fun ReaderScreen(
     val configuration = LocalConfiguration.current
 
     val importFormat = book?.let { ImportedBookFormat.fromStored(it.importFormat) }
-    val isPdfBook = importFormat?.isPdf == true
+    val isPdfBook = importFormat?.isPdf == true || PdfReaderContent.looksLikePdfBody(content)
     val renderPlainText = importFormat?.usesReaderPlainBody == true
     val readerContent = remember(content, isPdfBook) {
         if (isPdfBook) PdfReaderContent.sanitizeStoredBody(content) else content
@@ -488,7 +489,7 @@ fun ReaderScreen(
         readerContentSignature(
             content = displayedContent,
             renderPlainText = renderPlainText,
-            themeName = currentTheme::class.java.name,
+            themeName = currentTheme.contentSignature(),
             fontSize = fontSize,
             codeBlockWrap = codeBlockWrap,
         )
@@ -1065,15 +1066,20 @@ fun ReaderScreen(
         }
     }
 
+    val paperBaseColor = rememberPaperBaseColor(currentTheme)
     val systemBarChromeColor = if (isPdfBook) {
         shelfStylePageBackground()
     } else {
-        readingChromeShade(currentTheme.backgroundColor)
+        readingChromeShade(paperBaseColor)
     }
 
     val view = LocalView.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    ShelfStyleSystemBarsEffect(systemBarChromeColor)
+    ShelfStyleSystemBarsEffect(
+        backgroundColor = if (isPdfBook) systemBarChromeColor else Color.Transparent,
+        navigationBarColor = systemBarChromeColor,
+        iconContrastColor = if (isPdfBook) systemBarChromeColor else paperBaseColor,
+    )
     val persistVisibleProgressNow by rememberUpdatedState {
         val tv = readerTextView.value
         val preview = if (isPdfBook) {
@@ -1142,8 +1148,15 @@ fun ReaderScreen(
         }
     }
 
+    Box(Modifier.fillMaxSize()) {
+    if (!isPdfBook) {
+        ReaderPaperBackground(
+            theme = currentTheme,
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
     Scaffold(
-        containerColor = currentTheme.backgroundColor,
+        containerColor = if (isPdfBook) shelfStylePageBackground() else Color.Transparent,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         contentWindowInsets = if (immersiveReading) {
             WindowInsets(0, 0, 0, 0)
@@ -1152,16 +1165,23 @@ fun ReaderScreen(
         },
         topBar = {
             if (!immersiveReading && !readerTextSelectionActive) {
-                ReaderTopAppBar(
-                    title = book?.title ?: readingTitleFallback,
-                    chapterTitle = rememberChapterTitleForProgress(
-                        viewModel = viewModel,
-                        tocEntries = tocEntries,
-                        totalChars = totalChars,
-                    ),
-                    onNavigateBack = { navController.navigateUp() },
-                    theme = currentTheme
-                )
+                Column(Modifier.fillMaxWidth()) {
+                    Spacer(
+                        Modifier
+                            .fillMaxWidth()
+                            .windowInsetsTopHeight(WindowInsets.statusBars)
+                    )
+                    ReaderTopAppBar(
+                        title = book?.title ?: readingTitleFallback,
+                        chapterTitle = rememberChapterTitleForProgress(
+                            viewModel = viewModel,
+                            tocEntries = tocEntries,
+                            totalChars = totalChars,
+                        ),
+                        onNavigateBack = { navController.navigateUp() },
+                        theme = currentTheme
+                    )
+                }
             }
         }
     ) { paddingValues ->
@@ -1173,15 +1193,30 @@ fun ReaderScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    if (isPdfBook) shelfStylePageBackground() else currentTheme.backgroundColor,
+                .then(
+                    if (isPdfBook) {
+                        Modifier.background(shelfStylePageBackground())
+                    } else {
+                        Modifier
+                    },
                 ),
         ) {
-            if (immersiveReading && isPdfBook) {
-                ShelfStyleStatusBarBackdrop(
-                    backgroundColor = systemBarChromeColor,
+            if (isPdfBook) {
+                if (immersiveReading) {
+                    ShelfStyleStatusBarBackdrop(
+                        backgroundColor = systemBarChromeColor,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .zIndex(100f),
+                    )
+                }
+            } else {
+                ReaderPaperBackgroundTopStrip(
+                    theme = currentTheme,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .windowInsetsTopHeight(WindowInsets.statusBars)
                         .zIndex(100f),
                 )
             }
@@ -1417,7 +1452,7 @@ fun ReaderScreen(
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxSize()
-                                                .background(currentTheme.backgroundColor),
+                                                .background(paperBaseColor),
                                         )
                                     }
                                 }
@@ -1474,27 +1509,35 @@ fun ReaderScreen(
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RectangleShape,
-                    tonalElevation = 3.dp,
-                    shadowElevation = 8.dp,
-                    color = systemBarChromeColor
+                    tonalElevation = 0.dp,
+                    shadowElevation = 0.dp,
+                    color = Color.Transparent
                 ) {
-                    Column(Modifier.fillMaxWidth()) {
-                        Spacer(
-                            Modifier
-                                .fillMaxWidth()
-                                .windowInsetsTopHeight(WindowInsets.statusBars)
-                        )
-                        ReaderTopAppBar(
-                            title = book?.title ?: readingTitleFallback,
-                            chapterTitle = rememberChapterTitleForProgress(
-                                viewModel = viewModel,
-                                tocEntries = tocEntries,
-                                totalChars = totalChars,
-                            ),
-                            onNavigateBack = { navController.navigateUp() },
-                            theme = currentTheme,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                    Box(Modifier.fillMaxWidth()) {
+                        if (!isPdfBook) {
+                            ReaderPaperBackgroundTopStrip(
+                                theme = currentTheme,
+                                modifier = Modifier.matchParentSize(),
+                            )
+                        }
+                        Column(Modifier.fillMaxWidth()) {
+                            Spacer(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .windowInsetsTopHeight(WindowInsets.statusBars)
+                            )
+                            ReaderTopAppBar(
+                                title = book?.title ?: readingTitleFallback,
+                                chapterTitle = rememberChapterTitleForProgress(
+                                    viewModel = viewModel,
+                                    tocEntries = tocEntries,
+                                    totalChars = totalChars,
+                                ),
+                                onNavigateBack = { navController.navigateUp() },
+                                theme = currentTheme,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
                     }
                 }
             }
@@ -1525,6 +1568,7 @@ fun ReaderScreen(
             }
         }
     }
+    }
 
     if (showMarkFinishedPrompt) {
         ReaderMarkFinishedDialog(
@@ -1542,13 +1586,17 @@ fun ReaderScreen(
 
     if (showReaderSettingsSheet) {
         ReaderSettingsSheet(
-            currentTheme = currentTheme,
+            styleState = readingStyleState,
             fontSize = fontSize,
             readerPaddingDp = readerPaddingDp,
             readerLineSpacingMultiplier = readerLineSpacingMultiplier,
             codeBlockWrap = codeBlockWrap,
             pageTurnMode = pageTurnMode,
-            onThemeChange = { viewModel.setTheme(it) },
+            onSelectStyle = { viewModel.selectReadingStyle(it) },
+            onAddStyle = { viewModel.addReadingStyle(it) },
+            onUpdateStyle = { index, theme -> viewModel.updateReadingStyle(index, theme) },
+            onDeleteStyle = { viewModel.deleteReadingStyle(it) },
+            onResetAllStyles = { viewModel.resetAllReadingStyles(it) },
             onFontSizeChange = { viewModel.setFontSize(it) },
             onPaddingDpChange = { viewModel.setReaderPaddingDp(it) },
             onLineSpacingChange = { viewModel.setReaderLineSpacingMultiplier(it) },

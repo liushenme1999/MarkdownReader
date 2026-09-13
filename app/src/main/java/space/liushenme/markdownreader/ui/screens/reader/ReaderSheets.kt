@@ -82,12 +82,12 @@ import space.liushenme.markdownreader.model.ReaderPageTurnMode
 import space.liushenme.markdownreader.ui.components.ReaderPageTurnModeOption
 import space.liushenme.markdownreader.ui.components.ReaderSettingsGroupCard
 import space.liushenme.markdownreader.ui.components.ReaderSettingsSectionTitle
-import space.liushenme.markdownreader.ui.components.ReadingThemeCardOption
-import space.liushenme.markdownreader.ui.components.ReadingThemeGrid
+import space.liushenme.markdownreader.ui.components.ReadingStyleSettingsBlock
 import space.liushenme.markdownreader.ui.components.ReaderWideSliderRow
 import space.liushenme.markdownreader.ui.components.MarkdownInlineHtmlText
 import space.liushenme.markdownreader.ui.components.iconTintForDeleteStrip
 import space.liushenme.markdownreader.ui.theme.MarkdownReaderTheme
+import space.liushenme.markdownreader.ui.theme.ReadingStyleState
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
 import io.noties.markwon.Markwon
 import io.noties.markwon.core.CorePlugin
@@ -106,72 +106,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-internal fun ReaderThemeSheet(
-    currentTheme: ReadingTheme,
-    onThemeChange: (ReadingTheme) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val allThemes = ReadingTheme.allThemes()
-    val firstRow = allThemes.take(3)
-    val secondRow = allThemes.drop(3)
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 8.dp)
-        ) {
-            Text(
-                text = stringResource(R.string.reader_sheet_reading_theme),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // 第一行：3个主题
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                firstRow.forEach { theme ->
-                    ReadingThemeCardOption(
-                        theme = theme,
-                        isSelected = theme == currentTheme,
-                        onClick = { onThemeChange(theme) },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // 第二行：剩余主题居中
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Spacer(modifier = Modifier.weight(1f))
-                secondRow.forEach { theme ->
-                    ReadingThemeCardOption(
-                        theme = theme,
-                        isSelected = theme == currentTheme,
-                        onClick = { onThemeChange(theme) },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                Spacer(modifier = Modifier.weight(1f))
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-        }
-    }
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -240,13 +174,17 @@ internal fun ReaderFontSheet(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ReaderSettingsSheet(
-    currentTheme: ReadingTheme,
+    styleState: ReadingStyleState,
     fontSize: Int,
     readerPaddingDp: Int,
     readerLineSpacingMultiplier: Float,
     codeBlockWrap: Boolean,
     pageTurnMode: ReaderPageTurnMode,
-    onThemeChange: (ReadingTheme) -> Unit,
+    onSelectStyle: (Int) -> Unit,
+    onAddStyle: ((Int) -> Unit) -> Unit,
+    onUpdateStyle: (Int, ReadingTheme) -> Unit,
+    onDeleteStyle: (Int) -> Unit,
+    onResetAllStyles: (keepCustom: Boolean) -> Unit,
     onFontSizeChange: (Int) -> Unit,
     onPaddingDpChange: (Int) -> Unit,
     onLineSpacingChange: (Float) -> Unit,
@@ -275,11 +213,14 @@ internal fun ReaderSettingsSheet(
                     stringResource(R.string.reading_settings_section_reading_theme),
                 )
                 ReaderSettingsGroupCard {
-                    ReadingThemeGrid(
-                        themes = ReadingTheme.allThemes(),
-                        selected = currentTheme,
-                        onSelect = onThemeChange,
-                        modifier = Modifier.padding(vertical = 12.dp),
+                    ReadingStyleSettingsBlock(
+                        styleState = styleState,
+                        onSelect = onSelectStyle,
+                        onAdd = onAddStyle,
+                        onUpdate = onUpdateStyle,
+                        onDelete = onDeleteStyle,
+                        onResetAll = onResetAllStyles,
+                        modifier = Modifier.padding(vertical = 8.dp),
                     )
                 }
             }

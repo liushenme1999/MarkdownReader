@@ -14,7 +14,10 @@ import space.liushenme.markdownreader.model.BookshelfLayoutMode
 import space.liushenme.markdownreader.model.GitProjectRecentReadCount
 import space.liushenme.markdownreader.model.HighlightStyle
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
+import androidx.compose.ui.graphics.toArgb
+import space.liushenme.markdownreader.ui.theme.ReadingStyleState
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
+import space.liushenme.markdownreader.ui.theme.ReadingThemeStorage
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -40,9 +43,19 @@ class ReaderSettingsRepository @Inject constructor(
         appThemeFromStored(prefs[KEY_APP_THEME_MODE])
     }
 
-    val readingTheme: Flow<ReadingTheme> = dataStore.data.map { prefs ->
-        themeFromStoredName(prefs[KEY_READING_THEME])
+    val readingStyleState: Flow<ReadingStyleState> = dataStore.data.map { prefs ->
+        ReadingThemeStorage.migrateToStyleState(
+            stylesJson = prefs[KEY_READING_STYLES],
+            selectedIndex = prefs[KEY_READING_STYLE_INDEX],
+            textColorArgb = prefs[KEY_TEXT_COLOR],
+            bgColorArgb = prefs[KEY_BG_COLOR],
+            bgAlpha = prefs[KEY_BG_ALPHA],
+            bgImage = prefs[KEY_BG_IMAGE],
+            legacyName = prefs[KEY_READING_THEME],
+        )
     }
+
+    val readingTheme: Flow<ReadingTheme> = readingStyleState.map { it.current }
 
     val fontSize: Flow<Int> = dataStore.data.map { prefs ->
         prefs[KEY_FONT_SIZE] ?: DEFAULT_FONT_SIZE
@@ -107,9 +120,54 @@ class ReaderSettingsRepository @Inject constructor(
     suspend fun currentAppLanguage(): AppLanguage = appLanguage.first()
 
     suspend fun setReadingTheme(theme: ReadingTheme) {
-        dataStore.edit { prefs ->
-            prefs[KEY_READING_THEME] = themeToStoredName(theme)
+        val state = readingStyleState.first()
+        val styles = state.styles.toMutableList()
+        if (styles.isEmpty()) {
+            persistStyles(listOf(theme), 0)
+            return
         }
+        styles[state.selectedIndex] = theme
+        persistStyles(styles, state.selectedIndex)
+    }
+
+    suspend fun selectReadingStyle(index: Int) {
+        val state = readingStyleState.first()
+        persistStyles(state.styles, index)
+    }
+
+    suspend fun addReadingStyle(): Int {
+        val state = readingStyleState.first()
+        val (styles, index) = ReadingThemeStorage.addStyle(state.styles)
+        persistStyles(styles, index)
+        return index
+    }
+
+    suspend fun updateReadingStyle(index: Int, theme: ReadingTheme) {
+        val state = readingStyleState.first()
+        if (state.styles.isEmpty()) {
+            persistStyles(listOf(theme), 0)
+            return
+        }
+        val styles = state.styles.toMutableList()
+        val i = ReadingThemeStorage.coerceIndex(index, styles.size)
+        styles[i] = theme
+        persistStyles(styles, state.selectedIndex)
+    }
+
+    suspend fun deleteReadingStyle(index: Int) {
+        val state = readingStyleState.first()
+        val (styles, selected) = ReadingThemeStorage.deleteStyle(state.styles, index)
+        persistStyles(styles, selected)
+    }
+
+    suspend fun resetAllReadingStyles(keepCustom: Boolean) {
+        val state = readingStyleState.first()
+        val (styles, selected) = ReadingThemeStorage.resetAllPresets(
+            styles = state.styles,
+            selectedIndex = state.selectedIndex,
+            keepCustom = keepCustom,
+        )
+        persistStyles(styles, selected)
     }
 
     suspend fun setFontSize(size: Int) {
@@ -161,6 +219,20 @@ class ReaderSettingsRepository @Inject constructor(
         }
     }
 
+    private suspend fun persistStyles(styles: List<ReadingTheme>, selectedIndex: Int) {
+        val safeStyles = styles.ifEmpty { ReadingTheme.allThemes() }
+        val index = ReadingThemeStorage.coerceIndex(selectedIndex, safeStyles.size)
+        val current = safeStyles[index]
+        dataStore.edit { prefs ->
+            prefs[KEY_READING_STYLES] = ReadingThemeStorage.encodeStyles(safeStyles)
+            prefs[KEY_READING_STYLE_INDEX] = index
+            prefs[KEY_TEXT_COLOR] = current.textColor.toArgb()
+            prefs[KEY_BG_COLOR] = current.backgroundColor.toArgb()
+            prefs[KEY_BG_ALPHA] = ReadingThemeStorage.clampAlpha(current.backgroundAlpha)
+            prefs[KEY_BG_IMAGE] = current.backgroundImageAsset.orEmpty()
+        }
+    }
+
     companion object {
         const val DEFAULT_FONT_SIZE = 16
         const val DEFAULT_PADDING_DP = 32
@@ -172,6 +244,12 @@ class ReaderSettingsRepository @Inject constructor(
         private val KEY_APP_LANGUAGE = stringPreferencesKey("app_language")
         private val KEY_APP_THEME_MODE = stringPreferencesKey("app_theme_mode")
         private val KEY_READING_THEME = stringPreferencesKey("reader_reading_theme")
+        private val KEY_TEXT_COLOR = intPreferencesKey("reader_text_color")
+        private val KEY_BG_COLOR = intPreferencesKey("reader_bg_color")
+        private val KEY_BG_ALPHA = intPreferencesKey("reader_bg_alpha")
+        private val KEY_BG_IMAGE = stringPreferencesKey("reader_bg_image")
+        private val KEY_READING_STYLES = stringPreferencesKey("reader_reading_styles")
+        private val KEY_READING_STYLE_INDEX = intPreferencesKey("reader_reading_style_index")
         private val KEY_BOOKSHELF_LAYOUT_MODE = stringPreferencesKey("bookshelf_layout_mode")
         private val KEY_BOOKSHELF_GRID_COLUMNS = intPreferencesKey("bookshelf_grid_columns")
         private val KEY_GIT_PROJECT_RECENT_READ_COUNT =
@@ -193,21 +271,5 @@ class ReaderSettingsRepository @Inject constructor(
         private val KEY_LAST_HIGHLIGHT_COLOR = intPreferencesKey("reader_last_highlight_color")
         private val KEY_LAST_HIGHLIGHT_STYLE = stringPreferencesKey("reader_last_highlight_style")
 
-        private fun themeToStoredName(theme: ReadingTheme): String = when (theme) {
-            ReadingTheme.Paper -> "Paper"
-            ReadingTheme.Dark -> "Dark"
-            ReadingTheme.White -> "White"
-            ReadingTheme.Green -> "Green"
-            ReadingTheme.Sepia -> "Sepia"
-        }
-
-        private fun themeFromStoredName(raw: String?): ReadingTheme = when (raw) {
-            "Paper" -> ReadingTheme.Paper
-            "Dark" -> ReadingTheme.Dark
-            "White" -> ReadingTheme.White
-            "Green" -> ReadingTheme.Green
-            "Sepia" -> ReadingTheme.Sepia
-            else -> ReadingTheme.Paper
-        }
     }
 }

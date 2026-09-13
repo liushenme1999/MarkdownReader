@@ -1,6 +1,8 @@
 package space.liushenme.markdownreader.markdown
 
 import android.content.Context
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.Markwon
 import io.noties.markwon.MarkwonConfiguration
@@ -13,12 +15,17 @@ import io.noties.markwon.image.ImagesPlugin
 import io.noties.markwon.image.file.FileSchemeHandler
 import io.noties.markwon.inlineparser.MarkwonInlineParserPlugin
 import io.noties.markwon.linkify.LinkifyPlugin
+import space.liushenme.markdownreader.ui.theme.ReadingTheme
 
 /** 阅读器统一的 Markwon 实例（Markdown 书籍与 PDF 衍生 Markdown 共用）。 */
 object ReaderMarkwonFactory {
 
-    fun create(context: Context): Markwon {
+    fun create(
+        context: Context,
+        paperColor: Color = ReadingTheme.Paper.backgroundColor,
+    ): Markwon {
         val appContext = context.applicationContext
+        val paperColorArgb = paperColor.toArgb()
         val metrics = appContext.resources.displayMetrics
         val fontScale = appContext.resources.configuration.fontScale
         val latexTextSize = 15f * metrics.density * fontScale
@@ -31,9 +38,10 @@ object ReaderMarkwonFactory {
                     context = appContext,
                     latexTextSize = latexTextSize,
                     density = metrics.density,
+                    paperColorArgb = paperColorArgb,
                 ).forEach(::usePlugin)
             }
-            .usePlugin(ReaderCodeStylePlugin.create(appContext))
+            .usePlugin(ReaderCodeStylePlugin.create(appContext, paperColorArgb))
             // 在 JLatex 的 `$$...$$` 行内解析之后，补充 `$...$`（勿用预处理转成 $$，否则会块级换行）
             .usePlugin(ReaderSingleDollarLatexPlugin.create())
             .usePlugin(ReaderSpacingPlugin.create(appContext))

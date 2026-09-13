@@ -28,6 +28,10 @@ object ParsedBookStorage {
 
     private const val ASSET_SCHEME = "book-asset://"
     private val DIAGRAM_URI = Regex("""diagram://([A-Za-z0-9_-]+)/([A-Za-z0-9._-]+)""")
+    private val FILE_SRC = Regex(
+        """src\s*=\s*(["'])(file://.*?)\1""",
+        RegexOption.IGNORE_CASE,
+    )
 
     fun bundleDir(context: Context, bookId: Long): File =
         File(context.filesDir, "parsed_books/$bookId")
@@ -114,17 +118,69 @@ object ParsedBookStorage {
         }
     }
 
-    /** 把 body 内的 `book-asset://xxx` 替换为 `file:///abs/path/to/assets/xxx`。 */
-    private fun materializeAssetUrls(body: String, dir: File): String {
-        if (!body.contains(ASSET_SCHEME)) return body
+    /**
+     * 本地解析包是否足以打开该书：
+     * - 必须有非空 body.txt
+     * - PDF（按 [importFormat] 或正文页图）还必须有对应 `assets/pdf_page_*.png`
+     */
+    fun isCompleteBundle(dir: File, importFormat: String = ""): Boolean {
+        val bodyFile = File(dir, BODY_FILE)
+        if (!bodyFile.isFile || bodyFile.length() <= 0L) return false
+        val body = runCatching { bodyFile.readText(StandardCharsets.UTF_8) }.getOrNull()
+            ?: return false
+        if (body.isBlank()) return false
+        val treatAsPdf = ImportedBookFormat.fromStored(importFormat).isPdf ||
+            PdfReaderContent.looksLikePdfBody(body)
+        return if (treatAsPdf) hasLocalPdfPageAssets(dir, body) else true
+    }
+
+    fun hasLocalPdfPageAssets(dir: File, body: String): Boolean {
+        val names = PdfReaderContent.referencedPageAssetNames(body)
+        if (names.isEmpty()) return false
         val assetsDir = File(dir, ASSETS_DIR)
-        val base = assetsDir.absolutePath
-        val re = Regex("book-asset://([A-Za-z0-9._-]+)")
-        return re.replace(body) { match ->
-            val id = match.groupValues[1]
-            val f = File(assetsDir, id)
-            if (f.isFile) "file://$base/$id" else match.value
+        return names.all { name -> File(assetsDir, name).isFile }
+    }
+
+    /**
+     * 源包比目标包更完整时覆盖（例如目标只剩 Markdown 正文、源是带页图的 PDF）。
+     */
+    fun shouldReplaceBundle(dst: File, src: File): Boolean {
+        if (!File(src, BODY_FILE).isFile) return false
+        if (!File(dst, BODY_FILE).isFile) return true
+        val srcPdf = hasLocalPdfPageAssets(src, readBodyOrEmpty(src))
+        val dstPdf = hasLocalPdfPageAssets(dst, readBodyOrEmpty(dst))
+        return srcPdf && !dstPdf
+    }
+
+    private fun readBodyOrEmpty(dir: File): String =
+        runCatching { File(dir, BODY_FILE).readText(StandardCharsets.UTF_8) }.getOrDefault("")
+
+    /** 把 body 内的资源引用改写到当前设备 `assets/`。 */
+    internal fun materializeAssetUrls(body: String, dir: File): String {
+        val assetsDir = File(dir, ASSETS_DIR)
+        var out = body
+        if (out.contains(ASSET_SCHEME)) {
+            val re = Regex("book-asset://([A-Za-z0-9._-]+)")
+            out = re.replace(out) { match ->
+                val id = match.groupValues[1]
+                val f = File(assetsDir, id)
+                if (f.isFile) "file://${f.absolutePath}" else match.value
+            }
         }
+        if (out.contains("file://", ignoreCase = true)) {
+            out = FILE_SRC.replace(out) { match ->
+                val quote = match.groupValues[1]
+                val url = match.groupValues[2]
+                val name = url.substringAfterLast('/').substringBefore('?')
+                val local = File(assetsDir, name)
+                if (local.isFile && sanitizeAssetId(name) != null) {
+                    "src=$quote${"file://${local.absolutePath}"}$quote"
+                } else {
+                    match.value
+                }
+            }
+        }
+        return out
     }
 
     /** 防御目录穿越；仅允许字母数字 + 限定标点。 */

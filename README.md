@@ -8,8 +8,8 @@
 | **包名** | `space.liushenme.markdownreader` |
 | **最低系统** | Android 7.0 (API 24) |
 | **目标 SDK** | 35 |
-| **当前版本** | 1.0.6 (versionCode 7) |
-| **仓库** | [github.com/liukejun1999/MarkdownReader](https://github.com/liukejun1999/MarkdownReader) |
+| **当前版本** | 1.0.7 (versionCode 8) |
+| **仓库** | [github.com/liukejun1999/MarkdownReader](https://github.com/liushenme1999/MarkdownReader) |
 
 ## 安装包下载
 
@@ -17,7 +17,7 @@
 
 | 版本 | 下载 | 大小约 |
 |------|------|--------|
-| **1.0.6** | [MD阅读器_release_1.0.6.apk](app/release/MD阅读器_release_1.0.6.apk) | 15 MB |
+| **1.0.7** | [MD阅读器_release_1.0.7.apk](app/release/MD阅读器_release_1.0.7.apk) | 16 MB |
 
 安装说明：
 
@@ -40,7 +40,7 @@
 
 ### 阅读器
 
-- **5 种阅读主题**：纸质书、纯净白、护眼绿、复古棕、夜间模式
+- **颜色与背景**：横向样式槽（点击选用、长按编辑、可新增）；编辑文字色、背景色（含色值）、透明度与内置背景图；代码块与公式底色随纸面自动区分
 - **2 种翻页方式**：上下滚动、左右滑动
 - 阅读页底栏将主题、字体排版、翻页方式聚合为单一「阅读设置」
 - 字体大小、页边距、行距调节（DataStore 持久化）
@@ -114,7 +114,7 @@ app/src/main/java/
 │       ├── components/    # 通用 Compose 组件
 │       ├── screens/       # bookshelf / project / reader / profile / notes / statistics / weblink
 │       ├── system/        # 系统栏
-│       └── theme/         # 应用与阅读主题
+│       └── theme/         # 应用主题与阅读颜色/背景
 └── io/noties/markwon/ext/latex/   # 行内 LaTeX 对齐、复合公式 Span 等定制
 ```
 

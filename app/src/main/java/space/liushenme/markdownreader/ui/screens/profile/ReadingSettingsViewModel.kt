@@ -7,6 +7,7 @@ import space.liushenme.markdownreader.model.AppLanguage
 import space.liushenme.markdownreader.model.AppThemeMode
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
 import space.liushenme.markdownreader.platform.AppLocaleController
+import space.liushenme.markdownreader.ui.theme.ReadingStyleState
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -21,6 +22,12 @@ import kotlinx.coroutines.withContext
 class ReadingSettingsViewModel @Inject constructor(
     private val readerSettingsRepository: ReaderSettingsRepository,
 ) : ViewModel() {
+
+    val readingStyleState = readerSettingsRepository.readingStyleState.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = ReadingStyleState.DEFAULT,
+    )
 
     val currentTheme = readerSettingsRepository.readingTheme.stateIn(
         scope = viewModelScope,
@@ -72,6 +79,28 @@ class ReadingSettingsViewModel @Inject constructor(
 
     fun setTheme(theme: ReadingTheme) {
         viewModelScope.launch { readerSettingsRepository.setReadingTheme(theme) }
+    }
+
+    fun selectReadingStyle(index: Int) {
+        viewModelScope.launch { readerSettingsRepository.selectReadingStyle(index) }
+    }
+
+    fun addReadingStyle(onCreated: (Int) -> Unit) {
+        viewModelScope.launch {
+            onCreated(readerSettingsRepository.addReadingStyle())
+        }
+    }
+
+    fun updateReadingStyle(index: Int, theme: ReadingTheme) {
+        viewModelScope.launch { readerSettingsRepository.updateReadingStyle(index, theme) }
+    }
+
+    fun deleteReadingStyle(index: Int) {
+        viewModelScope.launch { readerSettingsRepository.deleteReadingStyle(index) }
+    }
+
+    fun resetAllReadingStyles(keepCustom: Boolean) {
+        viewModelScope.launch { readerSettingsRepository.resetAllReadingStyles(keepCustom) }
     }
 
     fun setFontSize(size: Int) {

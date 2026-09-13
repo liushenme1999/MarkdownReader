@@ -145,9 +145,7 @@ internal fun ReaderImmersiveChapterTitleBar(
 ) {
     val percent = progressPercent.coerceIn(0, 100)
     Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(theme.backgroundColor)
+        modifier = modifier.fillMaxWidth()
     ) {
         Spacer(
             Modifier
@@ -249,7 +247,7 @@ internal fun ReaderTopAppBar(
         // Scaffold topBar 或外层 statusBarsPadding 已处理顶 inset，避免与 TopAppBar 默认 insets 叠加
         windowInsets = WindowInsets(),
         colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = readingChromeShade(theme.backgroundColor),
+            containerColor = Color.Transparent,
             titleContentColor = theme.textColor,
             navigationIconContentColor = theme.textColor,
             actionIconContentColor = theme.textColor

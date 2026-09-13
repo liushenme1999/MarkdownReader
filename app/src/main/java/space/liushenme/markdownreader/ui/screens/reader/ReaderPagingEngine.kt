@@ -82,7 +82,6 @@ import io.noties.markwon.image.AsyncDrawableSpan
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
 import space.liushenme.markdownreader.ui.components.iconTintForDeleteStrip
 import space.liushenme.markdownreader.ui.theme.MarkdownReaderTheme
-import space.liushenme.markdownreader.ui.theme.ReadingTheme
 import io.noties.markwon.Markwon
 import io.noties.markwon.core.CorePlugin
 import io.noties.markwon.core.spans.HeadingSpan

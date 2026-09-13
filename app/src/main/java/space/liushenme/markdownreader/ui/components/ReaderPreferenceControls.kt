@@ -130,8 +130,8 @@ fun ReadingThemeGrid(
                 rowThemes.forEach { theme ->
                     ReadingThemeCardOption(
                         theme = theme,
-                        isSelected = theme == selected,
-                        onClick = { onSelect(theme) },
+                        isSelected = selected.matchesPreset(theme),
+                        onClick = { onSelect(theme.asQuickPreset()) },
                         modifier = Modifier.weight(1f),
                         compact = true,
                     )
@@ -218,7 +218,7 @@ fun ReadingThemeCardOption(
         }
         Spacer(modifier = Modifier.height(6.dp))
         Text(
-            text = stringResource(theme.nameRes),
+            text = theme.nameRes?.let { stringResource(it) }.orEmpty(),
             style = MaterialTheme.typography.labelSmall,
             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
             color = if (isSelected) accent else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),

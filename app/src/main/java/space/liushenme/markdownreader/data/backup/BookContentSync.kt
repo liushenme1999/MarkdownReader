@@ -137,8 +137,7 @@ class BookContentSync @Inject constructor(
 
             val outcomes = mapLimitedParallel(books, WEBDAV_TRANSFER_PARALLELISM) { book ->
                 val bundle = ParsedBookStorage.bundleDir(context, book.id)
-                val hasBody = File(bundle, ParsedBookStorage.BODY_FILE).isFile
-                if (onlyMissing && hasBody) {
+                if (onlyMissing && isAcceptableLocalBundle(book, bundle)) {
                     upgradeContentHashIfNeeded(book)
                     persistCanonicalPaths(book.id)
                     return@mapLimitedParallel ContentOutcome.SKIPPED
@@ -184,22 +183,26 @@ class BookContentSync @Inject constructor(
     }
 
     /**
-     * 若本地缺少 parsed bundle，则从 WebDAV 下载。
-     * @return true 表示本地已有或下载成功
+     * 若本地缺少可用 parsed bundle，则从 WebDAV 下载。
+     * PDF 仅有 body、没有页图，或正文哈希对不上时会重新拉取。
+     * @return true 表示本地已有完整正文或下载成功
      */
-    suspend fun ensureLocalBookContent(bookId: Long): Boolean = withContext(Dispatchers.IO) {
+    suspend fun ensureLocalBookContent(
+        bookId: Long,
+        remoteNumericId: Long? = null,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val book = bookDao.getBookById(bookId) ?: return@withContext false
         val bundle = ParsedBookStorage.bundleDir(context, bookId)
-        if (bundle.isDirectory && File(bundle, ParsedBookStorage.BODY_FILE).isFile) {
-            bookDao.getBookById(bookId)?.let { upgradeContentHashIfNeeded(it) }
+        if (isAcceptableLocalBundle(book, bundle)) {
+            upgradeContentHashIfNeeded(book)
             return@withContext true
         }
-        val book = bookDao.getBookById(bookId) ?: return@withContext false
         if (book.gitProjectId != null) return@withContext false
         runCatching {
             val config = webDavConfigRepository.current()
             if (!config.isConfigured) return@runCatching false
             val auth = authorize(config) ?: return@runCatching false
-            val ok = downloadBookContent(book, booksRootUrl(config), auth)
+            val ok = downloadBookContent(book, booksRootUrl(config), auth, remoteNumericId)
             if (ok) {
                 upgradeContentHashIfNeeded(bookDao.getBookById(bookId) ?: book)
                 persistCanonicalPaths(bookId)
@@ -208,6 +211,12 @@ class BookContentSync @Inject constructor(
         }.onFailure {
             Log.w(TAG, "下载书籍正文失败 bookId=$bookId: ${it.localizedMessage}", it)
         }.getOrDefault(false)
+    }
+
+    suspend fun ensureLocalBookContents(remoteToLocal: Map<Long, Long>) = withContext(Dispatchers.IO) {
+        mapLimitedParallel(remoteToLocal.entries, WEBDAV_TRANSFER_PARALLELISM) { (remoteId, localId) ->
+            ensureLocalBookContent(localId, remoteNumericId = remoteId)
+        }
     }
 
     /**
@@ -239,55 +248,73 @@ class BookContentSync @Inject constructor(
         book: BookEntity,
         booksUrl: String,
         auth: Authorization,
+        remoteNumericId: Long? = null,
     ): Boolean {
         return runCatching {
-            val hashCandidates = buildList {
-                if (book.contentHash.isNotBlank() && !BookContentHasher.isLegacy(book.contentHash)) {
-                    add(book.contentHash)
-                }
-                val bodyHash = BookContentHasher.hashFromBodyFile(
-                    File(ParsedBookStorage.bundleDir(context, book.id), ParsedBookStorage.BODY_FILE),
-                )
-                if (bodyHash != null) add(bodyHash)
-                if (BookContentHasher.isLegacy(book.contentHash) || book.contentHash.isBlank()) {
-                    add(BookContentHasher.legacyHash(book.id))
-                }
-                add(book.id.toString())
-            }.distinct()
+            val localBundle = ParsedBookStorage.bundleDir(context, book.id)
+            val extraHashes = listOfNotNull(
+                BookContentHasher.hashFromBodyFile(File(localBundle, ParsedBookStorage.BODY_FILE)),
+                BookContentHasher.hashFromPdfBundle(localBundle),
+            )
+            val hashCandidates = BookContentHasher.remoteContentZipNames(
+                contentHash = book.contentHash,
+                localId = book.id,
+                remoteId = remoteNumericId,
+                extraHashes = extraHashes,
+            )
 
-            var zip: File? = null
+            val bundle = ParsedBookStorage.bundleDir(context, book.id)
             for (name in hashCandidates) {
                 val remote = WebDav(booksUrl + "$name.zip", auth)
                 if (!remote.exists()) continue
                 val localZip = File(tempDir, "dl_${book.id}_$name.zip")
                 if (localZip.exists()) localZip.delete()
                 remote.downloadTo(localZip.absolutePath, true)
-                zip = localZip
-                break
+                val unpack = File(tempDir, "unpack_${book.id}_$name").also {
+                    it.deleteRecursively()
+                    it.mkdirs()
+                }
+                val accepted = runCatching {
+                    BackupZip.unzipTo(localZip, unpack)
+                    val source = resolveUnpackedBundle(unpack, book.id, remoteNumericId)
+                    if (!isAcceptableLocalBundle(book, source)) {
+                        Log.w(TAG, "忽略不匹配的远程正文 zip=$name.zip bookId=${book.id}")
+                        false
+                    } else {
+                        bundle.parentFile?.mkdirs()
+                        if (bundle.exists()) bundle.deleteRecursively()
+                        source.copyRecursively(bundle, overwrite = true)
+                        true
+                    }
+                }.onFailure {
+                    Log.w(TAG, "解压远程正文失败 zip=$name.zip bookId=${book.id}", it)
+                }.getOrDefault(false)
+                localZip.delete()
+                unpack.deleteRecursively()
+                if (accepted) return@runCatching true
             }
-            val downloaded = zip ?: return@runCatching false
-
-            val bundle = ParsedBookStorage.bundleDir(context, book.id)
-            val unpack = File(tempDir, "unpack_${book.id}").also {
-                it.deleteRecursively()
-                it.mkdirs()
-            }
-            BackupZip.unzipTo(downloaded, unpack)
-            bundle.parentFile?.mkdirs()
-            if (bundle.exists()) bundle.deleteRecursively()
-            val source = when {
-                File(unpack, ParsedBookStorage.BODY_FILE).isFile -> unpack
-                File(unpack, "${book.id}/${ParsedBookStorage.BODY_FILE}").isFile ->
-                    File(unpack, book.id.toString())
-                else -> unpack.listFiles()?.firstOrNull { it.isDirectory } ?: unpack
-            }
-            source.copyRecursively(bundle, overwrite = true)
-            downloaded.delete()
-            unpack.deleteRecursively()
-            File(bundle, ParsedBookStorage.BODY_FILE).isFile
+            false
         }.onFailure {
             Log.w(TAG, "下载书籍正文失败 bookId=${book.id}: ${it.localizedMessage}", it)
         }.getOrDefault(false)
+    }
+
+    private fun resolveUnpackedBundle(unpack: File, localId: Long, remoteId: Long?): File {
+        if (File(unpack, ParsedBookStorage.BODY_FILE).isFile) return unpack
+        remoteId?.let { id ->
+            val nested = File(unpack, id.toString())
+            if (File(nested, ParsedBookStorage.BODY_FILE).isFile) return nested
+        }
+        val byLocal = File(unpack, localId.toString())
+        if (File(byLocal, ParsedBookStorage.BODY_FILE).isFile) return byLocal
+        return unpack.listFiles()?.firstOrNull { child ->
+            child.isDirectory && File(child, ParsedBookStorage.BODY_FILE).isFile
+        } ?: unpack
+    }
+
+    private fun isAcceptableLocalBundle(book: BookEntity, dir: File): Boolean {
+        if (!ParsedBookStorage.isCompleteBundle(dir, book.importFormat)) return false
+        return BookContentHasher.matchesStoredHash(book.contentHash, dir)
     }
 
     private suspend fun persistCanonicalPaths(bookId: Long) {

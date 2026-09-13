@@ -75,6 +75,17 @@ object PdfReaderContent {
 
     fun pageCount(body: String): Int = pageImageMatches(sanitizeStoredBody(body)).count()
 
+    /** 正文是否含 PDF 页图（用于恢复后补识别，避免 importFormat 丢失时按普通 Markdown 打开）。 */
+    fun looksLikePdfBody(body: String): Boolean = pageCount(body) > 0
+
+    fun referencedPageAssetNames(body: String): List<String> {
+        val names = linkedSetOf<String>()
+        Regex("""pdf_page_\d+\.png""", RegexOption.IGNORE_CASE)
+            .findAll(body)
+            .forEach { names += it.value }
+        return names.toList()
+    }
+
     private fun pageImageMatches(sanitized: String) =
         PAGE_IMG_TAG.findAll(sanitized).toList()
 

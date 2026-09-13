@@ -38,11 +38,10 @@ import space.liushenme.markdownreader.ui.components.ReaderSettingsGroupCard
 import space.liushenme.markdownreader.ui.components.ReaderSettingsHintBanner
 import space.liushenme.markdownreader.ui.components.ReaderSettingsSectionTitle
 import space.liushenme.markdownreader.ui.components.ReaderWideSliderRow
-import space.liushenme.markdownreader.ui.components.ReadingThemeGrid
+import space.liushenme.markdownreader.ui.components.ReadingStyleSettingsBlock
 import space.liushenme.markdownreader.ui.components.ShelfStyleTopAppBar
 import space.liushenme.markdownreader.ui.components.ShelfStyleTopBarBackground
 import space.liushenme.markdownreader.ui.components.shelfStylePageBackground
-import space.liushenme.markdownreader.ui.theme.ReadingTheme
 import kotlin.math.roundToInt
 
 @Composable
@@ -51,7 +50,7 @@ fun ReadingSettingsScreen(
     viewModel: ReadingSettingsViewModel = hiltViewModel(),
 ) {
     val pageBg = shelfStylePageBackground()
-    val currentTheme by viewModel.currentTheme.collectAsState()
+    val styleState by viewModel.readingStyleState.collectAsState()
     val fontSize by viewModel.fontSize.collectAsState()
     val readerPaddingDp by viewModel.readerPaddingDp.collectAsState()
     val lineSpacing by viewModel.readerLineSpacingMultiplier.collectAsState()
@@ -130,11 +129,14 @@ fun ReadingSettingsScreen(
             Column {
                 ReaderSettingsSectionTitle(stringResource(R.string.reading_settings_section_reading_theme))
                 ReaderSettingsGroupCard {
-                    ReadingThemeGrid(
-                        themes = ReadingTheme.allThemes(),
-                        selected = currentTheme,
-                        onSelect = viewModel::setTheme,
-                        modifier = Modifier.padding(vertical = 12.dp),
+                    ReadingStyleSettingsBlock(
+                        styleState = styleState,
+                        onSelect = viewModel::selectReadingStyle,
+                        onAdd = viewModel::addReadingStyle,
+                        onUpdate = viewModel::updateReadingStyle,
+                        onDelete = viewModel::deleteReadingStyle,
+                        onResetAll = viewModel::resetAllReadingStyles,
+                        modifier = Modifier.padding(vertical = 8.dp),
                     )
                 }
             }

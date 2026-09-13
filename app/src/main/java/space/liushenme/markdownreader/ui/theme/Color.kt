@@ -1,8 +1,8 @@
 package space.liushenme.markdownreader.ui.theme
 
-import androidx.annotation.StringRes
 import androidx.compose.ui.graphics.Color
-import space.liushenme.markdownreader.R
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 
 /** 书架页浅灰背景（浅色模式） */
 val BookshelfPageBackground = Color(0xFFF2F2F4)
@@ -25,62 +25,98 @@ val Purple40 = Color(0xFF6650a4)
 val PurpleGrey40 = Color(0xFF625b71)
 val Pink40 = Color(0xFF7D5260)
 
-// 阅读主题
-sealed class ReadingTheme(
-    @StringRes val nameRes: Int,
-    val backgroundColor: Color,
+private val HighlightColorLight = Color(0xFFFFFF00)
+private val HighlightColorDark = Color(0xFF4A4A00)
+private val BookmarkColorDefault = Color(0xFFFF6B6B)
+
+/** 阅读纸面：文字色、背景色、透明度与可选 assets 背景图。 */
+data class ReadingTheme(
     val textColor: Color,
-    val secondaryTextColor: Color,
-    val highlightColor: Color,
-    val bookmarkColor: Color
+    val backgroundColor: Color,
+    val backgroundAlpha: Int = 100,
+    val backgroundImageAsset: String? = null,
+    val name: String = "",
+    val presetKey: String? = null,
 ) {
-    object Paper : ReadingTheme(
-        nameRes = R.string.reading_theme_paper,
-        backgroundColor = Color(0xFFF5F0E1),
-        textColor = Color(0xFF2C2C2C),
-        secondaryTextColor = Color(0xFF666666),
-        highlightColor = Color(0xFFFFFF00),
-        bookmarkColor = Color(0xFFFF6B6B)
-    )
+    val nameRes: Int?
+        get() = ReadingThemeStorage.nameResForPreset(presetKey)
 
-    object Dark : ReadingTheme(
-        nameRes = R.string.reading_theme_dark,
-        backgroundColor = Color(0xFF1A1A1A),
-        textColor = Color(0xFFE0E0E0),
-        secondaryTextColor = Color(0xFF999999),
-        highlightColor = Color(0xFF4A4A00),
-        bookmarkColor = Color(0xFFFF6B6B)
-    )
+    val secondaryTextColor: Color
+        get() = textColor.copy(alpha = 0.62f)
 
-    object White : ReadingTheme(
-        nameRes = R.string.reading_theme_white,
-        backgroundColor = Color(0xFFFFFFFF),
-        textColor = Color(0xFF333333),
-        secondaryTextColor = Color(0xFF666666),
-        highlightColor = Color(0xFFFFFF00),
-        bookmarkColor = Color(0xFFFF6B6B)
-    )
+    val highlightColor: Color
+        get() = if (backgroundColor.luminance() < 0.5f) HighlightColorDark else HighlightColorLight
 
-    object Green : ReadingTheme(
-        nameRes = R.string.reading_theme_green,
-        backgroundColor = Color(0xFFE8F5E9),
-        textColor = Color(0xFF1B5E20),
-        secondaryTextColor = Color(0xFF4CAF50),
-        highlightColor = Color(0xFFFFFF00),
-        bookmarkColor = Color(0xFFFF6B6B)
-    )
+    val bookmarkColor: Color
+        get() = BookmarkColorDefault
 
-    object Sepia : ReadingTheme(
-        nameRes = R.string.reading_theme_sepia,
-        backgroundColor = Color(0xFFF4ECD8),
-        textColor = Color(0xFF5B4636),
-        secondaryTextColor = Color(0xFF8B7355),
-        highlightColor = Color(0xFFFFFF00),
-        bookmarkColor = Color(0xFFFF6B6B)
+    fun contentSignature(): String =
+        "${textColor.toArgb()}_${backgroundColor.toArgb()}_$backgroundAlpha" +
+            "_${backgroundImageAsset.orEmpty()}"
+
+    fun matchesPreset(preset: ReadingTheme): Boolean =
+        textColor.toArgb() == preset.textColor.toArgb() &&
+            backgroundColor.toArgb() == preset.backgroundColor.toArgb() &&
+            backgroundAlpha == 100 &&
+            backgroundImageAsset.isNullOrBlank()
+
+    fun asQuickPreset(): ReadingTheme = copy(
+        backgroundAlpha = 100,
+        backgroundImageAsset = null,
     )
 
     companion object {
+        val Paper = ReadingTheme(
+            presetKey = "Paper",
+            backgroundColor = Color(0xFFF5F0E1),
+            textColor = Color(0xFF2C2C2C),
+        )
+
+        val Dark = ReadingTheme(
+            presetKey = "Dark",
+            backgroundColor = Color(0xFF1A1A1A),
+            textColor = Color(0xFFE0E0E0),
+        )
+
+        val White = ReadingTheme(
+            presetKey = "White",
+            backgroundColor = Color(0xFFFFFFFF),
+            textColor = Color(0xFF333333),
+        )
+
+        val Green = ReadingTheme(
+            presetKey = "Green",
+            backgroundColor = Color(0xFFE8F5E9),
+            textColor = Color(0xFF1B5E20),
+        )
+
+        val Sepia = ReadingTheme(
+            presetKey = "Sepia",
+            backgroundColor = Color(0xFFF4ECD8),
+            textColor = Color(0xFF5B4636),
+        )
+
         fun allThemes() = listOf(Paper, White, Green, Sepia, Dark)
+
+        fun newCustom(): ReadingTheme = ReadingTheme(
+            textColor = Color(0xFF3E3D3B),
+            backgroundColor = Color(0xFFEEEEEE),
+        )
+    }
+}
+
+data class ReadingStyleState(
+    val styles: List<ReadingTheme>,
+    val selectedIndex: Int,
+) {
+    val current: ReadingTheme
+        get() {
+            if (styles.isEmpty()) return ReadingTheme.Paper
+            return styles[selectedIndex.coerceIn(0, styles.lastIndex)]
+        }
+
+    companion object {
+        val DEFAULT = ReadingStyleState(ReadingTheme.allThemes(), 0)
     }
 }
 

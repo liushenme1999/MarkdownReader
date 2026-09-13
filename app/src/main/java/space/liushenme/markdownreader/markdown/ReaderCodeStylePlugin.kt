@@ -1,7 +1,6 @@
 package space.liushenme.markdownreader.markdown
 
 import android.content.Context
-import android.content.res.Configuration
 import android.graphics.Color
 import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.MarkwonConfiguration
@@ -19,8 +18,12 @@ import org.commonmark.node.Node
 
 internal object ReaderCodeStylePlugin {
 
-    fun create(context: Context): MarkwonPlugin = object : AbstractMarkwonPlugin() {
+    fun create(
+        context: Context,
+        paperColorArgb: Int = ReaderHighlightSurface.DEFAULT_PAPER_ARGB,
+    ): MarkwonPlugin = object : AbstractMarkwonPlugin() {
         private val appContext = context.applicationContext
+        private val paperArgb = paperColorArgb
 
         override fun configureTheme(builder: MarkwonTheme.Builder) {
             builder.codeBackgroundColor(Color.TRANSPARENT)
@@ -28,29 +31,31 @@ internal object ReaderCodeStylePlugin {
 
         override fun configureVisitor(builder: MarkwonVisitor.Builder) {
             builder.on(FencedCodeBlock::class.java) { visitor, node ->
-                visitCodeBlock(visitor, appContext, node.info, node.literal, node)
+                visitCodeBlock(visitor, appContext, paperArgb, node.info, node.literal, node)
             }
             builder.on(IndentedCodeBlock::class.java) { visitor, node ->
-                visitCodeBlock(visitor, appContext, null, node.literal, node)
+                visitCodeBlock(visitor, appContext, paperArgb, null, node.literal, node)
             }
         }
 
         override fun configureSpansFactory(builder: MarkwonSpansFactory.Builder) {
-            builder.setFactory(Code::class.java, ReaderInlineCodeSpanFactory(appContext))
+            builder.setFactory(Code::class.java, ReaderInlineCodeSpanFactory(appContext, paperArgb))
         }
     }
 
     private class ReaderInlineCodeSpanFactory(
         private val context: Context,
+        private val paperColorArgb: Int,
     ) : SpanFactory {
         override fun getSpans(configuration: MarkwonConfiguration, props: RenderProps): Any {
-            return ReaderInlineCodeSpan(configuration.theme(), context)
+            return ReaderInlineCodeSpan(configuration.theme(), context, paperColorArgb)
         }
     }
 
     private fun visitCodeBlock(
         visitor: MarkwonVisitor,
         context: Context,
+        paperColorArgb: Int,
         info: String?,
         code: String,
         node: Node,
@@ -59,11 +64,9 @@ internal object ReaderCodeStylePlugin {
         val start = visitor.length()
         val highlighted = visitor.configuration().syntaxHighlight().highlight(info, code)
         val density = context.resources.displayMetrics.density
-        val isDark = (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-            Configuration.UI_MODE_NIGHT_YES
         val span = ReaderScrollableCodeBlockSpan(
             theme = visitor.configuration().theme(),
-            background = ReaderLatexBlockStyle.blockBackground(context).mutate(),
+            background = ReaderLatexBlockStyle.blockBackground(context, paperColorArgb).mutate(),
             padH = (12f * density + 0.5f).toInt(),
             padV = (8f * density + 0.5f).toInt(),
             content = highlighted,
@@ -71,7 +74,7 @@ internal object ReaderCodeStylePlugin {
             languageInfo = info,
             wrapEnabled = ReaderCodeBlockSettings.wrapEnabled,
             density = density,
-            isDark = isDark,
+            isDark = ReaderHighlightSurface.isDarkPaper(paperColorArgb),
         )
         visitor.builder().append('\uFFFC')
         CoreProps.CODE_BLOCK_INFO.set(visitor.renderProps(), info)

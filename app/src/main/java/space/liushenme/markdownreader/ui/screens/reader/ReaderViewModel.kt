@@ -20,11 +20,13 @@ import space.liushenme.markdownreader.importing.BookContentLoader
 import space.liushenme.markdownreader.importing.ExtractedBookText
 import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.importing.ParsedBookStorage
+import space.liushenme.markdownreader.importing.PdfReaderContent
 import space.liushenme.markdownreader.importing.UrlBookDownloader
 import space.liushenme.markdownreader.markdown.MarkdownInlineHtml
 import space.liushenme.markdownreader.markdown.MarkdownPreprocessor
 import space.liushenme.markdownreader.model.HighlightStyle
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
+import space.liushenme.markdownreader.ui.theme.ReadingStyleState
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
 import androidx.compose.ui.graphics.toArgb
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -71,6 +73,14 @@ class ReaderViewModel @Inject constructor(
 
     private val _readingProgress = MutableStateFlow(0f)
     val readingProgress: StateFlow<Float> = _readingProgress.asStateFlow()
+
+    val readingStyleState: StateFlow<ReadingStyleState> =
+        readerSettingsRepository.readingStyleState
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = ReadingStyleState.DEFAULT,
+            )
 
     val currentTheme: StateFlow<ReadingTheme> = readerSettingsRepository.readingTheme
         .stateIn(
@@ -239,6 +249,15 @@ class ReaderViewModel @Inject constructor(
             lastKnownProgressPreview = latestBook.progressPreviewText.trim()
             if (text.isNotEmpty() && text.length != latestBook.totalChars) {
                 val synced = latestBook.copy(totalChars = text.length)
+                bookRepository.updateBook(synced)
+                _book.value = synced
+            }
+            val currentBook = _book.value ?: latestBook
+            if (
+                ImportedBookFormat.fromStored(currentBook.importFormat) != ImportedBookFormat.PDF &&
+                PdfReaderContent.looksLikePdfBody(text)
+            ) {
+                val synced = currentBook.copy(importFormat = ImportedBookFormat.PDF.storedKey)
                 bookRepository.updateBook(synced)
                 _book.value = synced
             }
@@ -737,6 +756,28 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
+    fun selectReadingStyle(index: Int) {
+        viewModelScope.launch { readerSettingsRepository.selectReadingStyle(index) }
+    }
+
+    fun addReadingStyle(onCreated: (Int) -> Unit) {
+        viewModelScope.launch {
+            onCreated(readerSettingsRepository.addReadingStyle())
+        }
+    }
+
+    fun updateReadingStyle(index: Int, theme: ReadingTheme) {
+        viewModelScope.launch { readerSettingsRepository.updateReadingStyle(index, theme) }
+    }
+
+    fun deleteReadingStyle(index: Int) {
+        viewModelScope.launch { readerSettingsRepository.deleteReadingStyle(index) }
+    }
+
+    fun resetAllReadingStyles(keepCustom: Boolean) {
+        viewModelScope.launch { readerSettingsRepository.resetAllReadingStyles(keepCustom) }
+    }
+
     fun setFontSize(size: Int) {
         viewModelScope.launch {
             readerSettingsRepository.setFontSize(size.coerceIn(10, 40))
@@ -771,7 +812,7 @@ class ReaderViewModel @Inject constructor(
     private suspend fun loadFileExtracted(context: Context, book: BookEntity): ExtractedBookText {
         val canonical = ParsedBookStorage.bundleDir(appContext, book.id)
         ParsedBookStorage.readBundle(canonical)
-            ?.takeIf { it.body.isNotEmpty() }
+            ?.takeIf { isReadableExtracted(book, it, canonical) }
             ?.let {
                 persistCanonicalPathsIfNeeded(book, canonical)
                 return it
@@ -782,15 +823,15 @@ class ReaderViewModel @Inject constructor(
             val dir = File(bundlePath)
             if (dir.absolutePath != canonical.absolutePath) {
                 ParsedBookStorage.readBundle(dir)
-                    ?.takeIf { it.body.isNotEmpty() }
+                    ?.takeIf { isReadableExtracted(book, it, dir) }
                     ?.let { return it }
             }
         }
 
-        // 恢复后正文可能仅在 WebDAV books/{id}.zip，打开时再补拉一次
+        // 恢复后正文可能仅在 WebDAV books/{hash}.zip，打开时再补拉一次
         if (bookContentSync.ensureLocalBookContent(book.id)) {
             ParsedBookStorage.readBundle(canonical)
-                ?.takeIf { it.body.isNotEmpty() }
+                ?.takeIf { isReadableExtracted(book, it, canonical) }
                 ?.let {
                     persistCanonicalPathsIfNeeded(book, canonical)
                     return it
@@ -825,6 +866,15 @@ class ReaderViewModel @Inject constructor(
         } catch (_: Exception) {
             ExtractedBookText.plainBody("")
         }
+    }
+
+    private fun isReadableExtracted(
+        book: BookEntity,
+        extracted: ExtractedBookText,
+        dir: File,
+    ): Boolean {
+        if (extracted.body.isEmpty()) return false
+        return ParsedBookStorage.isCompleteBundle(dir, book.importFormat)
     }
 
     private suspend fun persistCanonicalPathsIfNeeded(book: BookEntity, canonical: File) {

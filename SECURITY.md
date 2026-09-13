@@ -20,7 +20,7 @@ MarkdownReader 目前支持以下版本：
 ### 报告流程
 
 1. **不要** 在公共 GitHub Issues 中公开披露漏洞细节
-2. 通过 [GitHub Security Advisories](https://github.com/liukejun1999/MarkdownReader/security/advisories/new) 私下报告（推荐），或提交仅含「Security」标题的 Issue 并说明需要私下跟进
+2. 通过 [GitHub Security Advisories](https://github.com/liushenme1999/MarkdownReader/security/advisories/new) 私下报告（推荐），或提交仅含「Security」标题的 Issue 并说明需要私下跟进
 3. 提供尽可能详细的信息：
    - 漏洞描述与影响范围
    - 复现步骤（如可能）

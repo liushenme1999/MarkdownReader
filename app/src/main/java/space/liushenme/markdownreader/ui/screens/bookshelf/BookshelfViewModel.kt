@@ -485,6 +485,7 @@ class BookshelfViewModel @Inject constructor(
             importFormat = format.storedKey,
             title = resolvedTitle,
             filePath = filePath,
+            assets = enrichedForStore.assets,
         )
         val existingByHash = bookRepository.getBookByContentHash(contentHash)
         if (existingByHash != null) {

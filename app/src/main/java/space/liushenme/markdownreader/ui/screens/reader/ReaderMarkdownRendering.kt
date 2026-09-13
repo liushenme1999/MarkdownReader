@@ -407,14 +407,19 @@ internal fun MarkdownReaderView(
 ) {
     val context = LocalContext.current
     val pdfPagedLayout = pdfFullWidthImages && !allowVerticalScroll
-    val markwon = remember(pdfFullWidthImages) {
-        ReaderMarkwonFactory.create(context)
+    val paperBaseColor = rememberPaperBaseColor(theme)
+    val paperColorArgb = paperBaseColor.toArgb()
+    val markwon = remember(pdfFullWidthImages, paperColorArgb) {
+        ReaderMarkwonFactory.create(context, paperBaseColor)
     }
     val touchState = remember { ReaderTouchState() }
     val slop = ViewConfiguration.get(context).scaledTouchSlop
     val latestOpenPositionReady by rememberUpdatedState(onOpenPositionReady)
+    val themeSignature = theme.contentSignature()
 
+    Box(modifier = modifier) {
     AndroidView(
+        modifier = Modifier.fillMaxSize(),
         factory = { ctx ->
             readerOpenDbg("androidView factory contentLen=${content.length}")
             SafeReaderTextView(ctx).apply {
@@ -426,7 +431,7 @@ internal fun MarkdownReaderView(
                 }
                 movementMethod = LinkMovementMethod.getInstance()
                 setTextColor(theme.textColor.toArgb())
-                setBackgroundColor(theme.backgroundColor.toArgb())
+                setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 textSize = fontSize.toFloat()
                 val density = resources.displayMetrics.density
                 val padHPx = (readerPaddingHorizontalDp * density).toInt().coerceAtLeast(0)
@@ -441,7 +446,7 @@ internal fun MarkdownReaderView(
                 val sig0 = readerContentSignature(
                     content = content,
                     renderPlainText = renderPlainText,
-                    themeName = theme::class.java.name,
+                    themeName = themeSignature,
                     fontSize = fontSize,
                     codeBlockWrap = codeBlockWrap,
                 )
@@ -492,7 +497,7 @@ internal fun MarkdownReaderView(
             textView.resolveExistingHighlightId = resolveExistingHighlightId
             textView.onRemoveHighlightClick = onRemoveHighlightClick
             textView.setTextColor(theme.textColor.toArgb())
-            textView.setBackgroundColor(theme.backgroundColor.toArgb())
+            textView.setBackgroundColor(android.graphics.Color.TRANSPARENT)
             textView.textSize = fontSize.toFloat()
             val density = textView.resources.displayMetrics.density
             val padHPx = (readerPaddingHorizontalDp * density).toInt().coerceAtLeast(0)
@@ -501,7 +506,7 @@ internal fun MarkdownReaderView(
             val contentSig = readerContentSignature(
                 content = content,
                 renderPlainText = renderPlainText,
-                themeName = theme::class.java.name,
+                themeName = themeSignature,
                 fontSize = fontSize,
                 codeBlockWrap = codeBlockWrap,
             )
@@ -609,8 +614,8 @@ internal fun MarkdownReaderView(
             }
             textView.post { onViewReady(textView) }
         },
-        modifier = modifier
     )
+    }
 }
 
 internal class ReaderTouchState(

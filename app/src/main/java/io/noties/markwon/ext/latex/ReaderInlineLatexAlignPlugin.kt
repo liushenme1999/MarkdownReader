@@ -4,6 +4,7 @@ import android.content.Context
 import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.MarkwonVisitor
 import io.noties.markwon.ext.latex.JLatexMathPlugin
+import space.liushenme.markdownreader.markdown.ReaderHighlightSurface
 import space.liushenme.markdownreader.markdown.ReaderLatexPreprocessor
 import space.liushenme.markdownreader.markdown.ReaderMathSymbolFallback
 import space.liushenme.markdownreader.markdown.ReaderMathSymbolSpan
@@ -12,6 +13,7 @@ import space.liushenme.markdownreader.markdown.ReaderMathSymbolSpan
 internal class ReaderInlineLatexAlignPlugin(
     private val config: JLatexMathPlugin.Config,
     private val appContext: Context,
+    private val paperColorArgb: Int = ReaderHighlightSurface.DEFAULT_PAPER_ARGB,
 ) : AbstractMarkwonPlugin() {
 
     private val loader = ReaderInlineLatexLoader(config)
@@ -29,7 +31,7 @@ internal class ReaderInlineLatexAlignPlugin(
                 ?: ReaderMathSymbolFallback.symbolFor(rawLatex.trim())
             if (fallbackSymbol != null) {
                 visitor.builder().append(fallbackSymbol)
-                visitor.setSpans(length, ReaderMathSymbolSpan(fallbackSymbol, appContext))
+                visitor.setSpans(length, ReaderMathSymbolSpan(fallbackSymbol, appContext, paperColorArgb))
                 return@on
             }
 
@@ -43,6 +45,7 @@ internal class ReaderInlineLatexAlignPlugin(
                         context = appContext,
                         textColor = textColor,
                         sourceLatex = latex,
+                        paperColorArgb = paperColorArgb,
                     ),
                 )
                 return@on

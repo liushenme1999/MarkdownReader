@@ -8,6 +8,7 @@ import android.text.TextPaint
 import android.text.style.ReplacementSpan
 import ru.noties.jlatexmath.JLatexMathDrawable
 import ru.noties.jlatexmath.awt.Color as JColor
+import space.liushenme.markdownreader.markdown.ReaderHighlightSurface
 import space.liushenme.markdownreader.markdown.ReaderLatexBlockStyle
 import space.liushenme.markdownreader.markdown.ReaderMathSymbolFallback
 import space.liushenme.markdownreader.markdown.ReaderMathSymbolFont
@@ -22,6 +23,7 @@ internal class ReaderCompoundInlineLatexSpan(
     textColor: Int,
     /** 原始行内公式（不含外层 `$`），供选区复制/划线提取。 */
     val sourceLatex: String = "",
+    private val paperColorArgb: Int = ReaderHighlightSurface.DEFAULT_PAPER_ARGB,
 ) : ReplacementSpan() {
 
     private val density = context.resources.displayMetrics.density
@@ -139,7 +141,7 @@ internal class ReaderCompoundInlineLatexSpan(
         val boxTop = y + paint.ascent() - padV
         val boxBottom = y + paint.descent() + padV
 
-        val background = ReaderLatexBlockStyle.inlineLatexBackground(context).mutate()
+        val background = ReaderLatexBlockStyle.inlineLatexBackground(context, paperColorArgb).mutate()
         background.setBounds(
             x.toInt(),
             boxTop.toInt(),

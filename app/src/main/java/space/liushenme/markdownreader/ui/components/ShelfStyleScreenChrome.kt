@@ -57,12 +57,16 @@ fun ShelfStyleStatusBarEffect(backgroundColor: Color) {
 fun ShelfStyleSystemBarsEffect(
     backgroundColor: Color,
     applyNavigationBar: Boolean = true,
+    navigationBarColor: Color = backgroundColor,
+    iconContrastColor: Color = backgroundColor,
 ) {
     val view = LocalView.current
     val activity = view.context as Activity
     val lifecycleOwner = LocalLifecycleOwner.current
     val barArgb = backgroundColor.toArgb()
-    val useLightBarIcons = ColorUtils.calculateLuminance(barArgb) > 0.5
+    val navArgb = navigationBarColor.toArgb()
+    val contrastArgb = iconContrastColor.toArgb()
+    val useLightBarIcons = ColorUtils.calculateLuminance(contrastArgb) > 0.5
 
     fun apply() {
         SystemBarAppearance.applyStatusBar(
@@ -75,7 +79,7 @@ fun ShelfStyleSystemBarsEffect(
             SystemBarAppearance.applyNavigationBar(
                 activity = activity,
                 view = view,
-                colorArgb = barArgb,
+                colorArgb = navArgb,
                 lightNavigationBarIcons = useLightBarIcons,
             )
         }
@@ -83,7 +87,7 @@ fun ShelfStyleSystemBarsEffect(
 
     SideEffect { apply() }
 
-    DisposableEffect(lifecycleOwner, barArgb, useLightBarIcons, applyNavigationBar) {
+    DisposableEffect(lifecycleOwner, barArgb, navArgb, useLightBarIcons, applyNavigationBar) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) apply()
         }

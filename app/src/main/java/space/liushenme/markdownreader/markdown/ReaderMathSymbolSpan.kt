@@ -11,6 +11,7 @@ import android.text.style.ReplacementSpan
 internal class ReaderMathSymbolSpan(
     private val symbol: Char,
     private val context: Context,
+    private val paperColorArgb: Int = ReaderHighlightSurface.DEFAULT_PAPER_ARGB,
 ) : ReplacementSpan() {
 
     private val density = context.resources.displayMetrics.density
@@ -53,7 +54,7 @@ internal class ReaderMathSymbolSpan(
         val textTop = y + fm.ascent
         val textBottom = y + fm.descent
 
-        val background = ReaderLatexBlockStyle.inlineLatexBackground(context).mutate()
+        val background = ReaderLatexBlockStyle.inlineLatexBackground(context, paperColorArgb).mutate()
         background.setBounds(
             (x - padH).toInt(),
             textTop - padV,

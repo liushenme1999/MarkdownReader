@@ -3,6 +3,7 @@ package io.noties.markwon.ext.latex
 import android.content.Context
 import io.noties.markwon.AbstractMarkwonPlugin
 import ru.noties.jlatexmath.JLatexMathDrawable
+import space.liushenme.markdownreader.markdown.ReaderHighlightSurface
 import space.liushenme.markdownreader.markdown.ReaderLatexBlockStyle
 import space.liushenme.markdownreader.markdown.ReaderLatexPreprocessor
 
@@ -13,6 +14,7 @@ object ReaderLatexPlugins {
         context: Context,
         latexTextSize: Float,
         density: Float,
+        paperColorArgb: Int = ReaderHighlightSurface.DEFAULT_PAPER_ARGB,
     ): List<AbstractMarkwonPlugin> {
         val appContext = context.applicationContext
         val builder = JLatexMathPlugin.builder(latexTextSize)
@@ -31,16 +33,18 @@ object ReaderLatexPlugins {
             context = appContext,
             themeBuilder = builder.theme(),
             density = density,
+            paperColorArgb = paperColorArgb,
         )
         ReaderLatexBlockStyle.configureInlineTheme(
             context = appContext,
             themeBuilder = builder.theme(),
             density = density,
+            paperColorArgb = paperColorArgb,
         )
         val config = builder.build()
         return listOf(
             JLatexMathPlugin.create(config),
-            ReaderInlineLatexAlignPlugin(config, appContext),
+            ReaderInlineLatexAlignPlugin(config, appContext, paperColorArgb),
         )
     }
 }

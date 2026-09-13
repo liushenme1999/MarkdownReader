@@ -508,7 +508,7 @@ class BackupManager @Inject constructor(
                 }
             }
         }
-        fetchRestoredBookContents(webDavBookIds)
+        fetchRestoredBookContents(idMap.filterValues { it in webDavBookIds })
         rematchGitBooks()
         refreshGitDocumentBundles()
 
@@ -655,10 +655,10 @@ class BackupManager @Inject constructor(
         return local.id
     }
 
-    private suspend fun fetchRestoredBookContents(bookIds: Collection<Long>) {
-        if (bookIds.isEmpty()) return
-        bookContentSync.ensureLocalBookContents(bookIds)
-        for (bookId in bookIds) {
+    private suspend fun fetchRestoredBookContents(remoteToLocal: Map<Long, Long>) {
+        if (remoteToLocal.isEmpty()) return
+        bookContentSync.ensureLocalBookContents(remoteToLocal)
+        for (bookId in remoteToLocal.values) {
             val book = bookDao.getBookById(bookId) ?: continue
             val hashed = book.copy(
                 contentHash = bookContentSync.upgradeContentHashIfNeeded(book),
@@ -757,8 +757,8 @@ class BackupManager @Inject constructor(
         if (remoteId == localId) return
         val src = File(context.filesDir, "$PARSED_BOOKS_DIR/$remoteId")
         val dst = File(context.filesDir, "$PARSED_BOOKS_DIR/$localId")
-        if (File(dst, ParsedBookStorage.BODY_FILE).isFile) return
         if (!File(src, ParsedBookStorage.BODY_FILE).isFile) return
+        if (!ParsedBookStorage.shouldReplaceBundle(dst, src)) return
         dst.parentFile?.mkdirs()
         if (dst.exists()) dst.deleteRecursively()
         src.copyRecursively(dst, overwrite = true)

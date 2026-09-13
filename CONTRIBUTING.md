@@ -1,6 +1,6 @@
 # 贡献指南 (Contributing Guidelines)
 
-欢迎参与 [MarkdownReader](https://github.com/liukejun1999/MarkdownReader) 的开发！在提交贡献之前，请阅读以下指南。
+欢迎参与 [MarkdownReader](https://github.com/liushenme1999/MarkdownReader) 的开发！在提交贡献之前，请阅读以下指南。
 
 ## 如何贡献
 
@@ -132,7 +132,7 @@ CI 会在 `push` / `pull_request` 到 `main`、`develop` 时自动运行 Lint、
 
 ## 获得帮助
 
-- 提交 [Issue](https://github.com/liukejun1999/MarkdownReader/issues)
+- 提交 [Issue](https://github.com/liushenme1999/MarkdownReader/issues)
 - 阅读 [README.md](README.md) 了解功能与构建说明
 
 感谢你对 MarkdownReader 的支持！

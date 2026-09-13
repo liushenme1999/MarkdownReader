@@ -25,13 +25,14 @@ import kotlin.math.min
 internal class ReaderInlineCodeSpan(
     private val theme: MarkwonTheme,
     context: Context,
+    paperColorArgb: Int = ReaderHighlightSurface.DEFAULT_PAPER_ARGB,
 ) : MetricAffectingSpan(), LineBackgroundSpan {
 
     private val density = context.resources.displayMetrics.density
     private val padH = (3f * density + 0.5f).toInt()
     private val padV = (2f * density + 0.5f).toInt()
     private val background: Drawable =
-        ReaderLatexBlockStyle.inlineCodeBackground(context).mutate()
+        ReaderLatexBlockStyle.inlineCodeBackground(context, paperColorArgb).mutate()
 
     override fun updateMeasureState(textPaint: TextPaint) {
         theme.applyCodeTextStyle(textPaint)

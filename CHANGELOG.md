@@ -6,6 +6,21 @@
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-09-13
+
+### 新增
+
+- 阅读「颜色与背景」：横向样式槽可滑动，点击选用、长按编辑，支持新增预设；编辑页可改文字色、背景色（含色值）、透明度与背景图
+
+### 优化
+
+- 代码块与公式底色随阅读纸面变化（浅底略深、深底略亮），不再跟系统夜间模式
+- 阅读纸面（含背景图）铺到顶部标题栏与通知栏，不再只画在正文区
+
+### 修复
+
+- 跨设备恢复 PDF 时，不再把 `{本机书籍 id}.zip` 误当成正文；缺页图或哈希对不上会重新拉取，避免打开后看到另一本 Markdown
+
 ## [1.0.6] - 2026-09-12
 
 ### 新增
@@ -159,11 +174,12 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.6...HEAD
-[1.0.6]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.5...v1.0.6
-[1.0.5]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.4...v1.0.5
-[1.0.4]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.3...v1.0.4
-[1.0.3]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.2...v1.0.3
-[1.0.2]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.1...v1.0.2
-[1.0.1]: https://github.com/liukejun1999/MarkdownReader/compare/v1.0.0...v1.0.1
-[1.0.0]: https://github.com/liukejun1999/MarkdownReader/releases/tag/v1.0.0
+[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.7...HEAD
+[1.0.7]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.6...v1.0.7
+[1.0.6]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.5...v1.0.6
+[1.0.5]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.4...v1.0.5
+[1.0.4]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.3...v1.0.4
+[1.0.3]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.2...v1.0.3
+[1.0.2]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.1...v1.0.2
+[1.0.1]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.0...v1.0.1
+[1.0.0]: https://github.com/liushenme1999/MarkdownReader/releases/tag/v1.0.0
