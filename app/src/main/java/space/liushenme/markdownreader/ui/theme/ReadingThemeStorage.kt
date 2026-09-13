@@ -11,7 +11,11 @@ object ReadingThemeStorage {
     const val DEFAULT_BG_ALPHA = 100
 
     private val gson = Gson()
-    private val stylesType = object : TypeToken<List<StoredReadingStyleDto>>() {}.type
+    // 勿用 `object : TypeToken<List<...>>() {}`：R8 会抹掉匿名子类泛型，Gson 2.10+ 在 <clinit> 直接抛错。
+    private val stylesType = TypeToken.getParameterized(
+        List::class.java,
+        StoredReadingStyleDto::class.java,
+    ).type
 
     fun clampAlpha(alpha: Int): Int = alpha.coerceIn(0, 100)
 

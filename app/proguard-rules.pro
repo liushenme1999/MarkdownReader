@@ -104,6 +104,10 @@
 -keep class space.liushenme.markdownreader.importing.** { *; }
 -keep class space.liushenme.markdownreader.data.** { *; }
 
+# Gson TypeToken：R8 抹掉匿名子类泛型会导致正式包 ExceptionInInitializerError
+-keep class com.google.gson.reflect.TypeToken { *; }
+-keep class * extends com.google.gson.reflect.TypeToken { *; }
+
 # ==================== Vico Charts ====================
 
 -keep class com.patrykandpatrick.vico.** { *; }

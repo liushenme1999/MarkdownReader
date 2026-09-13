@@ -9,6 +9,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -16,6 +17,7 @@ import okhttp3.Response
 import org.xmlpull.v1.XmlPullParser
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.io.StringReader
 import java.net.URLDecoder
 import java.time.ZonedDateTime
@@ -74,6 +76,8 @@ class WebDav(
             chain.proceed(request)
         }
         OkHttpClient.Builder()
+            // 坚果云等 WebDAV 在 HTTP/2 上常对 PROPFIND 发 RST_STREAM CANCEL
+            .protocols(listOf(Protocol.HTTP_1_1))
             .callTimeout(0, TimeUnit.SECONDS)
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.SECONDS)
@@ -95,7 +99,7 @@ class WebDav(
                 .header("Depth", "0")
                 .method("PROPFIND", EXISTS.toRequestBody("application/xml".toMediaType()))
                 .build()
-            webDavClient.newCall(request).execute().use { it.isSuccessful }
+            executeCall(request).use { it.isSuccessful }
         }.onFailure {
             currentCoroutineContext().ensureActive()
         }.getOrDefault(false)
@@ -108,7 +112,7 @@ class WebDav(
                 .header("Depth", "0")
                 .method("PROPFIND", EXISTS.toRequestBody("application/xml".toMediaType()))
                 .build()
-            webDavClient.newCall(request).execute().use { it.code != 401 }
+            executeCall(request).use { it.code != 401 }
         }.onFailure {
             currentCoroutineContext().ensureActive()
         }.getOrDefault(true)
@@ -121,7 +125,7 @@ class WebDav(
                     .url(httpUrl)
                     .method("MKCOL", null)
                     .build()
-                webDavClient.newCall(request).execute().use { checkResult(it) }
+                executeCall(request).use { checkResult(it) }
             }
             true
         }.onFailure {
@@ -143,7 +147,7 @@ class WebDav(
     @Throws(WebDavException::class)
     suspend fun downloadBytes(): ByteArray = withContext(Dispatchers.IO) {
         val request = Request.Builder().url(httpUrl).get().build()
-        webDavClient.newCall(request).execute().use { response ->
+        executeCall(request).use { response ->
             checkResult(response)
             response.body?.bytes() ?: throw WebDavException("WebDav下载出错：空响应")
         }
@@ -157,7 +161,7 @@ class WebDav(
                 .url(httpUrl)
                 .put(file.asRequestBody(contentType.toMediaType()))
                 .build()
-            webDavClient.newCall(request).execute().use { checkResult(it) }
+            executeCall(request).use { checkResult(it) }
         }
 
     suspend fun delete(): Boolean = withContext(Dispatchers.IO) {
@@ -166,7 +170,7 @@ class WebDav(
                 .url(httpUrl)
                 .method("DELETE", null)
                 .build()
-            webDavClient.newCall(request).execute().use { checkResult(it) }
+            executeCall(request).use { checkResult(it) }
             true
         }.onFailure {
             currentCoroutineContext().ensureActive()
@@ -179,10 +183,34 @@ class WebDav(
             .header("Depth", depth.toString())
             .method("PROPFIND", PROP_FIND.toRequestBody("text/plain".toMediaType()))
             .build()
-        return webDavClient.newCall(request).execute().use { response ->
+        return executeCall(request).use { response ->
             checkResult(response)
             response.body?.string()
         }
+    }
+
+    private fun executeCall(request: Request): Response {
+        var last: IOException? = null
+        repeat(2) { attempt ->
+            try {
+                return webDavClient.newCall(request).execute()
+            } catch (e: IOException) {
+                last = e
+                if (attempt == 0 && isStreamReset(e)) return@repeat
+                throw e
+            }
+        }
+        throw last ?: IOException("WebDAV 请求失败")
+    }
+
+    private fun isStreamReset(error: Throwable): Boolean {
+        var current: Throwable? = error
+        while (current != null) {
+            val message = current.message.orEmpty()
+            if (message.contains("stream was reset", ignoreCase = true)) return true
+            current = current.cause
+        }
+        return false
     }
 
     private fun parseBody(xml: String): List<WebDavFile> {

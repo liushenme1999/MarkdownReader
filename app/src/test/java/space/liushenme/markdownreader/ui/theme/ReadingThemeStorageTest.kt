@@ -3,6 +3,7 @@ package space.liushenme.markdownreader.ui.theme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import org.junit.Assert.assertEquals
+import space.liushenme.markdownreader.R
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -134,6 +135,14 @@ class ReadingThemeStorageTest {
         assertEquals(40, state.current.backgroundAlpha)
         assertEquals("羊皮纸1.jpg", state.current.backgroundImageAsset)
         assertEquals("Paper", state.current.presetKey)
+    }
+
+    @Test
+    fun nameResForPreset_mapsFactoryKeys() {
+        assertEquals(R.string.reading_theme_paper, ReadingThemeStorage.nameResForPreset("Paper"))
+        assertEquals(R.string.reading_theme_dark, ReadingThemeStorage.nameResForPreset("Dark"))
+        assertNull(ReadingThemeStorage.nameResForPreset(null))
+        assertNull(ReadingThemeStorage.nameResForPreset(""))
     }
 
     @Test
