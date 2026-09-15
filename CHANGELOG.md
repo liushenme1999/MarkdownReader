@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-09-15
+
+### 优化
+
+- 正文划词长按时长由 1 秒缩短到 600 毫秒，取词更跟手（仍长于系统长按，滑动翻页不会误触发）
+
+### 修复
+
+- TXT 划词只能选中整行：长正文曾用 PrecomputedText 承载，Layout 会把行内每个字的横坐标都算到行右边界，于是长按只命中行首、选区画成整行
+- 划词首尾句柄压在下一行文字上，软换行处的末端句柄还会整体掉到下一行
+- 按在一个字的右半边时，会选中相邻的下一个字
+- 早期数据库迁移把缺失格式的书统一补成 Markdown，导致 .txt 旧书按 Markdown 渲染、走错划词逻辑；现在以真实扩展名为准
+
 ## [1.0.7] - 2026-09-13
 
 ### 新增
@@ -22,7 +35,6 @@
 - 跨设备恢复 PDF 时，不再把 `{本机书籍 id}.zip` 误当成正文；缺页图或哈希对不上会重新拉取，避免打开后看到另一本 Markdown
 - 正式包打开「颜色与背景」因 R8 抹掉 Gson TypeToken 泛型而闪退
 - 卸载重装后获取 WebDAV 备份列表时，坚果云 HTTP/2 将 PROPFIND 流重置为 CANCEL 的问题
-- 恢复 WebDAV 备份后阅读设置因 Gson 把整数写成 Long，再按 Int 读取而闪退
 - 恢复 WebDAV 备份后阅读设置因 Gson 把整数写成 Long，再按 Int 读取而闪退
 
 ## [1.0.6] - 2026-09-12
@@ -178,7 +190,8 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.7...HEAD
+[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.8...HEAD
+[1.0.8]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.4...v1.0.5

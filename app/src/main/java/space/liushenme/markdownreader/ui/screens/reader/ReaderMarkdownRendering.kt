@@ -12,9 +12,12 @@ import android.text.Spanned
 import android.text.style.ClickableSpan
 import android.text.style.BackgroundColorSpan
 import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.drawable.BitmapDrawable
 import android.os.Build
+import android.os.SystemClock
 import android.view.ActionMode
 import android.view.HapticFeedbackConstants
 import android.view.Menu
@@ -85,9 +88,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.core.graphics.ColorUtils
-import androidx.core.text.PrecomputedTextCompat
 import androidx.core.view.WindowCompat
-import androidx.core.widget.TextViewCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
@@ -116,12 +117,6 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/** 长纯文本 PrecomputedText 在后台算布局，减轻主线程测量（MIUI 上易触发 ANR 日志） */
-internal val readerPlainTextPrecomputeExecutor =
-    java.util.concurrent.Executors.newSingleThreadExecutor { r ->
-        Thread(r, "reader-plain-precompute").apply { isDaemon = true }
-    }
-
 /** Markwon 解析 + 渲染（Markdown → Spanned）也搬到后台线程，主线程只剩 setText + measure。 */
 internal val readerMarkwonRenderExecutor =
     java.util.concurrent.Executors.newSingleThreadExecutor { r ->
@@ -130,8 +125,6 @@ internal val readerMarkwonRenderExecutor =
             priority = Thread.NORM_PRIORITY - 1
         }
     }
-
-internal const val PLAIN_TEXT_PRECOMPUTE_THRESHOLD = 6000
 
 /** Markwon 非线程安全（HtmlPlugin 内部状态）；串行化 parse/render，避免与后台 toMarkdown 并发。 */
 internal val markwonRenderLock = Any()
@@ -241,33 +234,18 @@ internal fun applyReaderTextContent(
         )
         return
     }
-    if (content.length <= PLAIN_TEXT_PRECOMPUTE_THRESHOLD) {
-        val sp = SpannableString(content)
-        refreshStashedExpandAnchorBeforeContentSwap(textView)
-        textView.setText(sp, TextView.BufferType.SPANNABLE)
-        if (!applyReaderScrollToTopIfAny(textView, clearAfter = true)) {
-            if (!applyStashedSavedPositionSnapIfAny(textView)) {
-                applyStashedSourceScrollRestoreIfAny(textView, renderPlainText = true)
-            }
-        }
-        refreshReaderHighlightSpansFromPending(textView, fallbackSourceLength = content.length)
-        return
-    }
-    val params = TextViewCompat.getTextMetricsParams(textView)
-    readerPlainTextPrecomputeExecutor.execute {
-        val pre = PrecomputedTextCompat.create(content, params)
-        textView.post {
-            if (textView.getTag(TAG_READER_RENDER_SIG) != renderSig) return@post
-            refreshStashedExpandAnchorBeforeContentSwap(textView)
-            TextViewCompat.setPrecomputedText(textView, pre)
-            if (!applyReaderScrollToTopIfAny(textView, clearAfter = true)) {
-                if (!applyStashedSavedPositionSnapIfAny(textView)) {
-                    applyStashedSourceScrollRestoreIfAny(textView, renderPlainText = true)
-                }
-            }
-            refreshReaderHighlightSpansFromPending(textView, fallbackSourceLength = content.length)
+    // 正文必须是普通 Spannable：PrecomputedText 会让 Layout.getPrimaryHorizontal /
+    // getOffsetForHorizontal / getSelectionPath 把行内每个 offset 都算成行右边界，
+    // 于是划词只能整行命中。后台预测量省下的主线程时间不足以抵消这个代价。
+    val sp = SpannableString(content)
+    refreshStashedExpandAnchorBeforeContentSwap(textView)
+    textView.setText(sp, TextView.BufferType.SPANNABLE)
+    if (!applyReaderScrollToTopIfAny(textView, clearAfter = true)) {
+        if (!applyStashedSavedPositionSnapIfAny(textView)) {
+            applyStashedSourceScrollRestoreIfAny(textView, renderPlainText = true)
         }
     }
+    refreshReaderHighlightSpansFromPending(textView, fallbackSourceLength = content.length)
 }
 
 internal fun applyMarkdownContent(
@@ -842,8 +820,8 @@ internal fun previewPlainTextFromTextViewTop(tv: TextView): String {
 }
 
 /**
- * 阅读器 TextView：参考 Legado MdRead，始终 textIsSelectable + 系统 Editor 选词；
- * 仅拦截图表/图片长按，选区期间抑制扩窗与滑动加书签。
+ * 阅读器 TextView：参考 Legado 自管触摸选区、文字高亮和首尾句柄；
+ * 保留 textIsSelectable 仅用于无障碍，触摸路径不与系统 Editor 混用。
  */
 internal class SafeReaderTextView(context: Context) : TextView(context) {
     var allowVerticalScroll: Boolean = true
@@ -922,8 +900,10 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         ReaderTableSpacing.lineSpacingMultiplier = lineSpacingMultiplier
         // 纯色底画在文字下；下划线画在文字上。不用 LineBackgroundSpan，避免 ParagraphStyle 卡死布局。
         drawReaderHighlightDecorations(this, canvas, underText = true)
+        drawReaderSelectionBackground(canvas)
         super.onDraw(canvas)
         drawReaderHighlightDecorations(this, canvas, underText = false)
+        drawReaderSelectionHandles(canvas)
     }
 
     /** 引用计数：多个并发异步渲染各自递增，仅全部完成后才解除抑制。 */
@@ -960,6 +940,18 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     private var savedSelStart = -1
     private var savedSelEnd = -1
     private var readerSelectionActionMode: ActionMode? = null
+    /** true 表示当前选区完全由阅读器管理；系统无障碍选区仍使用 Editor 原生句柄。 */
+    private var customSelectionSessionActive = false
+    private var activeSelectionHandle: ReaderTextSelectionTouch.SelectionHandle? = null
+    private var selectionHandleAnchorOffset = -1
+    private val readerSelectionColor = highlightColor
+    private val selectionBackgroundPath = Path()
+    private val selectionBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+    private val selectionHandlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
     /** DOWN 在选区外时先标记，UP 仍为轻微点击且仍在选区外才真正清除（避免句柄 DOWN 被误杀）。 */
     private var pendingOutsideTapDismiss = false
     /** 正在主动清理选区 UI，避免 ActionMode.onDestroy 递归再 dismiss。 */
@@ -1026,8 +1018,23 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 }
                 return
             }
-            // 系统关掉 ActionMode 时首尾句柄会一起消失；若 session 仍在，同步清掉选区阴影，
-            // 避免出现「句柄没了但高亮还在」。
+            // 手指仍按着且由我们扩选时，系统若暂时拆菜单，等当前手势结束再恢复。
+            // 松手后不能继续保护，否则会留下「高亮还在、句柄已消失」的孤儿选区。
+            if (freezeSelectionExtendUntilUp && pointerDown) {
+                post {
+                    if (!clearingSelectionUi &&
+                        selectionActive &&
+                        freezeSelectionExtendUntilUp &&
+                        pointerDown &&
+                        hasSelectionRange() &&
+                        readerSelectionActionMode == null
+                    ) {
+                        restoreSelectionActionMode()
+                    }
+                }
+                return
+            }
+            // 菜单被系统关闭时同步结束本次自管选区，避免残留不可操作的高亮。
             if (!clearingSelectionUi && selectionActive) {
                 post {
                     if (!clearingSelectionUi &&
@@ -1064,7 +1071,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     }
 
     init {
-        // Legado MdRead：始终可选中，由系统 Editor 处理长按/句柄/ActionMode
+        // 保留 selectable 以支持系统辅助功能；触摸长按选区与句柄由阅读器统一管理，
+        // 避免 Editor 与自定义字符命中同时生成两套选区。
         setTextIsSelectable(true)
         includeFontPadding = false
         movementMethod = linkMovement
@@ -1466,6 +1474,15 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         }
     }
 
+    private fun invalidateSelectionActionModeContentRect() {
+        if (!selectionActive || !hasSelectionRange()) return
+        try {
+            readerSelectionActionMode?.invalidateContentRect()
+        } catch (_: Throwable) {
+            // 部分 ROM 在 FloatingToolbar 正在关闭时会拒绝更新，下一次选区变化再重试。
+        }
+    }
+
     /** 选区在 TextView 坐标系中的包围盒（Floating ActionMode 锚点）。 */
     private fun selectionContentRectInView(selStart: Int, selEnd: Int): android.graphics.Rect? {
         val layout = layout ?: return null
@@ -1475,20 +1492,24 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         val end = selEnd.coerceIn(0, len)
         if (start >= end) return null
         val startLine = layout.getLineForOffset(start)
-        val endLine = layout.getLineForOffset(end)
+        val endLine = layout.getLineForOffset((end - 1).coerceAtLeast(start))
         // 与 Editor 一致：含 padding，并扣除 scroll，相对本 View
-        val top = totalPaddingTop + layout.getLineTop(startLine) - scrollY
-        val bottom = totalPaddingTop + layout.getLineBottom(endLine) - scrollY
+        val top = extendedPaddingTop + layout.getLineTop(startLine) - scrollY
+        val bottom = extendedPaddingTop + layout.getLineBottom(endLine) - scrollY
         val left: Int
         val right: Int
         if (startLine == endLine) {
             val x0 = layout.getPrimaryHorizontal(start)
-            val x1 = layout.getPrimaryHorizontal(end)
-            left = totalPaddingLeft + minOf(x0, x1).toInt() - scrollX
-            right = totalPaddingLeft + maxOf(x0, x1).toInt() - scrollX
+            val x1 = if (layout.getLineForOffset(end) == endLine) {
+                layout.getPrimaryHorizontal(end)
+            } else {
+                layout.getLineRight(endLine)
+            }
+            left = compoundPaddingLeft + minOf(x0, x1).toInt() - scrollX
+            right = compoundPaddingLeft + maxOf(x0, x1).toInt() - scrollX
         } else {
-            left = totalPaddingLeft
-            right = width - totalPaddingRight
+            left = compoundPaddingLeft
+            right = width - compoundPaddingRight
         }
         return android.graphics.Rect(
             left,
@@ -1773,6 +1794,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         if (selectionActive) return
         allowReaderScrollSideEffects = true
         isVerticalScrollDrag = true
+        cancelSelectionLongPress()
     }
 
     internal fun tryMarkVerticalScrollDrag(dx: Float, dy: Float): Boolean {
@@ -1796,6 +1818,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     /** 单元测试：同步 Spannable 选区到阅读器划词状态。 */
     internal fun applySelectionRangeForTest(start: Int, end: Int) {
+        customSelectionSessionActive = true
+        setHighlightColor(android.graphics.Color.TRANSPARENT)
         ensureSelectionInteractionMode()
         (text as? Spannable)?.let { Selection.setSelection(it, start, end) }
         onSelectionChanged(start, end)
@@ -1853,6 +1877,10 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 selectionIncrementedSuppress = false
             }
             allowReaderScrollSideEffects = false
+            customSelectionSessionActive = false
+            setHighlightColor(readerSelectionColor)
+            activeSelectionHandle = null
+            selectionHandleAnchorOffset = -1
             readerSelectionActionMode?.finish()
             readerSelectionActionMode = null
             movementMethod = linkMovement
@@ -1879,7 +1907,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         movementMethod = linkMovement
     }
 
-    /** 仅拦截图片/图表上的长按，其余完全交给 Editor 原生划词流程（含句柄）。 */
+    /** 图片/图表及可横滑代码块不允许进入正文长按选区。 */
     private fun allowLongPressSelectionAt(x: Float, y: Float): Boolean {
         if (isTouchOnDiagramSpan(x, y)) return false
         if (scrollableCodeBlockSpanAt(x, y) != null) return false
@@ -1887,7 +1915,14 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         return canSelectAtOffset(offset)
     }
 
+    /**
+     * 手指仍按着时始终拒绝 Editor 长按，防止它在自定义划词回调附近竞态生成第二套选区。
+     * 无手指的无障碍/程序化长按仍走系统路径。
+     */
+    private fun shouldHonorFingerLongClick(): Boolean = !pointerDown
+
     override fun performLongClick(): Boolean {
+        if (!shouldHonorFingerLongClick()) return false
         if (gestureOnDiagram || !allowLongPressSelectionAt(lastTouchX, lastTouchY)) return false
         return super.performLongClick()
     }
@@ -1895,8 +1930,15 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     override fun performLongClick(x: Float, y: Float): Boolean {
         lastTouchX = x
         lastTouchY = y
+        if (!shouldHonorFingerLongClick()) return false
         if (gestureOnDiagram || !allowLongPressSelectionAt(x, y)) return false
         return super.performLongClick(x, y)
+    }
+
+    override fun onDetachedFromWindow() {
+        cancelSelectionLongPress()
+        clearLockedSelectionGesture()
+        super.onDetachedFromWindow()
     }
 
     private fun hasSelectionRange(): Boolean {
@@ -1927,6 +1969,53 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     private var viewportAnchorChar = -1
     private var viewportAnchorInLineOffset = 0
     private var pointerDown = false
+    private var selectionLongPressScheduled = false
+    /**
+     * 长按划词成功后到松手前：不把 MOVE 交给 Editor（避免 drag accelerator 拉到换行处），
+     * 由我们按锚点 + 就近字符自行扩展。
+     */
+    private var freezeSelectionExtendUntilUp = false
+    /** 长按落点字符 offset，拖动扩选时一端固定在此。 */
+    private var selectionAnchorOffset = -1
+    private var lockedSelectionStart = -1
+    private var lockedSelectionEnd = -1
+    private var suppressingSelectionCallback = false
+    private val startSelectionLongPressRunnable = Runnable {
+        selectionLongPressScheduled = false
+        if (!pointerDown || selectionActive || isVerticalScrollDrag) return@Runnable
+        if (gestureOnDiagram || gestureOnCodeBlock) return@Runnable
+        if (!isTapGesture(lastTouchX, lastTouchY)) return@Runnable
+        startSelectionAtPressedChar()
+    }
+
+    private fun cancelSelectionLongPress() {
+        if (!selectionLongPressScheduled) {
+            removeCallbacks(startSelectionLongPressRunnable)
+            return
+        }
+        selectionLongPressScheduled = false
+        removeCallbacks(startSelectionLongPressRunnable)
+    }
+
+    private fun maybeScheduleSelectionLongPress() {
+        cancelSelectionLongPress()
+        if (!pointerDown || selectionActive) return
+        if (gestureOnDiagram || gestureOnCodeBlock) return
+        if (pendingLinkSpan != null) return
+        selectionLongPressScheduled = true
+        postDelayed(startSelectionLongPressRunnable, SELECTION_LONG_PRESS_TIMEOUT_MS)
+    }
+
+    internal fun isSelectionLongPressScheduledForTest(): Boolean = selectionLongPressScheduled
+
+    /** 立刻执行已预约的划词，避免 Robolectric idleFor 被 Editor 0-delay 任务拖死。 */
+    internal fun fireScheduledSelectionLongPressForTest(): Boolean {
+        if (!selectionLongPressScheduled) return false
+        removeCallbacks(startSelectionLongPressRunnable)
+        startSelectionLongPressRunnable.run()
+        return true
+    }
+
     private var lastInteractiveScrollUptimeMs = 0L
     private val settleViewportAfterScrollRunnable = Runnable {
         if (pointerDown || isVerticalScrollDrag) return@Runnable
@@ -1967,6 +2056,9 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
         super.onScrollChanged(l, t, oldl, oldt)
+        if (l != oldl || t != oldt) {
+            invalidateSelectionActionModeContentRect()
+        }
         val now = android.os.SystemClock.uptimeMillis()
         // 拖动或惯性滚动期间延续抑制窗口，避免松手后 fling 仍与 maintain scrollTo 争抢。
         val inInteractiveWindow = pointerDown || isVerticalScrollDrag ||
@@ -2070,7 +2162,259 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     private fun touchOffsetToCharOffset(x: Float, y: Float): Int? {
         val len = text?.length ?: 0
         if (len == 0 || layout == null) return null
-        return getOffsetForPosition(x, y).coerceIn(0, len)
+        return ReaderTextSelectionTouch.offsetNearestCharOnTextView(this, x, y)
+    }
+
+    private fun applySelectionOffsets(start: Int, end: Int): Boolean {
+        val spannable = ensureReaderSpannable(this) ?: return false
+        if (end <= start) return false
+        ensureSelectionInteractionMode()
+        if (!requestFocus()) {
+            isFocusable = true
+            isFocusableInTouchMode = true
+            requestFocus()
+        }
+        suppressingSelectionCallback = true
+        try {
+            Selection.setSelection(spannable, start, end)
+        } catch (_: Throwable) {
+            val copy = SpannableString(spannable)
+            setText(copy, BufferType.SPANNABLE)
+            Selection.setSelection(copy, start, end)
+        } finally {
+            suppressingSelectionCallback = false
+        }
+        return hasSelectionRange()
+    }
+
+    /** 按按下点就近字符重设选区，纠正 Editor 跨行/换行处的词选。 */
+    private fun applyPressedSelectionRange(x: Float, y: Float): Boolean {
+        val layout = layout ?: return false
+        val spannable = ensureReaderSpannable(this) ?: return false
+        if (spannable.isEmpty()) return false
+        val offset = ReaderTextSelectionTouch.offsetNearestCharOnTextView(this, x, y) ?: return false
+        if (!canSelectAtOffset(offset)) return false
+        val range = ReaderTextSelectionTouch.rangeAround(
+            spannable,
+            layout,
+            offset,
+            selectLatinWord = !renderPlainTextBody,
+        )
+        if (range.isEmpty()) return false
+        val start = range.first
+        val end = range.last + 1
+        if (!applySelectionOffsets(start, end)) return false
+        onSelectionChanged(start, end)
+        return true
+    }
+
+    /**
+     * 手指仍按着、已超出 slop：从长按锚点扩到当前就近字。不走 Editor。
+     */
+    private fun extendSelectionFromAnchorToTouch(x: Float, y: Float): Boolean {
+        if (selectionAnchorOffset < 0) return false
+        val layout = layout ?: return false
+        val spannable = ensureReaderSpannable(this) ?: return false
+        if (spannable.isEmpty()) return false
+        val current = ReaderTextSelectionTouch.offsetNearestCharOnTextView(this, x, y) ?: return false
+        if (!canSelectAtOffset(current)) return false
+        val range = ReaderTextSelectionTouch.rangeBetween(
+            spannable,
+            layout,
+            selectionAnchorOffset,
+            current,
+            selectLatinWord = !renderPlainTextBody,
+        )
+        if (range.isEmpty()) return false
+        val start = range.first
+        val end = range.last + 1
+        lockedSelectionStart = start
+        lockedSelectionEnd = end
+        if (!applySelectionOffsets(start, end)) return false
+        onSelectionChanged(start, end)
+        return true
+    }
+
+    private fun beginSelectionHandleDrag(handle: ReaderTextSelectionTouch.SelectionHandle) {
+        val spannable = text as? Spannable ?: return
+        var start = Selection.getSelectionStart(spannable)
+        var end = Selection.getSelectionEnd(spannable)
+        if (start < 0 || end < 0 || start == end) return
+        if (start > end) {
+            val swap = start
+            start = end
+            end = swap
+        }
+        activeSelectionHandle = handle
+        selectionHandleAnchorOffset = when (handle) {
+            ReaderTextSelectionTouch.SelectionHandle.START -> (end - 1).coerceAtLeast(start)
+            ReaderTextSelectionTouch.SelectionHandle.END -> start
+        }
+        parent?.requestDisallowInterceptTouchEvent(true)
+    }
+
+    private fun updateSelectionFromHandleDrag(x: Float, y: Float): Boolean {
+        val anchor = selectionHandleAnchorOffset
+        if (anchor < 0) return false
+        val layout = layout ?: return false
+        val spannable = ensureReaderSpannable(this) ?: return false
+        val current = ReaderTextSelectionTouch.offsetNearestCharOnTextView(this, x, y) ?: return false
+        if (!canSelectAtOffset(current)) return false
+        val range = ReaderTextSelectionTouch.rangeBetween(
+            spannable,
+            layout,
+            anchor,
+            current,
+            selectLatinWord = !renderPlainTextBody,
+        )
+        if (range.isEmpty()) return false
+        val start = range.first
+        val end = range.last + 1
+        if (!applySelectionOffsets(start, end)) return false
+        onSelectionChanged(start, end)
+        invalidate()
+        return true
+    }
+
+    private fun finishSelectionHandleDrag() {
+        activeSelectionHandle = null
+        selectionHandleAnchorOffset = -1
+        restoreSelectionActionMode()
+        parent?.requestDisallowInterceptTouchEvent(true)
+        invalidate()
+    }
+
+    /**
+     * 自管选区必须自己画高亮。这里只使用 Layout 内容坐标；View.draw 已应用 scroll 平移，
+     * 若再次减 scroll，选区就会悬在屏幕上而不随正文移动。
+     */
+    private fun drawReaderSelectionBackground(canvas: Canvas) {
+        if (!customSelectionSessionActive || !selectionActive || !hasSelectionRange()) return
+        val layout = layout ?: return
+        val spannable = text as? Spannable ?: return
+        var start = Selection.getSelectionStart(spannable)
+        var end = Selection.getSelectionEnd(spannable)
+        if (start < 0 || end < 0 || start == end) return
+        if (start > end) {
+            val swap = start
+            start = end
+            end = swap
+        }
+        selectionBackgroundPath.reset()
+        layout.getSelectionPath(start, end, selectionBackgroundPath)
+        selectionBackgroundPaint.color = readerSelectionColor
+        canvas.save()
+        canvas.clipRect(
+            scrollX + compoundPaddingLeft,
+            scrollY + extendedPaddingTop,
+            scrollX + width - compoundPaddingRight,
+            scrollY + height - extendedPaddingBottom,
+        )
+        canvas.translate(compoundPaddingLeft.toFloat(), extendedPaddingTop.toFloat())
+        canvas.drawPath(selectionBackgroundPath, selectionBackgroundPaint)
+        canvas.restore()
+    }
+
+    private fun drawReaderSelectionHandles(canvas: Canvas) {
+        if (!customSelectionSessionActive || !selectionActive || !hasSelectionRange()) return
+        val spannable = text as? Spannable ?: return
+        var start = Selection.getSelectionStart(spannable)
+        var end = Selection.getSelectionEnd(spannable)
+        if (start < 0 || end < 0 || start == end) return
+        if (start > end) {
+            val swap = start
+            start = end
+            end = swap
+        }
+        val startPoint = ReaderTextSelectionTouch.selectionHandlePositionOnTextView(
+            this,
+            start,
+            isEnd = false,
+        ) ?: return
+        val endPoint = ReaderTextSelectionTouch.selectionHandlePositionOnTextView(
+            this,
+            end,
+            isEnd = true,
+        ) ?: return
+        val density = resources.displayMetrics.density
+        val radius = 7f * density
+        val stem = 5f * density
+        selectionHandlePaint.color = ColorUtils.setAlphaComponent(readerSelectionColor, 255)
+        selectionHandlePaint.strokeWidth = 2.5f * density
+        for (point in listOf(startPoint, endPoint)) {
+            // helper 返回触摸用视口坐标；onDraw canvas 已带 scroll 平移，绘制需还原为内容坐标。
+            val drawX = point.first + scrollX
+            val drawY = point.second + scrollY
+            canvas.drawLine(
+                drawX,
+                drawY,
+                drawX,
+                drawY + stem,
+                selectionHandlePaint,
+            )
+            canvas.drawCircle(
+                drawX,
+                drawY + stem + radius,
+                radius,
+                selectionHandlePaint,
+            )
+        }
+    }
+
+    /**
+     * 自定义长按划词：不走 Editor.performLongClick（会开启 drag accelerator，
+     * TXT 软换行段落松手时把选区拽到行末/下一行行首，甚至拆掉菜单）。
+     */
+    private fun startSelectionAtPressedChar(): Boolean {
+        if (!allowLongPressSelectionAt(touchDownX, touchDownY)) return false
+        val anchor = ReaderTextSelectionTouch.offsetNearestCharOnTextView(this, touchDownX, touchDownY)
+            ?: return false
+        if (!applyPressedSelectionRange(touchDownX, touchDownY)) return false
+        val spannable = text as? Spannable ?: return false
+        val start = Selection.getSelectionStart(spannable)
+        val end = Selection.getSelectionEnd(spannable)
+        if (start < 0 || end <= start) return false
+        customSelectionSessionActive = true
+        setHighlightColor(android.graphics.Color.TRANSPARENT)
+        selectionAnchorOffset = anchor
+        lockedSelectionStart = start
+        lockedSelectionEnd = end
+        freezeSelectionExtendUntilUp = true
+        cancelLongPress()
+        parent?.requestDisallowInterceptTouchEvent(true)
+        restoreSelectionActionMode()
+        invalidate()
+        return true
+    }
+
+    private fun reapplyLockedSelectionRange(): Boolean {
+        if (lockedSelectionStart < 0 || lockedSelectionEnd <= lockedSelectionStart) return false
+        val spannable = ensureReaderSpannable(this) ?: return false
+        val len = spannable.length
+        val start = lockedSelectionStart.coerceIn(0, len)
+        val end = lockedSelectionEnd.coerceIn(start, len)
+        if (end <= start) return false
+        ensureSelectionInteractionMode()
+        suppressingSelectionCallback = true
+        try {
+            Selection.setSelection(spannable, start, end)
+        } finally {
+            suppressingSelectionCallback = false
+        }
+        savedSelStart = start
+        savedSelEnd = end
+        if (!selectionActive) {
+            setSelectionActive(true)
+        }
+        invalidateSelectionActionModeContentRect()
+        return true
+    }
+
+    private fun clearLockedSelectionGesture() {
+        freezeSelectionExtendUntilUp = false
+        selectionAnchorOffset = -1
+        lockedSelectionStart = -1
+        lockedSelectionEnd = -1
     }
 
     private fun canSelectAtOffset(offset: Int): Boolean {
@@ -2134,6 +2478,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 val copyDown = span?.isOnCopyButton(contentX, contentY) == true
                 if (span != null && (span.canScrollHorizontally() || copyDown)) {
                     removeCallbacks(settleViewportAfterScrollRunnable)
+                    cancelSelectionLongPress()
                     pointerDown = true
                     touchDownX = event.x
                     touchDownY = event.y
@@ -2217,6 +2562,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         gestureOnCodeBlock = false
         pointerDown = false
         isVerticalScrollDrag = false
+        clearLockedSelectionGesture()
+        cancelSelectionLongPress()
         parent?.requestDisallowInterceptTouchEvent(false)
         return true
     }
@@ -2225,6 +2572,21 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 removeCallbacks(settleViewportAfterScrollRunnable)
+                cancelSelectionLongPress()
+                clearLockedSelectionGesture()
+                // 精确命中确认在正文选区和首尾句柄之外时立即结束旧会话。
+                // 这样本次手势可以继续滚动、打开链接或长按新位置，且不会被 Editor
+                // 先折叠 range、随后又由 restoreSavedSelectionRange 拉回孤儿高亮。
+                val touchedSelectionHandle = if (selectionActive && customSelectionSessionActive) {
+                    ReaderTextSelectionTouch.selectionHandleAtOnTextView(this, event.x, event.y)
+                } else {
+                    null
+                }
+                if (touchedSelectionHandle != null) {
+                    beginSelectionHandleDrag(touchedSelectionHandle)
+                } else if (selectionActive && !isTouchNearSelection(event.x, event.y)) {
+                    dismissSelection()
+                }
                 pointerDown = true
                 touchDownX = event.x
                 touchDownY = event.y
@@ -2251,6 +2613,11 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                     parent?.requestDisallowInterceptTouchEvent(true)
                     return true
                 }
+                if (activeSelectionHandle != null) {
+                    pendingOutsideTapDismiss = false
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    return true
+                }
                 if (selectionActive) {
                     pendingOutsideTapDismiss = !isTouchNearSelection(event.x, event.y)
                 } else {
@@ -2260,6 +2627,24 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             MotionEvent.ACTION_MOVE -> {
                 lastTouchX = event.x
                 lastTouchY = event.y
+                if (activeSelectionHandle != null) {
+                    updateSelectionFromHandleDrag(event.x, event.y)
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    return true
+                }
+                if (freezeSelectionExtendUntilUp) {
+                    if (!isTapGesture(event.x, event.y)) {
+                        extendSelectionFromAnchorToTouch(event.x, event.y)
+                    }
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    return true
+                }
+                if (!selectionActive && !isTapGesture(event.x, event.y)) {
+                    cancelSelectionLongPress()
+                }
+                if (!selectionActive && selectionLongPressScheduled && isTapGesture(event.x, event.y)) {
+                    return true
+                }
                 if (handleCodeBlockTouch(event)) {
                     lastCodeTouchY = event.y
                     if (!codeGestureCanceledTextView) {
@@ -2298,7 +2683,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 lastTouchX = event.x
                 lastTouchY = event.y
                 pointerDown = false
-                lastInteractiveScrollUptimeMs = android.os.SystemClock.uptimeMillis()
+                cancelSelectionLongPress()
+                lastInteractiveScrollUptimeMs = SystemClock.uptimeMillis()
                 // 松手后等惯性结束，再补一次视口锚点补偿（拖动中跳过的异步重排）。
                 removeCallbacks(settleViewportAfterScrollRunnable)
                 postDelayed(settleViewportAfterScrollRunnable, 180L)
@@ -2325,14 +2711,46 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                     revertToLinkModeIfIdle()
                     return true
                 }
+                if (activeSelectionHandle != null) {
+                    if (event.actionMasked == MotionEvent.ACTION_UP) {
+                        updateSelectionFromHandleDrag(event.x, event.y)
+                    }
+                    finishSelectionHandleDrag()
+                    isVerticalScrollDrag = false
+                    gestureOnDiagram = false
+                    gestureOnCodeBlock = false
+                    return true
+                }
             }
         }
-        val handled = try {
-            super.onTouchEvent(event)
-        } catch (_: NullPointerException) {
-            false
-        } catch (_: IndexOutOfBoundsException) {
-            false
+        // 自定义长按后的 UP 也不交 Editor，避免它再生成第二套词选区/句柄；
+        // 普通点击和系统辅助功能路径仍使用 TextView 默认事件处理。
+        val handled = if (
+            freezeSelectionExtendUntilUp &&
+            (event.actionMasked == MotionEvent.ACTION_UP ||
+                event.actionMasked == MotionEvent.ACTION_CANCEL)
+        ) {
+            true
+        } else {
+            try {
+                super.onTouchEvent(event)
+            } catch (_: NullPointerException) {
+                false
+            } catch (_: IndexOutOfBoundsException) {
+                false
+            }
+        }
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            maybeScheduleSelectionLongPress()
+        }
+        if (event.actionMasked == MotionEvent.ACTION_UP ||
+            event.actionMasked == MotionEvent.ACTION_CANCEL
+        ) {
+            if (freezeSelectionExtendUntilUp) {
+                reapplyLockedSelectionRange()
+                restoreSelectionActionMode()
+            }
+            clearLockedSelectionGesture()
         }
         if (event.actionMasked == MotionEvent.ACTION_UP) {
             // dismiss 会清掉 pending 标记，先记下本次是否区外轻点。
@@ -2365,6 +2783,36 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     }
 
     override fun onSelectionChanged(selStart: Int, selEnd: Int) {
+        if (suppressingSelectionCallback) {
+            super.onSelectionChanged(selStart, selEnd)
+            return
+        }
+        if (freezeSelectionExtendUntilUp &&
+            lockedSelectionStart >= 0 &&
+            lockedSelectionEnd > lockedSelectionStart &&
+            selStart >= 0 &&
+            selEnd >= 0 &&
+            selStart != selEnd
+        ) {
+            val lo = minOf(selStart, selEnd)
+            val hi = maxOf(selStart, selEnd)
+            if (lo != lockedSelectionStart || hi != lockedSelectionEnd) {
+                val spannable = text as? Spannable
+                if (spannable != null) {
+                    suppressingSelectionCallback = true
+                    try {
+                        Selection.setSelection(
+                            spannable,
+                            lockedSelectionStart,
+                            lockedSelectionEnd,
+                        )
+                    } finally {
+                        suppressingSelectionCallback = false
+                    }
+                }
+                return
+            }
+        }
         super.onSelectionChanged(selStart, selEnd)
         if (selStart >= 0 && selEnd >= 0 && selStart != selEnd) {
             val newStart = minOf(selStart, selEnd)
@@ -2385,6 +2833,31 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 parent?.requestDisallowInterceptTouchEvent(true)
                 performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
             }
+            invalidateSelectionActionModeContentRect()
+        } else if (selStart >= 0 &&
+            selStart == selEnd &&
+            selectionActive &&
+            !freezeSelectionExtendUntilUp &&
+            !clearingSelectionUi &&
+            !recreatingSelectionActionMode &&
+            !highlightStylePickerShowing
+        ) {
+            // Editor 可能在 DOWN/句柄交叉时短暂折叠 range；下一帧仍折叠才结束会话。
+            post {
+                val spannable = text as? Spannable
+                val currentStart = spannable?.let { Selection.getSelectionStart(it) } ?: -1
+                val currentEnd = spannable?.let { Selection.getSelectionEnd(it) } ?: -1
+                if (selectionActive &&
+                    currentStart >= 0 &&
+                    currentStart == currentEnd &&
+                    !freezeSelectionExtendUntilUp &&
+                    !clearingSelectionUi &&
+                    !recreatingSelectionActionMode &&
+                    !highlightStylePickerShowing
+                ) {
+                    dismissSelection()
+                }
+            }
         }
     }
 
@@ -2393,6 +2866,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         internal const val MENU_ID_HIGHLIGHT = 0x4D520002
         /** 与 [MENU_ID_HIGHLIGHT] 分离，避免 MIUI 浮动条按 id 缓存「划线」文案。 */
         internal const val MENU_ID_CANCEL_HIGHLIGHT = 0x4D520003
+        /** 按住且几乎未移动达到此时长才进入划词，避免翻页滑动误选。 */
+        internal const val SELECTION_LONG_PRESS_TIMEOUT_MS = 600L
     }
 }
 

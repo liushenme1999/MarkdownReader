@@ -92,6 +92,7 @@ import androidx.navigation.NavController
 import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.importing.ImportedBookFormat
+import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.importing.PdfReaderContent
 import space.liushenme.markdownreader.markdown.MarkdownLinkDispatcher
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
@@ -147,7 +148,7 @@ fun ReaderScreen(
     val showMarkFinishedPrompt by viewModel.showMarkFinishedPrompt.collectAsState()
     val configuration = LocalConfiguration.current
 
-    val importFormat = book?.let { ImportedBookFormat.fromStored(it.importFormat) }
+    val importFormat = resolveReaderImportFormat(book)
     val isPdfBook = importFormat?.isPdf == true || PdfReaderContent.looksLikePdfBody(content)
     val renderPlainText = importFormat?.usesReaderPlainBody == true
     val readerContent = remember(content, isPdfBook) {
@@ -1935,6 +1936,29 @@ fun ReaderScreen(
         )
     }
 
+}
+
+/**
+ * 旧数据库迁移曾把缺失的 importFormat 统一补成 markdown。对来源路径或书名明确为
+ * TXT 的旧记录，以真实扩展名为准，否则它们会被 Markwon 渲染，并误用单词/整行选区。
+ */
+internal fun resolveReaderImportFormat(book: BookEntity?): ImportedBookFormat? {
+    book ?: return null
+    val stored = ImportedBookFormat.fromStored(book.importFormat)
+    if (stored != ImportedBookFormat.MARKDOWN) return stored
+
+    val hasExplicitTxtExtension = sequenceOf(
+        book.gitRelativePath,
+        book.filePath,
+        book.title,
+    ).filterNotNull().any { name ->
+        name.substringBefore('?')
+            .substringBefore('#')
+            .substringAfterLast('.', "")
+            .lowercase()
+            .trim() in setOf("txt", "text", "log")
+    }
+    return if (hasExplicitTxtExtension) ImportedBookFormat.TXT else stored
 }
 
 @Composable
