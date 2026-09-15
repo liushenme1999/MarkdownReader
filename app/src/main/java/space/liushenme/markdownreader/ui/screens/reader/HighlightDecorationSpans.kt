@@ -131,11 +131,7 @@ private fun drawHighlightBackgroundRange(
         // 跳过行尾仅换行
         if (drawEnd == lineEnd && drawStart == drawEnd - 1 && textIsNewline(layout, drawStart)) continue
 
-        val xStart = layout.getPrimaryHorizontal(drawStart)
-        val xEnd = layout.getPrimaryHorizontal(drawEnd)
-        val left = min(xStart, xEnd)
-        val right = max(xStart, xEnd)
-        if (right <= left + 1f) continue
+        val (left, right) = horizontalRangeOnLine(layout, line, drawStart, drawEnd) ?: continue
 
         val top = layout.getLineTop(line)
         val baseline = layout.getLineBaseline(line)
@@ -170,11 +166,7 @@ private fun drawHighlightUnderlineRange(
         if (drawStart >= drawEnd) continue
         if (drawEnd == lineEnd && drawStart == drawEnd - 1 && textIsNewline(layout, drawStart)) continue
 
-        val xStart = layout.getPrimaryHorizontal(drawStart)
-        val xEnd = layout.getPrimaryHorizontal(drawEnd)
-        val left = min(xStart, xEnd)
-        val right = max(xStart, xEnd)
-        if (right <= left + 1f) continue
+        val (left, right) = horizontalRangeOnLine(layout, line, drawStart, drawEnd) ?: continue
 
         val baseline = layout.getLineBaseline(line)
         // 直线：baseline 下方留空隙；波浪：中线再下移 waveAmp，使波峰仍在字下。
@@ -197,6 +189,29 @@ private fun drawHighlightUnderlineRange(
             canvas.drawLine(left, y, right, y, highlightStrokePaint)
         }
     }
+}
+
+/**
+ * 行内 `[drawStart, drawEnd)` 的水平范围，空区间返回 null。
+ *
+ * 终点落在行尾时不能用 [Layout.getPrimaryHorizontal]：软换行处它给的是下一行行首的 x
+ * （≈ 行左边界），跨行划线会被画成「行首 → 选区起点」，中间整行还会因宽度为 0 被跳过。
+ */
+internal fun horizontalRangeOnLine(
+    layout: Layout,
+    line: Int,
+    drawStart: Int,
+    drawEnd: Int,
+): Pair<Float, Float>? {
+    val xStart = layout.getPrimaryHorizontal(drawStart)
+    val xEnd = if (drawEnd >= layout.getLineEnd(line)) {
+        layout.getLineRight(line)
+    } else {
+        layout.getPrimaryHorizontal(drawEnd)
+    }
+    val left = min(xStart, xEnd)
+    val right = max(xStart, xEnd)
+    return if (right <= left + 1f) null else left to right
 }
 
 private fun textIsNewline(layout: Layout, offset: Int): Boolean {

@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [1.0.10] - 2026-09-16
+
+### 修复
+
+- 跨行划线画错位置：首行画成「行首 → 选区起点」这段没选中的文字，中间整行漏画，只有末行是对的。行尾取 x 用了 `Layout.getPrimaryHorizontal`，而软换行处它返回的是下一行行首，现在改取行右边界。已存在的划线无需重新划，重进即恢复正常
+
 ## [1.0.9] - 2026-09-15
 
 ### 修复
@@ -195,7 +201,8 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.9...HEAD
+[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.10...HEAD
+[1.0.10]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.9...v1.0.10
 [1.0.9]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.6...v1.0.7
