@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-09-15
+
+### 修复
+
+- Markdown 书籍不再渲染、正文显示成源码：1.0.8 按文件扩展名回推格式，而书籍首次打开后 `filePath` 会被改写成内部缓存 `body.txt`，于是每本 Markdown 书都被当成 TXT。格式一律以导入时写入的 `importFormat` 为准
+
 ## [1.0.8] - 2026-09-15
 
 ### 优化
@@ -17,7 +23,6 @@
 - TXT 划词只能选中整行：长正文曾用 PrecomputedText 承载，Layout 会把行内每个字的横坐标都算到行右边界，于是长按只命中行首、选区画成整行
 - 划词首尾句柄压在下一行文字上，软换行处的末端句柄还会整体掉到下一行
 - 按在一个字的右半边时，会选中相邻的下一个字
-- 早期数据库迁移把缺失格式的书统一补成 Markdown，导致 .txt 旧书按 Markdown 渲染、走错划词逻辑；现在以真实扩展名为准
 
 ## [1.0.7] - 2026-09-13
 
@@ -190,7 +195,8 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.8...HEAD
+[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.9...HEAD
+[1.0.9]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.5...v1.0.6
