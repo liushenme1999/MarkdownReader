@@ -276,7 +276,14 @@ class ReaderViewModel @Inject constructor(
             )
 
             if (text.isEmpty()) {
-                _loadError.value = appContext.getString(R.string.reader_error_cannot_read_body)
+                val isPdf = ImportedBookFormat.fromStored(latestBook.importFormat).isPdf
+                _loadError.value = appContext.getString(
+                    if (isPdf) {
+                        R.string.reader_error_pdf_bundle_incomplete
+                    } else {
+                        R.string.reader_error_cannot_read_body
+                    },
+                )
             }
 
             beginSessionSegmentIfNeeded()
@@ -862,8 +869,12 @@ class ReaderViewModel @Inject constructor(
                 BookContentLoader.removedFormatPlaceholder(context, book.importFormat)
             )
         }
-        val path = book.filePath
         val format = ImportedBookFormat.fromStored(book.importFormat)
+        if (format.isPdf) {
+            // 本地 PDF 打开只读解析包，不再从 content:// / URL 全量重提取。
+            return ExtractedBookText.plainBody("")
+        }
+        val path = book.filePath
         return try {
             if (path.startsWith("http://", ignoreCase = true) ||
                 path.startsWith("https://", ignoreCase = true)

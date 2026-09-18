@@ -147,6 +147,7 @@ fun BookshelfScreen(
     val pullingProjectIds by viewModel.pullingProjectIds.collectAsState()
     val gitImporting by viewModel.gitImporting.collectAsState()
     val gitImportProgress by viewModel.gitImportProgress.collectAsState()
+    val localImportJobs by viewModel.localImportJobs.collectAsState()
     val context = LocalContext.current
     var selectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<Long>()) }
@@ -499,7 +500,7 @@ fun BookshelfScreen(
                     .fillMaxSize()
                     .padding(contentPadding),
             ) {
-                if (books.isEmpty() && gitProjects.isEmpty()) {
+                if (books.isEmpty() && gitProjects.isEmpty() && localImportJobs.isEmpty()) {
                     // 空态也要可滚动，否则 PullToRefreshBox 收不到下拉手势
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
                         item(key = "empty_bookshelf") {
@@ -570,9 +571,20 @@ fun BookshelfScreen(
                                 ),
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
-                                if (shelfItems.isEmpty() && !selectionMode) {
+                                if (shelfItems.isEmpty() && localImportJobs.isEmpty() && !selectionMode) {
                                     item(key = "group_empty_hint") {
                                         BookshelfGroupEmptyHint()
+                                    }
+                                }
+                                if (!selectionMode) {
+                                    items(
+                                        items = localImportJobs,
+                                        key = { "import_job_${it.jobId}" },
+                                    ) { job ->
+                                        ImportingListCard(
+                                            job = job,
+                                            onClick = { viewModel.notifyImportInProgress() },
+                                        )
                                     }
                                 }
                                 items(
@@ -636,12 +648,23 @@ fun BookshelfScreen(
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 verticalArrangement = Arrangement.spacedBy(16.dp),
                             ) {
-                                if (shelfItems.isEmpty() && !selectionMode) {
+                                if (shelfItems.isEmpty() && localImportJobs.isEmpty() && !selectionMode) {
                                     item(
                                         key = "group_empty_hint",
                                         span = { GridItemSpan(maxLineSpan) },
                                     ) {
                                         BookshelfGroupEmptyHint()
+                                    }
+                                }
+                                if (!selectionMode) {
+                                    items(
+                                        items = localImportJobs,
+                                        key = { "import_job_${it.jobId}" },
+                                    ) { job ->
+                                        ImportingBookCard(
+                                            job = job,
+                                            onClick = { viewModel.notifyImportInProgress() },
+                                        )
                                     }
                                 }
                                 items(

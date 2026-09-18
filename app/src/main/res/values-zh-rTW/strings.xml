@@ -95,6 +95,9 @@
     <string name="bookshelf_empty_subtitle">支援 Markdown、TXT、PDF，以及公開 GitHub 專案</string>
     <string name="bookshelf_import">匯入</string>
     <string name="bookshelf_import_cd">匯入書籍</string>
+    <string name="bookshelf_importing">正在匯入</string>
+    <string name="bookshelf_importing_progress">正在匯入 %1$d/%2$d（%3$d%%）</string>
+    <string name="bookshelf_importing_wait">匯入完成後可閱讀</string>
     <string name="bookshelf_unread">未讀</string>
     <string name="bookshelf_finished">已讀完</string>
     <string name="bookshelf_pinned_cd">已置頂</string>
@@ -256,6 +259,8 @@
     <string name="reader_mark_finished_later">暫不標記</string>
     <string name="reader_error_book_not_found">找不到該書，可能已被刪除。</string>
     <string name="reader_error_cannot_read_body">無法讀取正文（檔案權限失效或路徑無效）。請返回書架刪除該書後，使用「匯入」重新選擇檔案。</string>
+    <string name="reader_error_pdf_bundle_incomplete">PDF 解析包不完整。請返回書架刪除後重新匯入。</string>
+    <string name="reader_opening_pdf">正在開啟 PDF…</string>
     <string name="bookmark_note_optional">書籤備註（可選）</string>
 
     <string name="notes_title">筆記管理</string>

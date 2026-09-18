@@ -88,4 +88,15 @@ class BookContentHasherTest {
         assertTrue(BookContentHasher.matchesStoredHash(pdfHash, dir))
         assertFalse(BookContentHasher.matchesStoredHash("deadbeef", dir))
     }
+
+    @Test
+    fun hashPdfFromAssetsDir_matchesInMemoryHash() {
+        val dir = tmp.newFolder("pdf-assets")
+        val body = PdfReaderContent.buildPageImgTag("book-asset://pdf_page_001.jpg", 720, 1280)
+        val bytes = byteArrayOf(1, 2, 3, 4)
+        File(dir, "pdf_page_001.jpg").writeBytes(bytes)
+        val fromDir = BookContentHasher.hashPdfFromAssetsDir(body, dir)!!
+        val fromMem = BookContentHasher.hashPdfContent(body, mapOf("pdf_page_001.jpg" to bytes))
+        assertEquals(fromMem, fromDir)
+    }
 }

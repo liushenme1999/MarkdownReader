@@ -6,6 +6,20 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-19
+
+### 新增
+
+- 阅读设置「隐藏系统栏」：Markdown / TXT / PDF 均可沉浸阅读，阅读页与「我的 → 阅读设置」都能开关
+- PDF 连续阅读支持页内双指缩放与平移，平移不会滑出纸张边缘
+- 大 PDF 导入时书架显示占位卡与进度百分比，完成前不可进入阅读
+
+### 优化
+
+- PDF 导入改为 JPEG、按屏幕宽度栅格化并边渲边写盘，解析包完整后再加入书架
+- 打开已导入的 PDF 不再从原文件全量重提取；页尺寸写入正文，有进度时直接跳到对应页
+- 隐藏系统栏时章节标题左右留白，避免屏幕圆角遮挡
+
 ## [1.0.10] - 2026-09-16
 
 ### 修复
@@ -201,7 +215,8 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.10...HEAD
+[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.10...v1.1.0
 [1.0.10]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.9...v1.0.10
 [1.0.9]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.7...v1.0.8

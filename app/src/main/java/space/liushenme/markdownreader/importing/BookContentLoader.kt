@@ -17,21 +17,43 @@ private const val MAX_URL_BYTES = 15 * 1024 * 1024
 /**
  * 从 content://、file:// 或已下载字节加载正文；支持 Markdown、TXT、PDF。
  */
+data class ImportLoadResult(
+    val extracted: ExtractedBookText,
+    val stagedAssetsDir: File? = null,
+)
+
 object BookContentLoader {
 
     fun loadFromUri(context: Context, uri: Uri, format: ImportedBookFormat): String =
         loadExtractedFromUri(context, uri, format).body
 
+    /**
+     * 阅读器回退用：PDF 不再从 content:// 全量重提取（大文件会卡死打开）。
+     * 导入请用 [loadForImport]。
+     */
     fun loadExtractedFromUri(context: Context, uri: Uri, format: ImportedBookFormat): ExtractedBookText {
         return when (format) {
             ImportedBookFormat.MARKDOWN, ImportedBookFormat.TXT ->
                 ExtractedBookText.plainBody(readPlainTextFromUri(context, uri))
+            ImportedBookFormat.PDF ->
+                ExtractedBookText.plainBody(placeholder(context, format))
+        }
+    }
 
+    fun loadForImport(
+        context: Context,
+        uri: Uri,
+        format: ImportedBookFormat,
+        onPdfProgress: (done: Int, total: Int, coverJpeg: ByteArray?) -> Unit = { _, _, _ -> },
+    ): ImportLoadResult {
+        return when (format) {
+            ImportedBookFormat.MARKDOWN, ImportedBookFormat.TXT ->
+                ImportLoadResult(loadExtractedFromUri(context, uri, format))
             ImportedBookFormat.PDF -> {
-                val file = copyUriToCacheFile(context, uri, ".pdf") ?: return ExtractedBookText.plainBody("")
+                val file = copyUriToCacheFile(context, uri, ".pdf")
+                    ?: return ImportLoadResult(ExtractedBookText.plainBody(placeholder(context, format)))
                 try {
-                    PdfBookExtractor.extract(context, file)
-                        ?: ExtractedBookText.plainBody(placeholder(context, format))
+                    extractPdfToStaging(context, file, onPdfProgress)
                 } finally {
                     file.delete()
                 }
@@ -55,18 +77,52 @@ object BookContentLoader {
         return when (format) {
             ImportedBookFormat.MARKDOWN, ImportedBookFormat.TXT ->
                 ExtractedBookText.plainBody(decodeTextBytes(bytes, httpCharsetName))
+            ImportedBookFormat.PDF ->
+                ExtractedBookText.plainBody(placeholder(context, format))
+        }
+    }
 
+    fun loadUrlBytesForImport(
+        context: Context,
+        bytes: ByteArray,
+        format: ImportedBookFormat,
+        httpCharsetName: String?,
+        onPdfProgress: (done: Int, total: Int, coverJpeg: ByteArray?) -> Unit = { _, _, _ -> },
+    ): ImportLoadResult {
+        return when (format) {
+            ImportedBookFormat.MARKDOWN, ImportedBookFormat.TXT ->
+                ImportLoadResult(loadExtractedFromUrlBytes(context, bytes, format, httpCharsetName))
             ImportedBookFormat.PDF -> {
-                val tmp = File.createTempFile("pdf_", ".pdf")
+                val tmp = File.createTempFile("pdf_", ".pdf", context.cacheDir)
                 try {
                     tmp.writeBytes(bytes)
-                    PdfBookExtractor.extract(context, tmp)
-                        ?: ExtractedBookText.plainBody(placeholder(context, format))
+                    extractPdfToStaging(context, tmp, onPdfProgress)
                 } finally {
                     tmp.delete()
                 }
             }
         }
+    }
+
+    private fun extractPdfToStaging(
+        context: Context,
+        pdfFile: File,
+        onPdfProgress: (done: Int, total: Int, coverJpeg: ByteArray?) -> Unit,
+    ): ImportLoadResult {
+        val stagingRoot = File(context.cacheDir, "pdf_import_${System.nanoTime()}")
+        val assetsDir = File(stagingRoot, ParsedBookStorage.ASSETS_DIR)
+        assetsDir.mkdirs()
+        val extracted = PdfBookExtractor.extractToAssetsDir(
+            context = context,
+            file = pdfFile,
+            assetsDir = assetsDir,
+            onProgress = onPdfProgress,
+        )
+        if (extracted == null) {
+            stagingRoot.deleteRecursively()
+            return ImportLoadResult(ExtractedBookText.plainBody(placeholder(context, ImportedBookFormat.PDF)))
+        }
+        return ImportLoadResult(extracted, assetsDir)
     }
 
     /** 书架中仍保存旧格式书籍、且本地无解析包时的提示正文。 */

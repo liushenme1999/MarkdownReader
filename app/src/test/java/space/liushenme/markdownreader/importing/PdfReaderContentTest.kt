@@ -31,6 +31,22 @@ class PdfReaderContentTest {
         val tag = PdfReaderContent.buildPageImgTag("book-asset://pdf_page_001.png", 1080, 1920)
         assertTrue(tag.contains("width=\"100%\""))
         assertTrue(!tag.contains("width=\"1080\""))
+        assertTrue(tag.contains("data-w=\"1080\""))
+        assertTrue(tag.contains("data-h=\"1920\""))
+    }
+
+    @Test
+    fun looksLikePdfBody_acceptsJpegAndKeepsDims() {
+        val body = PdfReaderContent.buildPageImgTag("book-asset://pdf_page_001.jpg", 720, 1280)
+        assertTrue(PdfReaderContent.looksLikePdfBody(body))
+        assertEquals(listOf("pdf_page_001.jpg"), PdfReaderContent.referencedPageAssetNames(body))
+        val entries = PdfReaderContent.pageImageEntries(body)
+        assertEquals(1, entries.size)
+        assertEquals(720, entries[0].width)
+        assertEquals(1280, entries[0].height)
+        val sanitized = PdfReaderContent.sanitizeStoredBody(body)
+        assertTrue(sanitized.contains("data-w=\"720\""))
+        assertTrue(sanitized.contains("data-h=\"1280\""))
     }
 
     @Test

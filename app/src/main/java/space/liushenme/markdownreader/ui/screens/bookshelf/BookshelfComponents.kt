@@ -231,6 +231,203 @@ internal fun ImportBookCard(
     }
 }
 
+private fun importProgressPercent(current: Int, total: Int): Int =
+    if (total > 0) ((current * 100L) / total).toInt().coerceIn(0, 100) else 0
+
+@Composable
+internal fun ImportingBookCard(
+    job: LocalImportJob,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val percent = importProgressPercent(job.current, job.total)
+    var coverImage by remember(job.jobId, job.coverJpeg?.size) {
+        mutableStateOf<ImageBitmap?>(null)
+    }
+    LaunchedEffect(job.jobId, job.coverJpeg?.size) {
+        val bytes = job.coverJpeg ?: return@LaunchedEffect
+        coverImage = withContext(Dispatchers.IO) {
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+        }
+    }
+    val progressLabel = if (job.total > 0) {
+        stringResource(R.string.bookshelf_importing_progress, job.current, job.total, percent)
+    } else {
+        stringResource(R.string.bookshelf_importing)
+    }
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(0.75f)
+                .shadow(
+                    elevation = 4.dp,
+                    shape = RoundedCornerShape(10.dp),
+                    ambientColor = Color.Black.copy(alpha = 0.12f),
+                    spotColor = Color.Black.copy(alpha = 0.16f),
+                )
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        ) {
+            val bmp = coverImage
+            if (bmp != null) {
+                Image(
+                    bitmap = bmp,
+                    contentDescription = job.title,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.45f)),
+            )
+            Column(
+                modifier = Modifier.align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                if (job.total > 0) {
+                    CircularProgressIndicator(
+                        progress = { percent / 100f },
+                        modifier = Modifier.size(28.dp),
+                        color = Color.White,
+                        trackColor = Color.White.copy(alpha = 0.25f),
+                        strokeWidth = 3.dp,
+                    )
+                } else {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(28.dp),
+                        color = Color.White,
+                        trackColor = Color.White.copy(alpha = 0.25f),
+                        strokeWidth = 3.dp,
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = if (job.total > 0) "$percent%" else stringResource(R.string.bookshelf_importing),
+                    style = MaterialTheme.typography.labelSmall.copy(color = Color.White),
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = job.title,
+            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 2.dp),
+        )
+        Text(
+            text = progressLabel,
+            style = MaterialTheme.typography.labelSmall.copy(
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            ),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 2.dp),
+        )
+    }
+}
+
+@Composable
+internal fun ImportingListCard(
+    job: LocalImportJob,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val percent = importProgressPercent(job.current, job.total)
+    var coverImage by remember(job.jobId, job.coverJpeg?.size) {
+        mutableStateOf<ImageBitmap?>(null)
+    }
+    LaunchedEffect(job.jobId, job.coverJpeg?.size) {
+        val bytes = job.coverJpeg ?: return@LaunchedEffect
+        coverImage = withContext(Dispatchers.IO) {
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+        }
+    }
+    val progressLabel = if (job.total > 0) {
+        stringResource(R.string.bookshelf_importing_progress, job.current, job.total, percent)
+    } else {
+        stringResource(R.string.bookshelf_importing)
+    }
+    val shape = RoundedCornerShape(12.dp)
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .clickable(onClick = onClick),
+        shape = shape,
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp,
+        shadowElevation = 1.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(52.dp)
+                    .aspectRatio(0.75f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                val bmp = coverImage
+                if (bmp != null) {
+                    Image(
+                        bitmap = bmp,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.4f)),
+                    )
+                }
+                if (job.total > 0) {
+                    CircularProgressIndicator(
+                        progress = { percent / 100f },
+                        modifier = Modifier.size(22.dp),
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(22.dp),
+                        strokeWidth = 2.dp,
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = job.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = progressLabel,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 internal fun GitUpdateDot(
     visible: Boolean,

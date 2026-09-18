@@ -3,14 +3,14 @@ package space.liushenme.markdownreader.importing
 import android.content.Context
 import kotlin.math.sqrt
 
-/** 导入时 PDF 页图栅格尺寸：按屏幕加宽，并限制单页像素。 */
+/** 导入时 PDF 页图栅格尺寸：按屏幕宽度，并限制单页像素。 */
 internal object PdfPageRenderSize {
-    const val MIN_WIDTH = 1080
-    const val MAX_WIDTH = 2160
-    const val MAX_PIXELS = 2160 * 3840
+    const val MIN_WIDTH = 720
+    const val MAX_WIDTH = 1440
+    const val MAX_PIXELS = 1440 * 2560
 
     fun targetWidth(screenWidthPx: Int): Int =
-        (screenWidthPx.coerceAtLeast(1) * 2).coerceIn(MIN_WIDTH, MAX_WIDTH)
+        screenWidthPx.coerceIn(MIN_WIDTH, MAX_WIDTH)
 
     fun targetWidth(context: Context): Int =
         targetWidth(context.resources.displayMetrics.widthPixels)

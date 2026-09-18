@@ -13,6 +13,8 @@ internal data class PdfPageRef(
     val path: String,
     val sourceOffset: Int,
     val assetName: String,
+    val intrinsicWidth: Int = 0,
+    val intrinsicHeight: Int = 0,
 )
 
 /** 视口顶对应的页内位置。以后划词可在此扩展页内归一化坐标。 */
@@ -34,18 +36,20 @@ internal data class PdfPageHit(
 
 internal object PdfPageCatalog {
 
-    private val PAGE_FILE_NAME = Regex("""pdf_page_(\d+)\.png""", RegexOption.IGNORE_CASE)
+    private val PAGE_FILE_NAME = Regex("""pdf_page_(\d+)\.(?:png|jpe?g)""", RegexOption.IGNORE_CASE)
 
     fun parse(body: String, bundleDir: File): List<PdfPageRef> {
         val assetsDir = File(bundleDir, ParsedBookStorage.ASSETS_DIR)
-        val fromBody = PdfReaderContent.pageImageSources(body).mapIndexedNotNull { index, (offset, src) ->
-            val file = resolvePageFile(src, assetsDir) ?: return@mapIndexedNotNull null
+        val fromBody = PdfReaderContent.pageImageEntries(body).mapIndexedNotNull { index, entry ->
+            val file = resolvePageFile(entry.src, assetsDir) ?: return@mapIndexedNotNull null
             if (!file.isFile) return@mapIndexedNotNull null
             PdfPageRef(
                 index = index,
                 path = file.absolutePath,
-                sourceOffset = offset,
+                sourceOffset = entry.sourceOffset,
                 assetName = file.name,
+                intrinsicWidth = entry.width,
+                intrinsicHeight = entry.height,
             )
         }
         if (fromBody.isNotEmpty()) return fromBody

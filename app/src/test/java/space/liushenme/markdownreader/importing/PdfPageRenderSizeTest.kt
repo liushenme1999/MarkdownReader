@@ -7,9 +7,10 @@ import org.junit.Test
 class PdfPageRenderSizeTest {
 
     @Test
-    fun targetWidth_clampsTwoTimesScreenWidth() {
+    fun targetWidth_clampsScreenWidth() {
         assertEquals(PdfPageRenderSize.MIN_WIDTH, PdfPageRenderSize.targetWidth(320))
-        assertEquals(1440, PdfPageRenderSize.targetWidth(720))
+        assertEquals(720, PdfPageRenderSize.targetWidth(720))
+        assertEquals(1080, PdfPageRenderSize.targetWidth(1080))
         assertEquals(PdfPageRenderSize.MAX_WIDTH, PdfPageRenderSize.targetWidth(2000))
     }
 
@@ -18,10 +19,10 @@ class PdfPageRenderSizeTest {
         val fitted = PdfPageRenderSize.fitPage(
             srcWidth = 595,
             srcHeight = 842,
-            targetWidth = 2160,
+            targetWidth = 1080,
         )
-        assertEquals(2160, fitted.width)
-        val expectedH = (842.0 * 2160 / 595).toInt()
+        assertEquals(1080, fitted.width)
+        val expectedH = (842.0 * 1080 / 595).toInt()
         assertEquals(expectedH, fitted.height)
         assertTrue(fitted.width.toLong() * fitted.height <= PdfPageRenderSize.MAX_PIXELS)
     }

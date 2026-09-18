@@ -28,15 +28,24 @@ class ParsedBookStorageTest {
     }
 
     @Test
-    fun isCompleteBundle_pdfRequiresPageImages() {
-        val dir = tmp.newFolder("pdf")
+    fun isCompleteBundle_pdfJpegRequiresPageImages() {
+        val dir = tmp.newFolder("pdf-jpg")
         File(dir, ParsedBookStorage.BODY_FILE).writeText(
-            PdfReaderContent.buildPageImgTag("book-asset://pdf_page_001.png"),
+            PdfReaderContent.buildPageImgTag("book-asset://pdf_page_001.jpg", 720, 1280),
         )
         assertFalse(ParsedBookStorage.isCompleteBundle(dir, "pdf"))
         File(dir, ParsedBookStorage.ASSETS_DIR).mkdirs()
-        File(dir, "${ParsedBookStorage.ASSETS_DIR}/pdf_page_001.png").writeBytes(byteArrayOf(1))
+        File(dir, "${ParsedBookStorage.ASSETS_DIR}/pdf_page_001.jpg").writeBytes(byteArrayOf(1))
         assertTrue(ParsedBookStorage.isCompleteBundle(dir, "pdf"))
+    }
+
+    @Test
+    fun installStagedAssets_copiesPageFiles() {
+        val staging = File(tmp.root, "staging-assets").apply { mkdirs() }
+        File(staging, "pdf_page_001.jpg").writeBytes(byteArrayOf(7, 8, 9))
+        val bundle = File(tmp.root, "bundle-dest").apply { mkdirs() }
+        assertTrue(ParsedBookStorage.installStagedAssets(staging, bundle))
+        assertTrue(File(bundle, "${ParsedBookStorage.ASSETS_DIR}/pdf_page_001.jpg").isFile)
     }
 
     @Test

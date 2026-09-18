@@ -31,6 +31,7 @@ import space.liushenme.markdownreader.importing.BookTocEnricher
 import space.liushenme.markdownreader.importing.ExtractedBookText
 import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.importing.ParsedBookStorage
+import space.liushenme.markdownreader.importing.PdfReaderContent
 import space.liushenme.markdownreader.importing.UrlBookDownloader
 import space.liushenme.markdownreader.markdown.DiagramImageLoader
 import space.liushenme.markdownreader.markdown.MarkdownPreprocessor
@@ -50,6 +51,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
+import java.util.UUID
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -110,6 +113,9 @@ class BookshelfViewModel @Inject constructor(
 
     private val _gitImporting = MutableStateFlow(false)
     val gitImporting: StateFlow<Boolean> = _gitImporting.asStateFlow()
+
+    private val _localImportJobs = MutableStateFlow<List<LocalImportJob>>(emptyList())
+    val localImportJobs: StateFlow<List<LocalImportJob>> = _localImportJobs.asStateFlow()
 
     private val remoteCheckMutex = Mutex()
 
@@ -330,12 +336,52 @@ class BookshelfViewModel @Inject constructor(
         }
     }
 
+    fun notifyImportInProgress() {
+        toastChannel.trySend(appContext.getString(R.string.bookshelf_importing_wait))
+    }
+
+    private fun upsertImportJob(job: LocalImportJob) {
+        _localImportJobs.update { list ->
+            val index = list.indexOfFirst { it.jobId == job.jobId }
+            if (index < 0) {
+                listOf(job) + list
+            } else {
+                list.toMutableList().also { it[index] = job }
+            }
+        }
+    }
+
+    private fun removeImportJob(jobId: String) {
+        _localImportJobs.update { list -> list.filterNot { it.jobId == jobId } }
+    }
+
+    private fun deleteStagedImportDir(stagedAssetsDir: File?) {
+        val root = stagedAssetsDir?.let { dir ->
+            if (dir.name == ParsedBookStorage.ASSETS_DIR) dir.parentFile else dir
+        } ?: return
+        if (root.name.startsWith("pdf_import_") || root.name.startsWith("bundle_staging_")) {
+            runCatching { root.deleteRecursively() }
+        }
+    }
+
+    private fun publishStagedBundle(staging: File, dest: File): Boolean {
+        if (dest.exists()) dest.deleteRecursively()
+        dest.parentFile?.mkdirs()
+        if (staging.renameTo(dest) && dest.isDirectory) return true
+        return runCatching {
+            staging.copyRecursively(dest, overwrite = true)
+            true
+        }.getOrDefault(false)
+    }
+
     private suspend fun importLocalUriInternal(
         context: Context,
         uri: Uri,
         notify: Boolean,
         target: BookImportTarget,
     ): LocalImportOutcome {
+        var jobId: String? = null
+        var stagedAssetsDir: File? = null
         return try {
             val filePath = uri.toString()
             if (bookRepository.getBookByFilePath(filePath) != null) {
@@ -366,20 +412,46 @@ class BookshelfViewModel @Inject constructor(
                 return LocalImportOutcome.Failed
             }
             val format = BookImportSupport.detectFormat(fileName, mime)
-            val extracted = withContext(Dispatchers.IO) {
-                BookContentLoader.loadExtractedFromUri(context, uri, format)
+            val title = BookImportSupport.stripKnownExtension(fileName)
+            if (format.isPdf) {
+                jobId = UUID.randomUUID().toString()
+                upsertImportJob(
+                    LocalImportJob(
+                        jobId = jobId,
+                        title = title.ifBlank { appContext.getString(R.string.book_untitled) },
+                    ),
+                )
             }
+            val load = withContext(Dispatchers.IO) {
+                BookContentLoader.loadForImport(context, uri, format) { done, total, cover ->
+                    val id = jobId ?: return@loadForImport
+                    upsertImportJob(
+                        LocalImportJob(
+                            jobId = id,
+                            title = title.ifBlank { appContext.getString(R.string.book_untitled) },
+                            current = done,
+                            total = total,
+                            coverJpeg = cover,
+                        ),
+                    )
+                }
+            }
+            stagedAssetsDir = load.stagedAssetsDir
+            val extracted = load.extracted
             if (notify && extracted.body.isBlank() && format.hasBuiltInTextExtract) {
                 toastChannel.trySend(appContext.getString(R.string.toast_import_parse_failed))
             }
+            jobId?.let(::removeImportJob)
+            jobId = null
             val bookId = persistImportedBook(
                 importContext = context,
-                title = BookImportSupport.stripKnownExtension(fileName),
+                title = title,
                 extracted = extracted,
                 filePath = filePath,
                 format = format,
                 notify = notify,
                 target = target,
+                stagedAssetsDir = stagedAssetsDir,
             )
             if (bookId > 0L) {
                 LocalImportOutcome.Success(bookId)
@@ -396,6 +468,9 @@ class BookshelfViewModel @Inject constructor(
                 )
             }
             LocalImportOutcome.Failed
+        } finally {
+            jobId?.let(::removeImportJob)
+            deleteStagedImportDir(stagedAssetsDir)
         }
     }
 
@@ -415,6 +490,8 @@ class BookshelfViewModel @Inject constructor(
             return
         }
         viewModelScope.launch {
+            var jobId: String? = null
+            var stagedAssetsDir: File? = null
             try {
                 if (bookRepository.getBookByFilePath(url) != null) {
                     toastChannel.trySend(
@@ -431,26 +508,52 @@ class BookshelfViewModel @Inject constructor(
                     return@launch
                 }
                 val format = BookImportSupport.detectFormat(name, result.contentType)
-                val extracted = withContext(Dispatchers.IO) {
-                    BookContentLoader.loadExtractedFromUrlBytes(
+                val title = BookImportSupport.stripKnownExtension(
+                    name.ifBlank { appContext.getString(R.string.book_from_network) }
+                )
+                if (format.isPdf) {
+                    jobId = UUID.randomUUID().toString()
+                    upsertImportJob(
+                        LocalImportJob(
+                            jobId = jobId,
+                            title = title.ifBlank { appContext.getString(R.string.book_untitled) },
+                        ),
+                    )
+                }
+                val load = withContext(Dispatchers.IO) {
+                    BookContentLoader.loadUrlBytesForImport(
                         appContext,
                         result.bytes,
                         format,
-                        result.charsetFromHeader
-                    )
+                        result.charsetFromHeader,
+                    ) { done, total, cover ->
+                        val id = jobId ?: return@loadUrlBytesForImport
+                        upsertImportJob(
+                            LocalImportJob(
+                                jobId = id,
+                                title = title.ifBlank { appContext.getString(R.string.book_untitled) },
+                                current = done,
+                                total = total,
+                                coverJpeg = cover,
+                            ),
+                        )
+                    }
                 }
+                stagedAssetsDir = load.stagedAssetsDir
+                val extracted = load.extracted
                 if (extracted.body.isBlank() && format.hasBuiltInTextExtract) {
                     toastChannel.trySend(appContext.getString(R.string.toast_import_download_empty))
                 }
+                jobId?.let(::removeImportJob)
+                jobId = null
                 persistImportedBook(
                     importContext = appContext,
-                    title = BookImportSupport.stripKnownExtension(
-                        name.ifBlank { appContext.getString(R.string.book_from_network) }
-                    ),
+                    title = title,
                     extracted = extracted,
                     filePath = url,
                     format = format,
                     target = target,
+                    stagedAssetsDir = stagedAssetsDir,
                 )
             } catch (e: Exception) {
                 toastChannel.trySend(
@@ -459,6 +562,9 @@ class BookshelfViewModel @Inject constructor(
                         e.message ?: appContext.getString(R.string.error_network),
                     )
                 )
+            } finally {
+                jobId?.let(::removeImportJob)
+                deleteStagedImportDir(stagedAssetsDir)
             }
         }
     }
@@ -471,6 +577,7 @@ class BookshelfViewModel @Inject constructor(
         format: ImportedBookFormat,
         notify: Boolean = true,
         target: BookImportTarget = BookImportTarget.None,
+        stagedAssetsDir: File? = null,
     ): Long {
         val shelfGroup = target.shelfGroup.trim()
         if (shelfGroup.isNotEmpty()) {
@@ -480,13 +587,31 @@ class BookshelfViewModel @Inject constructor(
         val enrichedForStore = prepareImportedContent(importContext, format, enriched)
         val content = enrichedForStore.body
         val resolvedTitle = title.ifBlank { appContext.getString(R.string.book_untitled) }
-        val contentHash = BookContentHasher.hashForBook(
-            body = content,
-            importFormat = format.storedKey,
-            title = resolvedTitle,
-            filePath = filePath,
-            assets = enrichedForStore.assets,
-        )
+        if (format.isPdf &&
+            (stagedAssetsDir == null || !PdfReaderContent.looksLikePdfBody(content))
+        ) {
+            if (notify) {
+                toastChannel.trySend(appContext.getString(R.string.toast_import_parse_failed))
+            }
+            return 0L
+        }
+        val contentHash = if (format.isPdf && stagedAssetsDir != null) {
+            BookContentHasher.hashPdfFromAssetsDir(content, stagedAssetsDir)
+                ?: run {
+                    if (notify) {
+                        toastChannel.trySend(appContext.getString(R.string.toast_import_parse_failed))
+                    }
+                    return 0L
+                }
+        } else {
+            BookContentHasher.hashForBook(
+                body = content,
+                importFormat = format.storedKey,
+                title = resolvedTitle,
+                filePath = filePath,
+                assets = enrichedForStore.assets,
+            )
+        }
         val existingByHash = bookRepository.getBookByContentHash(contentHash)
         if (existingByHash != null) {
             bookRepository.scheduleUploadBookContent(existingByHash.id)
@@ -496,6 +621,39 @@ class BookshelfViewModel @Inject constructor(
             return existingByHash.id
         }
         val author = BookImportSupport.extractAuthorFromContent(content)
+        val stagingBundle = when {
+            stagedAssetsDir != null -> {
+                val root = if (stagedAssetsDir.name == ParsedBookStorage.ASSETS_DIR) {
+                    stagedAssetsDir.parentFile
+                } else {
+                    stagedAssetsDir
+                }
+                root ?: File(appContext.cacheDir, "bundle_staging_${System.nanoTime()}").apply { mkdirs() }
+            }
+            else -> File(appContext.cacheDir, "bundle_staging_${System.nanoTime()}").apply { mkdirs() }
+        }
+        val stagedOk = withContext(Dispatchers.IO) {
+            val ok = ParsedBookStorage.writeBundle(
+                dir = stagingBundle,
+                extracted = enrichedForStore,
+                coverBytes = enriched.coverImageBytes,
+            )
+            ok && ParsedBookStorage.isCompleteBundle(stagingBundle, format.storedKey)
+        }
+        if (!stagedOk) {
+            runCatching { stagingBundle.deleteRecursively() }
+            if (notify) {
+                toastChannel.trySend(appContext.getString(R.string.toast_import_write_failed))
+            }
+            return 0L
+        }
+        val coverFile = when {
+            File(stagingBundle, ParsedBookStorage.COVER_JPG).isFile ->
+                File(stagingBundle, ParsedBookStorage.COVER_JPG)
+            File(stagingBundle, ParsedBookStorage.COVER_PNG).isFile ->
+                File(stagingBundle, ParsedBookStorage.COVER_PNG)
+            else -> null
+        }
         val book = BookEntity(
             title = resolvedTitle,
             author = author,
@@ -507,9 +665,12 @@ class BookshelfViewModel @Inject constructor(
             shelfGroup = shelfGroup,
             isFavorite = target.isFavorite,
             contentHash = contentHash,
+            parsedBundlePath = stagingBundle.absolutePath,
+            coverImagePath = coverFile?.absolutePath,
         )
         val id = bookRepository.addBook(book)
         if (id <= 0L) {
+            runCatching { stagingBundle.deleteRecursively() }
             if (notify) {
                 toastChannel.trySend(appContext.getString(R.string.toast_import_write_failed))
             }
@@ -517,16 +678,15 @@ class BookshelfViewModel @Inject constructor(
         }
         val writeOk = withContext(Dispatchers.IO) {
             val dir = ParsedBookStorage.bundleDir(appContext, id)
-            val ok = ParsedBookStorage.writeBundle(
-                dir = dir,
-                extracted = enrichedForStore,
-                coverBytes = enriched.coverImageBytes,
-            )
-            if (!ok) {
+            if (!publishStagedBundle(stagingBundle, dir)) {
                 ParsedBookStorage.deleteBundleDir(dir.absolutePath)
                 return@withContext false
             }
-            val coverFile = when {
+            if (!ParsedBookStorage.isCompleteBundle(dir, format.storedKey)) {
+                ParsedBookStorage.deleteBundleDir(dir.absolutePath)
+                return@withContext false
+            }
+            val publishedCover = when {
                 File(dir, ParsedBookStorage.COVER_JPG).isFile ->
                     File(dir, ParsedBookStorage.COVER_JPG)
                 File(dir, ParsedBookStorage.COVER_PNG).isFile ->
@@ -538,23 +698,25 @@ class BookshelfViewModel @Inject constructor(
                     id = id,
                     totalChars = content.length,
                     parsedBundlePath = dir.absolutePath,
-                    coverImagePath = coverFile?.absolutePath,
+                    coverImagePath = publishedCover?.absolutePath,
                     contentHash = contentHash,
                 )
             )
+            if (stagingBundle.exists() && stagingBundle.absolutePath != dir.absolutePath) {
+                runCatching { stagingBundle.deleteRecursively() }
+            }
             true
         }
-        if (writeOk) {
-            bookRepository.scheduleUploadBookContent(id)
+        if (!writeOk) {
+            bookRepository.deleteBook(book.copy(id = id), deleteCloudBackup = false)
+            if (notify) {
+                toastChannel.trySend(appContext.getString(R.string.toast_import_write_failed))
+            }
+            return 0L
         }
+        bookRepository.scheduleUploadBookContent(id)
         if (notify) {
-            toastChannel.trySend(
-                if (writeOk) {
-                    appContext.getString(R.string.toast_import_success, book.title)
-                } else {
-                    appContext.getString(R.string.toast_import_cache_write_failed, book.title)
-                }
-            )
+            toastChannel.trySend(appContext.getString(R.string.toast_import_success, book.title))
         }
         return id
     }
@@ -566,6 +728,9 @@ class BookshelfViewModel @Inject constructor(
     ): ExtractedBookText {
         if (format.usesReaderPlainBody) {
             return extracted.copy(body = MarkdownPreprocessor.stripLocalRelativeImages(extracted.body))
+        }
+        if (format.isPdf) {
+            return extracted.copy(body = PdfReaderContent.sanitizeStoredBody(extracted.body))
         }
         var body = MarkdownPreprocessor.prepare(extracted.body, appContext)
         withContext(Dispatchers.IO) {
@@ -690,6 +855,15 @@ class BookshelfViewModel @Inject constructor(
         const val BOOK_COVER_COLOR_COUNT = 16
     }
 }
+
+/** 书架上正在导入的本地任务（仅内存，不写 Room）。 */
+data class LocalImportJob(
+    val jobId: String,
+    val title: String,
+    val current: Int = 0,
+    val total: Int = 0,
+    val coverJpeg: ByteArray? = null,
+)
 
 /** 导入时的归属：当前书架标签对应的分组 / 收藏。 */
 data class BookImportTarget(

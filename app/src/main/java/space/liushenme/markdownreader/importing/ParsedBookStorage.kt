@@ -64,6 +64,31 @@ object ParsedBookStorage {
         }.getOrDefault(false)
     }
 
+    /** 把导入暂存目录里的页图装进解析包（优先 rename，失败再 copy）。 */
+    fun installStagedAssets(stagingAssets: File, bundleDir: File): Boolean {
+        if (!stagingAssets.isDirectory) return false
+        val dest = File(bundleDir, ASSETS_DIR)
+        if (dest.exists()) dest.deleteRecursively()
+        bundleDir.mkdirs()
+        if (stagingAssets.renameTo(dest) && dest.isDirectory) {
+            return dest.listFiles()?.isNotEmpty() == true
+        }
+        dest.mkdirs()
+        val files = stagingAssets.listFiles() ?: return false
+        var copied = 0
+        for (file in files) {
+            if (!file.isFile) continue
+            val name = sanitizeAssetId(file.name) ?: continue
+            val target = File(dest, name)
+            val moved = file.renameTo(target)
+            if (!moved) {
+                runCatching { file.copyTo(target, overwrite = true) }.getOrNull() ?: continue
+            }
+            if (target.isFile && target.length() > 0L) copied++
+        }
+        return copied > 0
+    }
+
     fun readBundle(dir: File): ExtractedBookText? {
         val bodyFile = File(dir, BODY_FILE)
         if (!bodyFile.isFile) return null
@@ -121,7 +146,7 @@ object ParsedBookStorage {
     /**
      * 本地解析包是否足以打开该书：
      * - 必须有非空 body.txt
-     * - PDF（按 [importFormat] 或正文页图）还必须有对应 `assets/pdf_page_*.png`
+     * - PDF（按 [importFormat] 或正文页图）还必须有对应 `assets/pdf_page_*.png|jpg`
      */
     fun isCompleteBundle(dir: File, importFormat: String = ""): Boolean {
         val bodyFile = File(dir, BODY_FILE)

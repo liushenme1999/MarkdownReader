@@ -76,18 +76,33 @@ class PdfPageCatalogTest {
     }
 
     @Test
-    fun scanAssetPages_ordersByPageNumber() {
+    fun scanAssetPages_ordersJpegByPageNumber() {
         val dir = File.createTempFile("pdf-assets", "dir").apply {
             delete()
             mkdirs()
             deleteOnExit()
         }
-        File(dir, "pdf_page_002.png").apply { writeText("b"); deleteOnExit() }
-        File(dir, "pdf_page_001.png").apply { writeText("a"); deleteOnExit() }
-        File(dir, "notes.txt").apply { writeText("x"); deleteOnExit() }
+        File(dir, "pdf_page_002.jpg").apply { writeText("b"); deleteOnExit() }
+        File(dir, "pdf_page_001.jpg").apply { writeText("a"); deleteOnExit() }
         val pages = PdfPageCatalog.scanAssetPages(dir)
         assertEquals(2, pages.size)
-        assertEquals("pdf_page_001.png", pages[0].assetName)
-        assertEquals("pdf_page_002.png", pages[1].assetName)
+        assertEquals("pdf_page_001.jpg", pages[0].assetName)
+        assertEquals("pdf_page_002.jpg", pages[1].assetName)
+    }
+
+    @Test
+    fun parse_readsIntrinsicSizeFromDataAttrs() {
+        val dir = File.createTempFile("pdf-bundle", "dir").apply {
+            delete()
+            mkdirs()
+            deleteOnExit()
+        }
+        val assets = File(dir, "assets").apply { mkdirs(); deleteOnExit() }
+        File(assets, "pdf_page_001.jpg").apply { writeText("x"); deleteOnExit() }
+        val body = PdfReaderContent.buildPageImgTag("book-asset://pdf_page_001.jpg", 720, 1280)
+        val pages = PdfPageCatalog.parse(body, dir)
+        assertEquals(1, pages.size)
+        assertEquals(720, pages[0].intrinsicWidth)
+        assertEquals(1280, pages[0].intrinsicHeight)
     }
 }

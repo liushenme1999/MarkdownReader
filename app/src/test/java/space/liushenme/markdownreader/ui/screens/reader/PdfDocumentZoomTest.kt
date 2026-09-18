@@ -63,6 +63,15 @@ class PdfDocumentZoomTest {
     }
 
     @Test
+    fun pageFraction_usesItemOffsetWithoutComposingPriorPages() {
+        val heights = floatArrayOf(1000f, 2000f, 1500f)
+        val y = pdfScrollYForPageFraction(1, 0.4f, heights, gap = 0f)
+        val (index, offset) = pdfScrollToOffset(y, heights, gap = 0f)
+        assertEquals(1, index)
+        assertEquals((2000f * 0.4f).toInt(), offset)
+    }
+
+    @Test
     fun scrollToOffset_andBack() {
         val heights = floatArrayOf(1000f, 2000f, 1500f)
         val gap = 16f

@@ -62,20 +62,37 @@ object BookContentHasher {
         return digest.digest().joinToString("") { b -> "%02x".format(b) }
     }
 
+    /** 从磁盘流式哈希 PDF 页图，避免把整本读进内存。 */
+    fun hashPdfFromAssetsDir(body: String, assetsDir: File): String? {
+        val names = PdfReaderContent.referencedPageAssetNames(body)
+        if (names.isEmpty() || !assetsDir.isDirectory) return null
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update(body.toByteArray(StandardCharsets.UTF_8))
+        val buf = ByteArray(8192)
+        for (name in names.sorted()) {
+            val file = File(assetsDir, name)
+            if (!file.isFile) return null
+            digest.update(0)
+            digest.update(name.toByteArray(StandardCharsets.UTF_8))
+            digest.update(0)
+            runCatching {
+                file.inputStream().use { ins ->
+                    while (true) {
+                        val n = ins.read(buf)
+                        if (n <= 0) break
+                        digest.update(buf, 0, n)
+                    }
+                }
+            }.getOrElse { return null }
+        }
+        return digest.digest().joinToString("") { b -> "%02x".format(b) }
+    }
+
     fun hashFromPdfBundle(bundleDir: File): String? {
         val bodyFile = File(bundleDir, ParsedBookStorage.BODY_FILE)
         if (!bodyFile.isFile) return null
         val body = runCatching { bodyFile.readText(StandardCharsets.UTF_8) }.getOrNull() ?: return null
-        val names = PdfReaderContent.referencedPageAssetNames(body)
-        if (names.isEmpty()) return null
-        val assetsDir = File(bundleDir, ParsedBookStorage.ASSETS_DIR)
-        val assets = linkedMapOf<String, ByteArray>()
-        for (name in names) {
-            val file = File(assetsDir, name)
-            if (!file.isFile) return null
-            assets[name] = runCatching { file.readBytes() }.getOrNull() ?: return null
-        }
-        return hashPdfContent(body, assets)
+        return hashPdfFromAssetsDir(body, File(bundleDir, ParsedBookStorage.ASSETS_DIR))
     }
 
     fun matchesStoredHash(expectedHash: String, bundleDir: File): Boolean {

@@ -101,6 +101,9 @@
     <string name="bookshelf_empty_title">书架空空如也</string>
     <string name="bookshelf_import">导入</string>
     <string name="bookshelf_import_cd">导入书籍</string>
+    <string name="bookshelf_importing">正在导入</string>
+    <string name="bookshelf_importing_progress">正在导入 %1$d/%2$d（%3$d%%）</string>
+    <string name="bookshelf_importing_wait">导入完成后可阅读</string>
     <string name="bookshelf_unread">未读</string>
     <string name="bookshelf_finished">已读完</string>
     <string name="bookshelf_pinned_cd">已置顶</string>
@@ -264,6 +267,8 @@
     <string name="reader_mark_finished_later">暂不标记</string>
     <string name="reader_error_book_not_found">找不到该书，可能已被删除。</string>
     <string name="reader_error_cannot_read_body">无法读取正文（文件权限失效或路径无效）。请返回书架删除该书后，使用「导入」重新选择文件。</string>
+    <string name="reader_error_pdf_bundle_incomplete">PDF 解析包不完整。请返回书架删除后重新导入。</string>
+    <string name="reader_opening_pdf">正在打开 PDF…</string>
     <string name="bookmark_note_optional">书签备注（可选）</string>
 
     <!-- Notes -->

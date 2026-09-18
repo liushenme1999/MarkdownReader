@@ -95,6 +95,9 @@
     <string name="bookshelf_empty_subtitle">Supports Markdown, TXT, PDF, and public GitHub projects</string>
     <string name="bookshelf_import">Import</string>
     <string name="bookshelf_import_cd">Import book</string>
+    <string name="bookshelf_importing">Importing</string>
+    <string name="bookshelf_importing_progress">Importing %1$d/%2$d (%3$d%%)</string>
+    <string name="bookshelf_importing_wait">You can read this book after import finishes</string>
     <string name="bookshelf_unread">Unread</string>
     <string name="bookshelf_finished">Finished</string>
     <string name="bookshelf_pinned_cd">Pinned</string>
@@ -256,6 +259,8 @@
     <string name="reader_mark_finished_later">Not now</string>
     <string name="reader_error_book_not_found">Book not found. It may have been deleted.</string>
     <string name="reader_error_cannot_read_body">Cannot read content (permission lost or invalid path). Remove the book from the library and import the file again.</string>
+    <string name="reader_error_pdf_bundle_incomplete">The PDF cache is incomplete. Remove the book from the library and import it again.</string>
+    <string name="reader_opening_pdf">Opening PDF…</string>
     <string name="bookmark_note_optional">Bookmark note (optional)</string>
 
     <string name="notes_title">Notes</string>

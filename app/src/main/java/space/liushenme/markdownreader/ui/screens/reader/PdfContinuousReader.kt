@@ -138,11 +138,21 @@ internal fun PdfContinuousReader(
         onDispose { cache.clear() }
     }
 
-    val intrins = remember(pages) {
-        pages.map { page ->
-            PdfPageBitmapCache.decodeBounds(page.path) ?: (1000 to 1414)
-        }
+    var intrins by remember(pages) {
+        mutableStateOf(
+            pages.map { page ->
+                if (page.intrinsicWidth > 0 && page.intrinsicHeight > 0) {
+                    page.intrinsicWidth to page.intrinsicHeight
+                } else {
+                    1000 to 1414
+                }
+            },
+        )
     }
+    val needsBounds = remember(pages) {
+        pages.any { it.intrinsicWidth <= 0 || it.intrinsicHeight <= 0 }
+    }
+    var boundsReady by remember(pages) { mutableStateOf(!needsBounds) }
     val invert = shouldInvertPdfPages(theme.backgroundColor.luminance())
     val invertFilter = remember { pdfPageInvertComposeColorFilter() }
 
@@ -193,32 +203,47 @@ internal fun PdfContinuousReader(
         opened = false
     }
 
-    LaunchedEffect(viewportW, pages, restoreAnchor) {
-        if (viewportW <= 0f || pages.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(pages) {
+        if (!needsBounds) {
+            boundsReady = true
+            return@LaunchedEffect
+        }
+        val decoded = withContext(Dispatchers.IO) {
+            pages.map { page ->
+                if (page.intrinsicWidth > 0 && page.intrinsicHeight > 0) {
+                    page.intrinsicWidth to page.intrinsicHeight
+                } else {
+                    PdfPageBitmapCache.decodeBounds(page.path) ?: (1000 to 1414)
+                }
+            }
+        }
+        intrins = decoded
+        boundsReady = true
+    }
+
+    LaunchedEffect(viewportW, pages, restoreAnchor, boundsReady) {
+        if (!boundsReady || viewportW <= 0f || pages.isEmpty()) return@LaunchedEffect
         val target = if (opened) liveAnchor else restoreAnchor
         val restoreHeights = pdfPageHeights(viewportW, zoom.scale, intrins)
-        val restoreGap = pdfScaledPageGap(zoom.scale)
-        val y = pdfScrollYForPageFraction(
-            target.pageIndex,
-            target.fractionInPage,
-            restoreHeights,
-            restoreGap,
-        )
-        scrollToDocumentY(y, restoreHeights, restoreGap)
+        val index = target.pageIndex.coerceIn(0, pages.lastIndex)
+        val pageH = restoreHeights.getOrElse(index) { 0f }
+        val offset = (pageH * target.fractionInPage.coerceIn(0f, 1f)).roundToInt().coerceAtLeast(0)
+        listState.requestScrollToItem(index, offset)
         if (!opened) {
             opened = true
             latestOnOpened.value()
         }
     }
 
-    LaunchedEffect(jumpRequest, viewportW) {
+    LaunchedEffect(jumpRequest, viewportW, boundsReady) {
         val jump = jumpRequest ?: return@LaunchedEffect
-        if (viewportW <= 0f) return@LaunchedEffect
+        if (!boundsReady || viewportW <= 0f || pages.isEmpty()) return@LaunchedEffect
         val jumpHeights = pdfPageHeights(viewportW, zoom.scale, intrins)
-        val jumpGap = pdfScaledPageGap(zoom.scale)
-        val y = pdfScrollYForPageFraction(jump.pageIndex, jump.fractionInPage, jumpHeights, jumpGap)
-        liveAnchor = PdfViewportAnchor(jump.pageIndex, jump.fractionInPage)
-        scrollToDocumentY(y, jumpHeights, jumpGap)
+        val index = jump.pageIndex.coerceIn(0, pages.lastIndex)
+        val pageH = jumpHeights.getOrElse(index) { 0f }
+        val offset = (pageH * jump.fractionInPage.coerceIn(0f, 1f)).roundToInt().coerceAtLeast(0)
+        liveAnchor = PdfViewportAnchor(index, jump.fractionInPage)
+        listState.requestScrollToItem(index, offset)
         latestOnOpened.value()
     }
 
