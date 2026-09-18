@@ -120,14 +120,9 @@ class GitProjectRepository @Inject constructor(
         }
         val books = bookDao.getBooksByGitProjectId(project.id)
         for (book in books) {
-            val hash = book.contentHash.ifBlank {
-                BookContentHasher.hashEmptyFallback(
-                    book.importFormat,
-                    book.title,
-                    book.filePath,
-                )
+            for (hash in gitBookTombstoneHashes(project.remoteUrl, book)) {
+                deletedBookDao.upsert(DeletedBookEntity(contentHash = hash, deletedAt = now))
             }
-            deletedBookDao.upsert(DeletedBookEntity(contentHash = hash, deletedAt = now))
             ParsedBookStorage.deleteBundleDir(book.parsedBundlePath)
             book.coverImagePath?.let { path ->
                 runCatching { java.io.File(path).delete() }
@@ -154,5 +149,22 @@ class GitProjectRepository @Inject constructor(
             val project = gitProjectDao.getById(id) ?: continue
             deleteProjectCascade(project)
         }
+    }
+
+    private fun gitBookTombstoneHashes(remoteUrl: String, book: BookEntity): Set<String> {
+        val hashes = linkedSetOf<String>()
+        if (book.contentHash.isNotBlank()) hashes += book.contentHash
+        val path = book.gitRelativePath?.trim().orEmpty()
+        if (path.isNotEmpty() && remoteUrl.isNotBlank()) {
+            hashes += BookContentHasher.hashForGitDocument(remoteUrl, path)
+        }
+        if (hashes.isEmpty()) {
+            hashes += BookContentHasher.hashEmptyFallback(
+                book.importFormat,
+                book.title,
+                book.filePath,
+            )
+        }
+        return hashes
     }
 }

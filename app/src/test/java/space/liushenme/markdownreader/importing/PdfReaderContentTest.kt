@@ -8,6 +8,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import space.liushenme.markdownreader.R
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
@@ -61,5 +62,36 @@ class PdfReaderContentTest {
         assertEquals(2, pages.size)
         assertTrue(body.substring(pages[0]).contains("pdf_page_001"))
         assertTrue(body.substring(pages[1]).contains("pdf_page_002"))
+    }
+
+    @Test
+    fun bookmarkPreview_usesOneBasedPageTitle() {
+        val body = buildString {
+            append(PdfReaderContent.buildPageImgTag("book-asset://pdf_page_001.png"))
+            append('\n')
+            append(PdfReaderContent.buildPageImgTag("book-asset://pdf_page_002.png"))
+            append('\n')
+            append(PdfReaderContent.buildPageImgTag("book-asset://pdf_page_003.png"))
+        }
+        val pages = PdfReaderContent.splitToPages(body)
+        assertEquals(
+            context.getString(R.string.pdf_page_title, 2),
+            PdfReaderContent.bookmarkPreview(context, body, pages[1].first),
+        )
+    }
+
+    @Test
+    fun looksLikePdfBody_acceptsNonSelfClosingImg() {
+        val body = """<img src="book-asset://pdf_page_001.png" width="100%">"""
+        assertTrue(PdfReaderContent.looksLikePdfBody(body))
+        assertEquals(1, PdfReaderContent.pageImageSources(body).size)
+    }
+
+    @Test
+    fun isPageImageDestination_matchesPdfPageAssetsOnly() {
+        assertTrue(PdfReaderContent.isPageImageDestination("book-asset://pdf_page_001.png"))
+        assertTrue(PdfReaderContent.isPageImageDestination("file:///a/pdf_page_002.png"))
+        assertTrue(!PdfReaderContent.isPageImageDestination("diagram://mermaid-1"))
+        assertTrue(!PdfReaderContent.isPageImageDestination("https://example.com/pic.png"))
     }
 }

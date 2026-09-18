@@ -8,6 +8,7 @@ import io.noties.markwon.ext.latex.ReaderCompoundInlineLatexSpan
 import io.noties.markwon.image.AsyncDrawableSpan
 import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.markdown.DiagramSchemeHandler
+import space.liushenme.markdownreader.markdown.ReaderScrollableCodeBlockSpan
 
 /**
  * 从阅读正文选区提取可复制 / 可划线的纯文本。
@@ -76,6 +77,12 @@ private fun replacementPlainText(
     end: Int,
     context: Context,
 ): String? {
+    body.getSpans(start, end, ReaderScrollableCodeBlockSpan::class.java)
+        .firstOrNull { body.getSpanStart(it) == start && body.getSpanEnd(it) == end }
+        ?.let { span ->
+            return if (span.hasSelection()) span.selectedText() else span.rawCode
+        }
+
     body.getSpans(start, end, ReaderCompoundInlineLatexSpan::class.java)
         .firstOrNull { body.getSpanStart(it) == start && body.getSpanEnd(it) == end }
         ?.sourceLatex

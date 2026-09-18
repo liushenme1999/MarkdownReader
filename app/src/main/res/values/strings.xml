@@ -240,6 +240,8 @@
     <string name="reader_line_spacing_value">%1$.2f 倍</string>
     <string name="reader_code_block_wrap">代码块自动换行</string>
     <string name="reader_code_block_wrap_summary">关闭后，长代码可在代码窗口内左右滑动查看</string>
+    <string name="reader_hide_system_bars">阅读时隐藏系统栏</string>
+    <string name="reader_hide_system_bars_summary">沉浸阅读时隐藏顶部状态栏和底部小白条，点屏幕唤出功能栏时再显示。适用于 Markdown、TXT 与 PDF。</string>
     <string name="reader_code_block_copy">复制</string>
     <string name="reader_code_block_copied">已复制代码</string>
     <string name="reader_marks_sheet_title">书签与划线</string>
@@ -387,6 +389,7 @@
     <string name="reading_settings_section_appearance">外观主题</string>
     <string name="reading_settings_section_reading_theme">颜色与背景</string>
     <string name="reading_settings_section_typography">字体与排版</string>
+    <string name="reading_settings_section_display">阅读界面</string>
     <string name="reading_settings_section_page_turn">翻页方式</string>
 
     <!-- Statistics -->

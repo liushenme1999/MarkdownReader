@@ -120,6 +120,13 @@ class ReaderViewModel @Inject constructor(
             initialValue = ReaderSettingsRepository.DEFAULT_CODE_BLOCK_WRAP,
         )
 
+    val hideSystemBars: StateFlow<Boolean> = readerSettingsRepository.hideSystemBars
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = ReaderSettingsRepository.DEFAULT_HIDE_SYSTEM_BARS,
+        )
+
     val pageTurnMode: StateFlow<ReaderPageTurnMode> = readerSettingsRepository.pageTurnMode
         .stateIn(
             scope = viewModelScope,
@@ -549,13 +556,18 @@ class ReaderViewModel @Inject constructor(
     fun addBookmark(previewText: String, note: String? = null) {
         viewModelScope.launch {
             _book.value?.let { book ->
-                val contentLen = _content.value.length.coerceAtLeast(1)
+                val raw = _content.value
+                val contentLen = raw.length.coerceAtLeast(1)
                 val pos = lastKnownReadingCharPos.coerceIn(0, contentLen)
                 val bookmark = BookmarkEntity(
                     bookId = book.id,
                     position = pos,
-                    previewText = normalizeReadingPreviewText(previewText)
-                        .ifEmpty { appContext.getString(R.string.bookmark_default_preview) },
+                    previewText = resolveBookmarkPreviewText(
+                        previewForAdd = previewText,
+                        sourceContent = raw,
+                        position = pos,
+                        context = appContext,
+                    ),
                     note = note,
                     createTime = Date()
                 )
@@ -585,19 +597,20 @@ class ReaderViewModel @Inject constructor(
         if (raw.isEmpty()) return null
 
         val pos = (positionForAdd ?: lastKnownReadingCharPos).coerceIn(0, raw.length)
-        val bookmarkFallback = appContext.getString(R.string.bookmark_default_preview)
-        val preview = normalizeReadingPreviewText(previewForAdd).ifEmpty {
-            val from = (pos - 60).coerceAtLeast(0)
-            val to = (pos + 80).coerceAtMost(raw.length)
-            normalizeReadingPreviewText(
-                raw.substring(from, to).ifEmpty { bookmarkFallback },
-            ).ifEmpty { bookmarkFallback }
-        }
+        val preview = resolveBookmarkPreviewText(
+            previewForAdd = previewForAdd,
+            sourceContent = raw,
+            position = pos,
+            context = appContext,
+        )
         lastKnownReadingCharPos = pos
-        lastKnownProgressPreview = preview
+        val isPdf = PdfReaderContent.looksLikePdfBody(raw)
+        if (!isPdf) {
+            lastKnownProgressPreview = preview
+        }
         val progress = pos.toFloat() / raw.length.coerceAtLeast(1)
         _readingProgress.value = progress
-        scheduleProgressPersist(progress, pos, preview)
+        scheduleProgressPersist(progress, pos, if (isPdf) "" else preview)
         val window = (total / 40).coerceIn(300, 1500)
         val near = bookmarks.value.find { abs(it.position - pos) <= window }
 
@@ -803,6 +816,12 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
+    fun setHideSystemBars(hide: Boolean) {
+        viewModelScope.launch {
+            readerSettingsRepository.setHideSystemBars(hide)
+        }
+    }
+
     fun setPageTurnMode(mode: ReaderPageTurnMode) {
         viewModelScope.launch {
             readerSettingsRepository.setPageTurnMode(mode)
@@ -920,10 +939,32 @@ class ReaderViewModel @Inject constructor(
 /** 书签 / 阅读进度共用的预览文案规范化。 */
 internal fun normalizeReadingPreviewText(raw: String?): String =
     raw
+        ?.replace('\uFFFC', ' ')
         ?.replace('\n', ' ')
         ?.trim()
         ?.takeIf { it.isNotEmpty() }
         ?.let { MarkdownInlineHtml.stripTags(it) }
+        ?.trim()
         ?.take(100)
         .orEmpty()
+
+/** PDF 书签记页码；其它格式用视口文字，必要时回退到源码附近片段。 */
+internal fun resolveBookmarkPreviewText(
+    previewForAdd: String?,
+    sourceContent: String,
+    position: Int,
+    context: Context,
+): String {
+    val fallback = context.getString(R.string.bookmark_default_preview)
+    if (PdfReaderContent.looksLikePdfBody(sourceContent)) {
+        return PdfReaderContent.bookmarkPreview(context, sourceContent, position)
+    }
+    return normalizeReadingPreviewText(previewForAdd).ifEmpty {
+        val from = (position - 60).coerceAtLeast(0)
+        val to = (position + 80).coerceAtMost(sourceContent.length)
+        normalizeReadingPreviewText(
+            sourceContent.substring(from, to).ifEmpty { fallback },
+        ).ifEmpty { fallback }
+    }
+}
 

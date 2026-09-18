@@ -82,6 +82,7 @@ import space.liushenme.markdownreader.model.ReaderPageTurnMode
 import space.liushenme.markdownreader.ui.components.ReaderPageTurnModeOption
 import space.liushenme.markdownreader.ui.components.ReaderSettingsGroupCard
 import space.liushenme.markdownreader.ui.components.ReaderSettingsSectionTitle
+import space.liushenme.markdownreader.ui.components.ReaderSettingsSwitchRow
 import space.liushenme.markdownreader.ui.components.ReadingStyleSettingsBlock
 import space.liushenme.markdownreader.ui.components.ReaderWideSliderRow
 import space.liushenme.markdownreader.ui.components.MarkdownInlineHtmlText
@@ -179,6 +180,7 @@ internal fun ReaderSettingsSheet(
     readerPaddingDp: Int,
     readerLineSpacingMultiplier: Float,
     codeBlockWrap: Boolean,
+    hideSystemBars: Boolean,
     pageTurnMode: ReaderPageTurnMode,
     onSelectStyle: (Int) -> Unit,
     onAddStyle: ((Int) -> Unit) -> Unit,
@@ -189,6 +191,7 @@ internal fun ReaderSettingsSheet(
     onPaddingDpChange: (Int) -> Unit,
     onLineSpacingChange: (Float) -> Unit,
     onCodeBlockWrapChange: (Boolean) -> Unit,
+    onHideSystemBarsChange: (Boolean) -> Unit,
     onPageTurnModeChange: (ReaderPageTurnMode) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -288,6 +291,20 @@ internal fun ReaderSettingsSheet(
                             onCheckedChange = onCodeBlockWrapChange,
                         )
                     }
+                }
+            }
+
+            Column {
+                ReaderSettingsSectionTitle(
+                    stringResource(R.string.reading_settings_section_display),
+                )
+                ReaderSettingsGroupCard {
+                    ReaderSettingsSwitchRow(
+                        title = stringResource(R.string.reader_hide_system_bars),
+                        summary = stringResource(R.string.reader_hide_system_bars_summary),
+                        checked = hideSystemBars,
+                        onCheckedChange = onHideSystemBarsChange,
+                    )
                 }
             }
 

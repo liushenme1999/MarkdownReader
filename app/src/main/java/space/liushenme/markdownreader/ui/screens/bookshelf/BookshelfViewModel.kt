@@ -612,6 +612,19 @@ class BookshelfViewModel @Inject constructor(
                 bookRepository.deleteBooksByIds(bookIds, deleteCloudBackup)
             }
             if (projectIds.isNotEmpty()) gitProjectRepository.deleteProjectsByIds(projectIds)
+            if (projectIds.isNotEmpty()) {
+                val backupError = withContext(Dispatchers.IO) {
+                    backupManager.backupIfConfigured().exceptionOrNull()
+                }
+                if (backupError != null) {
+                    toastChannel.trySend(
+                        appContext.getString(
+                            R.string.backup_toast_backup_failed,
+                            backupError.message ?: appContext.getString(R.string.error_unknown),
+                        ),
+                    )
+                }
+            }
         }
     }
 

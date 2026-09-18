@@ -18,7 +18,7 @@ object PdfReaderContent {
     private val LEGACY_PAGE_HEADING = Regex("""##\s*第\s*\d+\s*页\s*\n+""")
 
     private val PAGE_IMG_TAG =
-        Regex("""<img\s[^>]*src=["'][^"']*pdf_page_\d+\.png[^"']*["'][^>]*/>""", RegexOption.IGNORE_CASE)
+        Regex("""<img\b[^>]*\bsrc=["'][^"']*pdf_page_\d+\.png[^"']*["'][^>]*/?>""", RegexOption.IGNORE_CASE)
 
     private val IMG_SRC = Regex("""src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
 
@@ -73,10 +73,22 @@ object PdfReaderContent {
         return matches.indexOfLast { it.range.first <= sourceOffset }.coerceAtLeast(0)
     }
 
+    /** 书签列表展示用：记录页码，避免页图占位符变成乱码。 */
+    fun bookmarkPreview(context: Context, body: String, sourceOffset: Int): String {
+        val page = pageIndexForSourceOffset(body, sourceOffset) + 1
+        return context.getString(R.string.pdf_page_title, page)
+    }
+
     fun pageCount(body: String): Int = pageImageMatches(sanitizeStoredBody(body)).count()
 
     /** 正文是否含 PDF 页图（用于恢复后补识别，避免 importFormat 丢失时按普通 Markdown 打开）。 */
     fun looksLikePdfBody(body: String): Boolean = pageCount(body) > 0
+
+    /** 图片 destination 是否为 PDF 栅格页（单击不应进图表预览）。 */
+    fun isPageImageDestination(destination: String?): Boolean {
+        val d = destination.orEmpty()
+        return d.contains("pdf_page_", ignoreCase = true)
+    }
 
     fun referencedPageAssetNames(body: String): List<String> {
         val names = linkedSetOf<String>()
@@ -84,6 +96,15 @@ object PdfReaderContent {
             .findAll(body)
             .forEach { names += it.value }
         return names.toList()
+    }
+
+    /** 页图在正文中的源码起点与 src（已 sanitize）。 */
+    fun pageImageSources(body: String): List<Pair<Int, String>> {
+        val sanitized = sanitizeStoredBody(body)
+        return pageImageMatches(sanitized).mapNotNull { match ->
+            val src = IMG_SRC.find(match.value)?.groupValues?.getOrNull(1) ?: return@mapNotNull null
+            match.range.first to src
+        }
     }
 
     private fun pageImageMatches(sanitized: String) =

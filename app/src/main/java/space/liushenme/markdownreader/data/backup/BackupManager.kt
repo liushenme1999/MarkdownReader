@@ -102,6 +102,13 @@ class BackupManager @Inject constructor(
         }
     }
 
+    /** 未配置 WebDAV 时直接跳过，避免删除 Git 项目后弹出配置错误。 */
+    suspend fun backupIfConfigured(): Result<String?> {
+        val config = webDavConfigRepository.current()
+        if (!config.isConfigured) return Result.success(null)
+        return backup()
+    }
+
     /**
      * 书架下拉刷新：拉取云端最新备份中的阅读进度，与本机取较新一侧；
      * 若本机有更靠前进度则再上传元数据备份，把云端更新为最新。
@@ -146,10 +153,23 @@ class BackupManager @Inject constructor(
 
                 val localBooks = bookDao.getAllBooksList()
                 val deletedHashes = deletedBookDao.getAllHashes().toSet()
+                val deletedProjectUrls = deletedGitProjectDao.getAllRemoteUrls()
+                val liveProjectUrls = gitProjectDao.getAllProjectsList().map { it.remoteUrl }
                 for (remote in remoteBooks) {
                     val remoteHash = remoteStableHash(remote) ?: remote.contentHash.takeIf { it.isNotBlank() }
                     if (remoteHash != null && remoteHash in deletedHashes) {
                         // 云端元数据仍含已删书：需推送以更新 books.json
+                        needPush = true
+                        continue
+                    }
+                    if (!GitLinkedBookRestore.shouldRestore(
+                            gitRelativePath = remote.gitRelativePath,
+                            contentHash = remoteHash ?: remote.contentHash,
+                            deletedBookHashes = deletedHashes,
+                            deletedProjectUrls = deletedProjectUrls,
+                            liveProjectUrls = liveProjectUrls,
+                        )
+                    ) {
                         needPush = true
                         continue
                     }
@@ -490,12 +510,24 @@ class BackupManager @Inject constructor(
         }
 
         val deletedHashes = deletedBookDao.getAllHashes().toSet()
+        val deletedProjectUrls = deletedGitProjectDao.getAllRemoteUrls()
+        val liveProjectUrls = gitProjectDao.getAllProjectsList().map { it.remoteUrl }
         val idMap = LinkedHashMap<Long, Long>()
         val webDavBookIds = LinkedHashSet<Long>()
         for (remote in books) {
             val remoteHash = remoteStableHash(remote)
                 ?: remote.contentHash.takeIf { it.isNotBlank() }
             if (remoteHash != null && remoteHash in deletedHashes) continue
+            if (!GitLinkedBookRestore.shouldRestore(
+                    gitRelativePath = remote.gitRelativePath,
+                    contentHash = remoteHash ?: remote.contentHash,
+                    deletedBookHashes = deletedHashes,
+                    deletedProjectUrls = deletedProjectUrls,
+                    liveProjectUrls = liveProjectUrls,
+                )
+            ) {
+                continue
+            }
             val localId = mergeBook(remote)
             if (localId > 0L) {
                 idMap[remote.id] = localId
@@ -546,6 +578,19 @@ class BackupManager @Inject constructor(
     /** @return 本机 books.id */
     private suspend fun mergeBook(remote: BookEntity): Long {
         val resolvedHash = resolveRemoteContentHash(remote)
+        val deletedHashes = deletedBookDao.getAllHashes().toSet()
+        val deletedProjectUrls = deletedGitProjectDao.getAllRemoteUrls()
+        val liveProjectUrls = gitProjectDao.getAllProjectsList().map { it.remoteUrl }
+        if (!GitLinkedBookRestore.shouldRestore(
+                gitRelativePath = remote.gitRelativePath,
+                contentHash = resolvedHash.ifBlank { remote.contentHash },
+                deletedBookHashes = deletedHashes,
+                deletedProjectUrls = deletedProjectUrls,
+                liveProjectUrls = liveProjectUrls,
+            )
+        ) {
+            return 0L
+        }
         if (resolvedHash.isNotBlank()) {
             val tomb = deletedBookDao.getByHash(resolvedHash)
             if (tomb != null) {
@@ -920,14 +965,22 @@ class BackupManager @Inject constructor(
         val now = System.currentTimeMillis()
         val books = bookDao.getBooksByGitProjectId(project.id)
         for (book in books) {
-            val hash = book.contentHash.ifBlank {
-                BookContentHasher.hashEmptyFallback(
+            val hashes = linkedSetOf<String>()
+            if (book.contentHash.isNotBlank()) hashes += book.contentHash
+            val relative = book.gitRelativePath?.trim().orEmpty()
+            if (relative.isNotEmpty() && project.remoteUrl.isNotBlank()) {
+                hashes += BookContentHasher.hashForGitDocument(project.remoteUrl, relative)
+            }
+            if (hashes.isEmpty()) {
+                hashes += BookContentHasher.hashEmptyFallback(
                     book.importFormat,
                     book.title,
                     book.filePath,
                 )
             }
-            deletedBookDao.upsert(DeletedBookEntity(contentHash = hash, deletedAt = now))
+            for (hash in hashes) {
+                deletedBookDao.upsert(DeletedBookEntity(contentHash = hash, deletedAt = now))
+            }
             ParsedBookStorage.deleteBundleDir(book.parsedBundlePath)
             book.coverImagePath?.let { path -> runCatching { File(path).delete() } }
         }

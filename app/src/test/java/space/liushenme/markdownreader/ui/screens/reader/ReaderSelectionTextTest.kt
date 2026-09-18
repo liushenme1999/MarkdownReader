@@ -80,4 +80,21 @@ class ReaderSelectionTextTest {
         assertEquals("\$a\$", formatInlineLatexSelectionText("a"))
         assertEquals("\$a\$", formatInlineLatexSelectionText("\$a\$"))
     }
+
+    @Test
+    fun extract_codeBlockSelection_returnsSubstring() {
+        val markwon = space.liushenme.markdownreader.markdown.ReaderMarkwonFactory.create(context)
+        val rendered = markwon.toMarkdown("```kotlin\nval hello = 1\n```")
+        val span = rendered.getSpans(
+            0,
+            rendered.length,
+            space.liushenme.markdownreader.markdown.ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+        val start = rendered.getSpanStart(span)
+        val end = rendered.getSpanEnd(span)
+        val idx = span.rawCode.indexOf("hello")
+        span.setSelection(idx, idx + 5)
+        assertEquals("hello", extractReaderSelectionText(rendered, start, end, context))
+        assertTrue(readerSelectionHasActionableText(rendered, start, end, context))
+    }
 }

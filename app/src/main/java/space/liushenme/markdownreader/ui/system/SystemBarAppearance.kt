@@ -5,6 +5,7 @@ import android.os.Build
 import android.view.View
 import android.view.WindowManager
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 
 /**
@@ -42,6 +43,22 @@ object SystemBarAppearance {
         }
         WindowInsetsControllerCompat(window, view).apply {
             isAppearanceLightNavigationBars = lightNavigationBarIcons
+        }
+    }
+
+    /**
+     * 隐藏/显示状态栏与导航栏（含底部小白条）。离开阅读页时必须 [visible]=true，
+     * 否则书架等页面会继续处在沉浸隐藏状态。
+     */
+    fun setSystemBarsVisible(activity: Activity, view: View, visible: Boolean) {
+        val controller = WindowInsetsControllerCompat(activity.window, view)
+        val types = WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars()
+        if (visible) {
+            controller.show(types)
+        } else {
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+            controller.hide(types)
         }
     }
 }

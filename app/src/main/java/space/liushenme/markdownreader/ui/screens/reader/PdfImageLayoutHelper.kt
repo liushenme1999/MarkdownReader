@@ -1,10 +1,12 @@
 package space.liushenme.markdownreader.ui.screens.reader
 
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.text.Spanned
 import android.view.Gravity
 import android.view.ViewTreeObserver
 import android.widget.TextView
+import io.noties.markwon.image.AsyncDrawable
 import io.noties.markwon.image.AsyncDrawableSpan
 import space.liushenme.markdownreader.R
 
@@ -15,6 +17,7 @@ import space.liushenme.markdownreader.R
 internal object PdfImageLayoutHelper {
 
     private val TAG_PDF_LAYOUT_STATE = R.id.reader_pdf_layout_state
+    private val invertFilter = pdfPageInvertColorFilter()
 
     private data class PdfLayoutState(
         val basePaddingTop: Int,
@@ -37,8 +40,9 @@ internal object PdfImageLayoutHelper {
     fun scheduleApplyPdfPageLayout(textView: TextView, centerVertically: Boolean) {
         captureBasePadding(textView, centerVertically)
         applyPagedPdfTextGravity(textView, centerVertically)
-        val apply = Runnable { applyPdfPageLayout(textView) }
-        textView.post(apply)
+        textView.post { applyPdfPageLayout(textView) }
+        if (textView.getTag(R.id.reader_pdf_layout_listeners) == true) return
+        textView.setTag(R.id.reader_pdf_layout_listeners, true)
         textView.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
             if (v.width > 0 && v.height > 0) applyPdfPageLayout(v as TextView)
         }
@@ -74,6 +78,13 @@ internal object PdfImageLayoutHelper {
         restoreBaseVerticalPadding(textView, state)
         applyFullWidthImages(textView, state)
     }
+
+    fun setInvertPages(textView: TextView, invert: Boolean) {
+        textView.setTag(R.id.reader_pdf_invert_pages, invert)
+    }
+
+    private fun invertPages(textView: TextView): Boolean =
+        textView.getTag(R.id.reader_pdf_invert_pages) == true
 
     private fun layoutState(textView: TextView): PdfLayoutState? =
         textView.getTag(TAG_PDF_LAYOUT_STATE) as? PdfLayoutState
@@ -141,11 +152,29 @@ internal object PdfImageLayoutHelper {
                 drawable.initWithKnownDimensions(targetW, intrinsicH.toFloat() / intrinsicW)
                 changed = true
             }
+            applyPageAppearance(drawable, invertPages(textView))
             installDrawableRelayoutCallback(textView, drawable)
         }
         if (changed) {
             textView.invalidate()
             textView.requestLayout()
+        }
+    }
+
+    private fun applyPageAppearance(drawable: AsyncDrawable, invert: Boolean) {
+        val filter = if (invert) invertFilter else null
+        if (drawable.colorFilter !== filter) {
+            drawable.colorFilter = filter
+        }
+        val result = drawable.result
+        if (result != null && result.colorFilter !== filter) {
+            result.colorFilter = filter
+        }
+        (result as? BitmapDrawable)?.let { bmp ->
+            if (!bmp.isFilterBitmap) bmp.isFilterBitmap = true
+        }
+        if (!drawable.isFilterBitmap) {
+            drawable.isFilterBitmap = true
         }
     }
 

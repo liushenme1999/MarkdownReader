@@ -12,6 +12,7 @@ import android.text.style.ReplacementSpan
 import io.noties.markwon.core.MarkwonTheme
 import io.noties.markwon.utils.SpanUtils
 import kotlin.math.max
+import kotlin.math.min
 
 /**
  * 围栏/缩进代码块窗口：正文只占一个 `\uFFFC`。
@@ -60,6 +61,136 @@ internal class ReaderScrollableCodeBlockSpan(
     private var copyTop = 0f
     private var copyRight = 0f
     private var copyBottom = 0f
+
+    var selectionStart: Int = -1
+        private set
+    var selectionEnd: Int = -1
+        private set
+    var selectionFillColor: Int = 0x663A7AFE.toInt()
+
+    private val highlightRanges = mutableListOf<CodeBlockHighlightRange>()
+    private val selectionFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+    private val highlightFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+    private val highlightStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 3f
+    }
+
+    fun codeLength(): Int = content.length
+
+    fun hasSelection(): Boolean =
+        selectionStart >= 0 && selectionEnd > selectionStart && selectionStart < content.length
+
+    fun setSelection(start: Int, end: Int) {
+        val from = min(start, end).coerceIn(0, content.length)
+        val to = max(start, end).coerceIn(0, content.length)
+        selectionStart = from
+        selectionEnd = to
+    }
+
+    fun clearSelection() {
+        selectionStart = -1
+        selectionEnd = -1
+    }
+
+    fun selectedText(): String {
+        if (!hasSelection()) return ""
+        return content.subSequence(selectionStart, selectionEnd).toString()
+    }
+
+    fun setHighlightRanges(ranges: List<CodeBlockHighlightRange>) {
+        highlightRanges.clear()
+        highlightRanges.addAll(ranges)
+    }
+
+    fun clearHighlightRanges() {
+        highlightRanges.clear()
+    }
+
+    fun addHighlightRange(range: CodeBlockHighlightRange) {
+        highlightRanges.removeAll { it.start == range.start && it.end == range.end }
+        highlightRanges += range
+    }
+
+    fun removeHighlightRangeMatching(snippet: String) {
+        if (snippet.isEmpty()) return
+        highlightRanges.removeAll { range ->
+            range.end <= content.length &&
+                content.subSequence(range.start, range.end).toString() == snippet
+        }
+    }
+
+    fun indexOfSnippet(snippet: String): Int {
+        if (snippet.isEmpty()) return -1
+        val inRaw = rawCode.indexOf(snippet)
+        if (inRaw >= 0 && inRaw + snippet.length <= content.length) return inRaw
+        return content.toString().indexOf(snippet)
+    }
+
+    /**
+     * [contentX]/[contentY] 为 TextView layout 坐标（已扣 padding、加上 scrollY）。
+     * [originLeft]/[originTop] 为 ReplacementSpan 所在行的左上角。
+     */
+    fun offsetAt(
+        contentX: Float,
+        contentY: Float,
+        paint: Paint,
+        originLeft: Float,
+        originTop: Float,
+    ): Int? {
+        val layout = ensureLayout(paint)
+        if (layout.lineCount <= 0) return null
+        val headerH = headerHeight(paint)
+        val localX = contentX - originLeft - padH + scrollX
+        val localY = contentY - originTop - headerH - padV
+        if (localY < 0f) return null
+        val line = layout.getLineForVertical(localY.toInt().coerceAtLeast(0))
+            .coerceIn(0, layout.lineCount - 1)
+        val lineStart = layout.getLineStart(line)
+        val lineEnd = layout.getLineEnd(line)
+        val lastOnLine = (lineEnd - 1).coerceAtLeast(lineStart)
+        var offset = layout.getOffsetForHorizontal(line, localX)
+            .coerceIn(lineStart, lastOnLine)
+        if (offset > lineStart &&
+            layout.getParagraphDirection(line) == Layout.DIR_LEFT_TO_RIGHT &&
+            layout.getPrimaryHorizontal(offset) > localX
+        ) {
+            offset = (offset - 1).coerceAtLeast(lineStart)
+        }
+        return offset.coerceIn(0, (content.length - 1).coerceAtLeast(0))
+    }
+
+    fun handlePositionInLayout(
+        offset: Int,
+        isEnd: Boolean,
+        paint: Paint,
+        originLeft: Float,
+        originTop: Float,
+    ): Pair<Float, Float>? {
+        val layout = ensureLayout(paint)
+        if (layout.lineCount <= 0 || content.isEmpty()) return null
+        val safe = offset.coerceIn(0, content.length)
+        val lineOffset = if (isEnd && safe > 0) safe - 1 else safe.coerceAtMost(content.length - 1)
+        val line = layout.getLineForOffset(lineOffset.coerceIn(0, content.length - 1))
+        val x = when {
+            isEnd && safe >= layout.getLineEnd(line) -> layout.getLineRight(line)
+            isEnd -> layout.getPrimaryHorizontal(safe.coerceIn(0, content.length))
+            else -> layout.getPrimaryHorizontal(safe.coerceIn(0, content.length))
+        }
+        val fontBottom = layout.getLineBaseline(line) + layout.paint.fontMetricsInt.descent
+        val y = min(fontBottom, layout.getLineBottom(line)).toFloat()
+        val contentX = originLeft + padH - scrollX + x
+        val contentY = originTop + headerHeight(paint) + padV + y
+        return contentX to contentY
+    }
+
+    fun headerHeightPx(paint: Paint): Int = headerHeight(paint)
+
+    fun highlightRangesForTest(): List<CodeBlockHighlightRange> = highlightRanges.toList()
 
     fun maxScrollX(): Int {
         if (wrapEnabled) return 0
@@ -173,6 +304,10 @@ internal class ReaderScrollableCodeBlockSpan(
         try {
             canvas.clipRect(x, codeTop.toFloat(), clipRight, codeBottom)
             canvas.translate(x + padH - scrollX, codeTop.toFloat())
+            drawHighlightRanges(canvas, layout)
+            if (hasSelection()) {
+                drawSelectionRange(canvas, layout, selectionStart, selectionEnd, selectionFillColor)
+            }
             layout.draw(canvas)
         } finally {
             canvas.restoreToCount(save)
@@ -362,6 +497,70 @@ internal class ReaderScrollableCodeBlockSpan(
         return maxW.toInt().coerceAtLeast(1)
     }
 
+    private fun drawHighlightRanges(canvas: Canvas, layout: StaticLayout) {
+        for (range in highlightRanges) {
+            val start = range.start.coerceIn(0, content.length)
+            val end = range.end.coerceIn(0, content.length)
+            if (end <= start) continue
+            if (range.underline || range.wavy) {
+                highlightStrokePaint.color = range.color
+                highlightStrokePaint.strokeWidth = (1.15f * density).coerceIn(2.5f, 4.5f)
+                forEachLineRange(layout, start, end) { left, right, baseline ->
+                    val y = baseline + (5.5f * density).coerceIn(8f, 22f)
+                    canvas.drawLine(left, y, right, y, highlightStrokePaint)
+                }
+            } else {
+                highlightFillPaint.color = range.color
+                forEachLineRange(layout, start, end) { left, right, baseline ->
+                    val top = baseline - layout.paint.textSize
+                    canvas.drawRect(left, top, right, baseline + layout.paint.descent(), highlightFillPaint)
+                }
+            }
+        }
+    }
+
+    private fun drawSelectionRange(
+        canvas: Canvas,
+        layout: StaticLayout,
+        start: Int,
+        end: Int,
+        color: Int,
+    ) {
+        selectionFillPaint.color = color
+        forEachLineRange(layout, start, end) { left, right, baseline ->
+            val top = baseline - layout.paint.textSize
+            canvas.drawRect(left, top, right, baseline + layout.paint.descent(), selectionFillPaint)
+        }
+    }
+
+    private inline fun forEachLineRange(
+        layout: StaticLayout,
+        start: Int,
+        end: Int,
+        block: (left: Float, right: Float, baseline: Int) -> Unit,
+    ) {
+        val last = (end - 1).coerceAtLeast(start)
+        val firstLine = layout.getLineForOffset(start)
+        val lastLine = layout.getLineForOffset(last)
+        for (line in firstLine..lastLine) {
+            val lineStart = layout.getLineStart(line)
+            val lineEnd = layout.getLineEnd(line)
+            val drawStart = max(start, lineStart)
+            val drawEnd = min(end, lineEnd)
+            if (drawStart >= drawEnd) continue
+            val xStart = layout.getPrimaryHorizontal(drawStart)
+            val xEnd = if (drawEnd >= lineEnd) {
+                layout.getLineRight(line)
+            } else {
+                layout.getPrimaryHorizontal(drawEnd)
+            }
+            val left = min(xStart, xEnd)
+            val right = max(xStart, xEnd)
+            if (right <= left + 1f) continue
+            block(left, right, layout.getLineBaseline(line))
+        }
+    }
+
     private fun normalizeContent(code: CharSequence): CharSequence {
         var end = code.length
         while (end > 0 && (code[end - 1] == '\n' || code[end - 1] == '\r')) end--
@@ -370,3 +569,11 @@ internal class ReaderScrollableCodeBlockSpan(
     }
 
 }
+
+internal data class CodeBlockHighlightRange(
+    val start: Int,
+    val end: Int,
+    val color: Int,
+    val underline: Boolean = false,
+    val wavy: Boolean = false,
+)

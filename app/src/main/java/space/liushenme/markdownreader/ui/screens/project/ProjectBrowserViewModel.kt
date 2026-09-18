@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import space.liushenme.markdownreader.R
+import space.liushenme.markdownreader.data.backup.BackupManager
 import space.liushenme.markdownreader.data.local.entity.GitProjectEntity
 import space.liushenme.markdownreader.data.repository.GitProjectRepository
 import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
@@ -50,6 +51,7 @@ class ProjectBrowserViewModel @Inject constructor(
     private val gitProjectImporter: GitProjectImporter,
     private val gitDocumentOpener: GitDocumentOpener,
     private val gitPullCoordinator: GitProjectPullCoordinator,
+    private val backupManager: BackupManager,
     readerSettingsRepository: ReaderSettingsRepository,
     @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
@@ -262,12 +264,21 @@ class ProjectBrowserViewModel @Inject constructor(
         viewModelScope.launch {
             _pageBusy.value = true
             try {
-                withContext(Dispatchers.IO) {
+                val backupError = withContext(Dispatchers.IO) {
                     gitProjectRepository.deleteProjectCascade(p)
+                    backupManager.backupIfConfigured().exceptionOrNull()
                 }
                 toastChannel.trySend(
                     appContext.getString(R.string.toast_git_project_deleted, p.title),
                 )
+                if (backupError != null) {
+                    toastChannel.trySend(
+                        appContext.getString(
+                            R.string.backup_toast_backup_failed,
+                            backupError.message ?: appContext.getString(R.string.error_unknown),
+                        ),
+                    )
+                }
                 deletedChannel.trySend(Unit)
             } catch (e: Exception) {
                 toastChannel.trySend(

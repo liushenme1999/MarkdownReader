@@ -232,6 +232,8 @@
     <string name="reader_line_spacing_value">%1$.2f 倍</string>
     <string name="reader_code_block_wrap">程式碼區塊自動換行</string>
     <string name="reader_code_block_wrap_summary">關閉後，長程式碼可在區塊內左右滑動檢視</string>
+    <string name="reader_hide_system_bars">閱讀時隱藏系統列</string>
+    <string name="reader_hide_system_bars_summary">沉浸閱讀時隱藏頂部狀態列與底部小白條，點螢幕喚出功能列時再顯示。適用於 Markdown、TXT 與 PDF。</string>
     <string name="reader_code_block_copy">複製</string>
     <string name="reader_code_block_copied">已複製程式碼</string>
     <string name="reader_marks_sheet_title">書籤與劃線</string>
@@ -373,6 +375,7 @@
     <string name="reading_settings_section_appearance">外觀主題</string>
     <string name="reading_settings_section_reading_theme">顏色與背景</string>
     <string name="reading_settings_section_typography">字型與排版</string>
+    <string name="reading_settings_section_display">閱讀畫面</string>
     <string name="reading_settings_section_page_turn">翻頁方式</string>
 
     <string name="statistics_title">閱讀統計</string>

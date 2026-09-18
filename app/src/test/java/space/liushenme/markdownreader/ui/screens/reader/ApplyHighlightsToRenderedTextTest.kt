@@ -148,4 +148,40 @@ class ApplyHighlightsToRenderedTextTest {
         )
         assertEquals(8 until 10, range)
     }
+
+    @Test
+    fun applyHighlights_attachesSnippetToCodeBlockSpan() {
+        val context = RuntimeEnvironment.getApplication()
+        space.liushenme.markdownreader.markdown.ReaderCodeBlockSettings.wrapEnabled = true
+        space.liushenme.markdownreader.markdown.ReaderCodeBlockSettings.viewportWidthPx = 400
+        val markwon = space.liushenme.markdownreader.markdown.ReaderMarkwonFactory.create(context)
+        val rendered = markwon.toMarkdown("```kotlin\nval hello = 1\n```")
+        val textView = TextView(context).apply {
+            setText(rendered, TextView.BufferType.SPANNABLE)
+        }
+        val yellow = 0xFFFFFF00.toInt()
+        applyHighlightsToRenderedText(
+            textView,
+            listOf(
+                HighlightEntity(
+                    bookId = 1L,
+                    startPosition = 0,
+                    endPosition = 5,
+                    highlightedText = "hello",
+                    color = yellow,
+                    createTime = Date(),
+                ),
+            ),
+            highlightColorArgb = yellow,
+            sourceContentLength = 40,
+        )
+        val span = (textView.text as android.text.Spanned).getSpans(
+            0,
+            textView.text.length,
+            space.liushenme.markdownreader.markdown.ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+        val ranges = span.highlightRangesForTest()
+        assertEquals(1, ranges.size)
+        assertEquals("hello", span.rawCode.substring(ranges[0].start, ranges[0].end))
+    }
 }

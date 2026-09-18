@@ -134,12 +134,14 @@ internal fun ReaderPagedMarkdownHost(
     onPageTextViewReady: (Int, TextView) -> Unit,
     pdfFullWidthImages: Boolean = false,
     codeBlockWrap: Boolean = true,
+    userScrollEnabled: Boolean = true,
 ) {
     val layoutDirection = LocalLayoutDirection.current
     val cameraDistancePx = with(LocalDensity.current) { 12f * density * 80f }
 
     HorizontalPager(
         state = pagerState,
+        userScrollEnabled = userScrollEnabled,
         modifier = modifier.fillMaxSize()
     ) { pageIndex ->
         val outOfCenter = (pagerState.currentPage - pageIndex) + pagerState.currentPageOffsetFraction

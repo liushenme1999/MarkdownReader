@@ -27,7 +27,7 @@ internal object ReaderTextSelectionTouch {
 
     /** 正文选中区域只做小幅容错；大触摸带只保留在首尾句柄附近。 */
     private const val TEXT_HIT_SLOP_DP = 8f
-    private const val HANDLE_TOUCH_RADIUS_DP = 28f
+    internal const val HANDLE_TOUCH_RADIUS_DP = 28f
 
     fun horizontalSlopPx(density: Float): Int = (HORIZONTAL_SLOP_DP * density).toInt()
 

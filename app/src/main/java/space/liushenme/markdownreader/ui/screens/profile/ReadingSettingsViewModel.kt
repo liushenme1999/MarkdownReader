@@ -59,6 +59,12 @@ class ReadingSettingsViewModel @Inject constructor(
         initialValue = ReaderSettingsRepository.DEFAULT_CODE_BLOCK_WRAP,
     )
 
+    val hideSystemBars = readerSettingsRepository.hideSystemBars.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = ReaderSettingsRepository.DEFAULT_HIDE_SYSTEM_BARS,
+    )
+
     val pageTurnMode = readerSettingsRepository.pageTurnMode.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -120,6 +126,10 @@ class ReadingSettingsViewModel @Inject constructor(
 
     fun setCodeBlockWrap(wrap: Boolean) {
         viewModelScope.launch { readerSettingsRepository.setCodeBlockWrap(wrap) }
+    }
+
+    fun setHideSystemBars(hide: Boolean) {
+        viewModelScope.launch { readerSettingsRepository.setHideSystemBars(hide) }
     }
 
     fun setPageTurnMode(mode: ReaderPageTurnMode) {

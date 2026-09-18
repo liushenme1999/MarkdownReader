@@ -80,6 +80,46 @@ class ReaderCodeBlockGestureTest {
         assertTrue("scrollX=${span.scrollX}, max=${span.maxScrollX()}", span.scrollX > 0)
     }
 
+    @Test
+    fun longPressInsideCodeBlock_selectsInnerCharacters() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = true
+        ReaderCodeBlockSettings.viewportWidthPx = 400
+        val markwon: Markwon = ReaderMarkwonFactory.create(context)
+        val rendered = markwon.toMarkdown("```kotlin\nval hello = 1\n```")
+        val span = rendered
+            .getSpans(0, rendered.length, ReaderScrollableCodeBlockSpan::class.java)
+            .single()
+        val textView = SafeReaderTextView(context).apply {
+            textSize = 18f
+            setPadding(24, 24, 24, 24)
+        }
+        markwon.setParsedMarkdown(textView, rendered)
+        val parent = FrameLayout(context).apply { addView(textView) }
+        parent.measure(exactly(400), exactly(800))
+        parent.layout(0, 0, 400, 800)
+        textView.measure(exactly(400), exactly(700))
+        textView.layout(0, 0, 400, 700)
+
+        val spanned = textView.text as android.text.Spanned
+        val offset = spanned.getSpanStart(span)
+        val line = textView.layout.getLineForOffset(offset)
+        val y = textView.totalPaddingTop +
+            textView.layout.getLineTop(line) + span.headerHeightPx(textView.paint) + 16f
+        val x = textView.totalPaddingLeft + 36f
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
+        try {
+            textView.onTouchEvent(down)
+            assertTrue(textView.isSelectionLongPressScheduledForTest())
+            assertTrue(textView.fireScheduledSelectionLongPressForTest())
+            val selected = textView.codeSelectionSpanForTest()
+            assertTrue(selected != null && selected.hasSelection())
+            assertTrue(selected!!.selectedText().isNotEmpty())
+        } finally {
+            down.recycle()
+        }
+    }
+
     private fun exactly(px: Int): Int =
         View.MeasureSpec.makeMeasureSpec(px, View.MeasureSpec.EXACTLY)
 }

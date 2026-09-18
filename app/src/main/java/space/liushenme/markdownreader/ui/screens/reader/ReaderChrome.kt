@@ -110,6 +110,7 @@ internal fun ReaderImmersiveChapterTitleBar(
     fallbackTitle: String,
     theme: ReadingTheme,
     modifier: Modifier = Modifier,
+    reserveStatusBarInset: Boolean = true,
 ) {
     val readingProgress by viewModel.readingProgress.collectAsState()
     val chapterEntry = remember(tocEntries, readingProgress, totalChars) {
@@ -120,6 +121,7 @@ internal fun ReaderImmersiveChapterTitleBar(
         theme = theme,
         progressPercent = (readingProgress * 100).toInt(),
         modifier = modifier,
+        reserveStatusBarInset = reserveStatusBarInset,
     )
 }
 
@@ -142,20 +144,25 @@ internal fun ReaderImmersiveChapterTitleBar(
     theme: ReadingTheme,
     progressPercent: Int,
     modifier: Modifier = Modifier,
+    reserveStatusBarInset: Boolean = true,
 ) {
     val percent = progressPercent.coerceIn(0, 100)
     Column(
         modifier = modifier.fillMaxWidth()
     ) {
-        Spacer(
-            Modifier
-                .fillMaxWidth()
-                .windowInsetsTopHeight(WindowInsets.statusBars)
-        )
+        if (reserveStatusBarInset) {
+            Spacer(
+                Modifier
+                    .fillMaxWidth()
+                    .windowInsetsTopHeight(WindowInsets.statusBars)
+            )
+        }
+        val sidePadding = if (reserveStatusBarInset) 16.dp else 28.dp
+        val topPadding = if (reserveStatusBarInset) 2.dp else 8.dp
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 2.dp),
+                .padding(start = sidePadding, end = sidePadding, top = topPadding, bottom = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             MarkdownInlineHtmlText(

@@ -71,6 +71,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -93,6 +94,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.importing.ImportedBookFormat
+import space.liushenme.markdownreader.importing.PdfReaderContent
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
 import space.liushenme.markdownreader.ui.components.iconTintForDeleteStrip
 import space.liushenme.markdownreader.ui.theme.MarkdownReaderTheme
@@ -105,6 +107,7 @@ import space.liushenme.markdownreader.markdown.PreparedMarkdown
 import space.liushenme.markdownreader.markdown.ReaderCodeBlockSettings
 import space.liushenme.markdownreader.markdown.ReaderMarkwonFactory
 import space.liushenme.markdownreader.markdown.ReaderScrollableCodeBlockSpan
+import space.liushenme.markdownreader.markdown.CodeBlockHighlightRange
 import space.liushenme.markdownreader.markdown.ReaderTableSpacing
 import ru.noties.jlatexmath.JLatexMathDrawable
 import java.io.File
@@ -385,6 +388,7 @@ internal fun MarkdownReaderView(
 ) {
     val context = LocalContext.current
     val pdfPagedLayout = pdfFullWidthImages && !allowVerticalScroll
+    val invertPdfPages = pdfFullWidthImages && shouldInvertPdfPages(theme.backgroundColor.luminance())
     val paperBaseColor = rememberPaperBaseColor(theme)
     val paperColorArgb = paperBaseColor.toArgb()
     val markwon = remember(pdfFullWidthImages, paperColorArgb) {
@@ -406,6 +410,9 @@ internal fun MarkdownReaderView(
                 if (pdfPagedLayout) {
                     PdfImageLayoutHelper.applyPagedPdfTextGravity(this, centerVertically = true)
                     includeFontPadding = false
+                }
+                if (pdfFullWidthImages) {
+                    PdfImageLayoutHelper.setInvertPages(this, invertPdfPages)
                 }
                 movementMethod = LinkMovementMethod.getInstance()
                 setTextColor(theme.textColor.toArgb())
@@ -531,6 +538,13 @@ internal fun MarkdownReaderView(
                 PdfImageLayoutHelper.applyPagedPdfTextGravity(textView, centerVertically = true)
                 textView.includeFontPadding = false
             }
+            val pdfInvertChanged = if (pdfFullWidthImages) {
+                val prevInvert = textView.getTag(R.id.reader_pdf_invert_pages) == true
+                PdfImageLayoutHelper.setInvertPages(textView, invertPdfPages)
+                prevInvert != invertPdfPages
+            } else {
+                false
+            }
 
             if (contentChanged) {
                 applyReaderTextContent(
@@ -576,13 +590,18 @@ internal fun MarkdownReaderView(
                 onCenterTap = onCenterTap,
                 onDiagramTap = onDiagramTap,
             )
-            if (pdfPagedLayout && textView.text?.isNotEmpty() == true) {
+            // 顶栏显隐会重组 AndroidView.update；不要每次都重绑 PDF 布局/滚回 0，
+            // 否则点按唤出功能栏时页内滚动会被打回某一页开头。
+            if (pdfFullWidthImages &&
+                textView.text?.isNotEmpty() == true &&
+                (contentChanged || pdfInvertChanged)
+            ) {
                 PdfImageLayoutHelper.scheduleApplyPdfPageLayout(
                     textView = textView,
-                    centerVertically = true,
+                    centerVertically = pdfPagedLayout,
                 )
             }
-            if (!allowVerticalScroll) {
+            if (!allowVerticalScroll && contentChanged) {
                 textView.post {
                     textView.scrollTo(0, 0)
                     if (pdfPagedLayout) {
@@ -820,6 +839,22 @@ internal fun previewPlainTextFromTextViewTop(tv: TextView): String {
 }
 
 /**
+ * TextView.bringPointIntoView 会把光标所在行的行顶滚进视口。
+ * PDF 页图通常整页是一行且高于屏幕：点按页中会把「当前页开头」跳到顶部。
+ * 若该超高行已经与视口相交，则不要再对齐行顶。
+ */
+internal fun shouldSkipBringPointIntoViewForVisibleTallLine(
+    lineTop: Int,
+    lineBottom: Int,
+    scrollY: Int,
+    innerHeight: Int,
+): Boolean {
+    if (innerHeight <= 0) return false
+    if (lineBottom - lineTop <= innerHeight) return false
+    return lineBottom > scrollY && lineTop < scrollY + innerHeight
+}
+
+/**
  * 阅读器 TextView：参考 Legado 自管触摸选区、文字高亮和首尾句柄；
  * 保留 textIsSelectable 仅用于无障碍，触摸路径不与系统 Editor 混用。
  */
@@ -934,6 +969,9 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     private var codeCopyDown = false
     /** 超宽代码块从 DOWN 起由 dispatchTouchEvent 独占，防止 Compose 父级先截走 MOVE。 */
     private var interceptOverflowCodeGesture = false
+    private var codeSelectionSpan: ReaderScrollableCodeBlockSpan? = null
+    private var codeSelectionAnchor = -1
+    private var codeHandleDraggingEnd: Boolean? = null
     /** 每次手指按下只允许触发一次扩窗，避免连续扩到全书末尾。 */
     private var windowExpandConsumedThisGesture = false
     private var selectionActive = false
@@ -1213,6 +1251,10 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     }
 
     private fun currentSelectedText(): String {
+        val codeSpan = codeSelectionSpan
+        if (codeSpan != null && codeSpan.hasSelection()) {
+            return codeSpan.selectedText()
+        }
         val range = currentSelectionRange() ?: return ""
         val body = text ?: return ""
         return extractReaderSelectionText(body, range.first, range.last + 1, context)
@@ -1574,6 +1616,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         val span = ReaderTextLinkTouch.findAsyncDrawableSpanAt(this, x, y) ?: return null
         if (isLatexImageSpan(span)) return null
         val destination = span.drawable.destination.orEmpty()
+        if (PdfReaderContent.isPageImageDestination(destination)) return null
         if (destination.startsWith("diagram://")) {
             return DiagramImageLoader.cachedBitmapForDestination(destination)
         }
@@ -1608,6 +1651,83 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     private fun codeBlockViewportWidth(): Int =
         (width - totalPaddingLeft - totalPaddingRight).coerceAtLeast(0)
 
+    private fun codeSpanOrigin(span: ReaderScrollableCodeBlockSpan): Pair<Float, Float>? {
+        val layout = layout ?: return null
+        val spanned = text as? Spanned ?: return null
+        val start = spanned.getSpanStart(span)
+        if (start < 0) return null
+        val line = layout.getLineForOffset(start)
+        return layout.getLineLeft(line) to layout.getLineTop(line).toFloat()
+    }
+
+    private fun clearCodeBlockSelectionVisual() {
+        val span = codeSelectionSpan ?: return
+        span.clearSelection()
+        invalidateMutableCodeBlockSpan(span)
+        codeSelectionSpan = null
+        codeSelectionAnchor = -1
+        codeHandleDraggingEnd = null
+    }
+
+    internal fun codeSelectionSpanForTest(): ReaderScrollableCodeBlockSpan? = codeSelectionSpan
+
+    private fun startCodeBlockSelectionAtPressed(): Boolean {
+        val span = scrollableCodeBlockSpanAt(touchDownX, touchDownY) ?: return false
+        val contentX = touchDownX - totalPaddingLeft
+        val contentY = touchDownY + scrollY - totalPaddingTop
+        if (span.isOnCopyButton(contentX, contentY)) return false
+        span.prepareForTouch(paint, codeBlockViewportWidth())
+        val origin = codeSpanOrigin(span) ?: return false
+        val offset = span.offsetAt(contentX, contentY, paint, origin.first, origin.second)
+            ?: return false
+        val end = (offset + 1).coerceAtMost(span.codeLength())
+        if (end <= offset) return false
+        span.selectionFillColor = android.graphics.Color.argb(
+            0x66,
+            android.graphics.Color.red(readerSelectionColor),
+            android.graphics.Color.green(readerSelectionColor),
+            android.graphics.Color.blue(readerSelectionColor),
+        )
+        span.setSelection(offset, end)
+        codeSelectionSpan = span
+        codeSelectionAnchor = offset
+        val spanned = ensureReaderSpannable(this) ?: return false
+        val spanStart = spanned.getSpanStart(span)
+        val spanEnd = spanned.getSpanEnd(span)
+        if (spanStart < 0 || spanEnd <= spanStart) return false
+        customSelectionSessionActive = true
+        setHighlightColor(android.graphics.Color.TRANSPARENT)
+        selectionAnchorOffset = spanStart
+        lockedSelectionStart = spanStart
+        lockedSelectionEnd = spanEnd
+        freezeSelectionExtendUntilUp = true
+        if (!applySelectionOffsets(spanStart, spanEnd)) return false
+        onSelectionChanged(spanStart, spanEnd)
+        cancelLongPress()
+        parent?.requestDisallowInterceptTouchEvent(true)
+        restoreSelectionActionMode()
+        invalidateMutableCodeBlockSpan(span)
+        return true
+    }
+
+    private fun extendCodeBlockSelectionTo(x: Float, y: Float): Boolean {
+        val span = codeSelectionSpan ?: return false
+        if (codeSelectionAnchor < 0) return false
+        span.prepareForTouch(paint, codeBlockViewportWidth())
+        val origin = codeSpanOrigin(span) ?: return false
+        val contentX = x - totalPaddingLeft
+        val contentY = y + scrollY - totalPaddingTop
+        val current = span.offsetAt(contentX, contentY, paint, origin.first, origin.second)
+            ?: return false
+        val start = minOf(codeSelectionAnchor, current)
+        val end = (maxOf(codeSelectionAnchor, current) + 1).coerceAtMost(span.codeLength())
+        if (end <= start) return false
+        span.setSelection(start, end)
+        invalidateMutableCodeBlockSpan(span)
+        onSelectionChanged(lockedSelectionStart, lockedSelectionEnd)
+        return true
+    }
+
     /**
      * 在 [onTouchEvent] 里处理代码块横滑，必须赶在 Editor / 正文滚动之前。
      * @return true 表示已消费，调用方不要再交给 super。
@@ -1632,6 +1752,10 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             }
             MotionEvent.ACTION_MOVE -> {
                 val span = activeCodeBlockSpan ?: return false
+                if (codeSelectionSpan != null) {
+                    extendCodeBlockSelectionTo(event.x, event.y)
+                    return true
+                }
                 if (selectionActive && !codeScrolling) {
                     dismissSelection()
                 }
@@ -1881,6 +2005,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             setHighlightColor(readerSelectionColor)
             activeSelectionHandle = null
             selectionHandleAnchorOffset = -1
+            codeHandleDraggingEnd = null
+            clearCodeBlockSelectionVisual()
             readerSelectionActionMode?.finish()
             readerSelectionActionMode = null
             movementMethod = linkMovement
@@ -1983,8 +2109,12 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     private val startSelectionLongPressRunnable = Runnable {
         selectionLongPressScheduled = false
         if (!pointerDown || selectionActive || isVerticalScrollDrag) return@Runnable
-        if (gestureOnDiagram || gestureOnCodeBlock) return@Runnable
+        if (gestureOnDiagram || codeCopyDown || codeScrolling) return@Runnable
         if (!isTapGesture(lastTouchX, lastTouchY)) return@Runnable
+        if (gestureOnCodeBlock || scrollableCodeBlockSpanAt(lastTouchX, lastTouchY) != null) {
+            startCodeBlockSelectionAtPressed()
+            return@Runnable
+        }
         startSelectionAtPressedChar()
     }
 
@@ -2000,7 +2130,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     private fun maybeScheduleSelectionLongPress() {
         cancelSelectionLongPress()
         if (!pointerDown || selectionActive) return
-        if (gestureOnDiagram || gestureOnCodeBlock) return
+        if (gestureOnDiagram || codeCopyDown) return
         if (pendingLinkSpan != null) return
         selectionLongPressScheduled = true
         postDelayed(startSelectionLongPressRunnable, SELECTION_LONG_PRESS_TIMEOUT_MS)
@@ -2145,6 +2275,36 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         if (allowVerticalScroll) super.scrollTo(x, y) else super.scrollTo(x, 0)
     }
 
+    override fun bringPointIntoView(offset: Int): Boolean {
+        if (shouldSkipBringPointIntoView(offset)) return false
+        return super.bringPointIntoView(offset)
+    }
+
+    override fun bringPointIntoView(offset: Int, requestRectWithoutFocus: Boolean): Boolean {
+        if (shouldSkipBringPointIntoView(offset)) return false
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            super.bringPointIntoView(offset, requestRectWithoutFocus)
+        } else {
+            super.bringPointIntoView(offset)
+        }
+    }
+
+    private fun shouldSkipBringPointIntoView(offset: Int): Boolean {
+        if (!allowVerticalScroll) return false
+        val layout = layout ?: return false
+        val len = layout.text.length
+        if (len <= 0) return false
+        val clamped = offset.coerceIn(0, len - 1)
+        val line = layout.getLineForOffset(clamped)
+        val innerH = height - totalPaddingTop - totalPaddingBottom
+        return shouldSkipBringPointIntoViewForVisibleTallLine(
+            lineTop = layout.getLineTop(line),
+            lineBottom = layout.getLineBottom(line),
+            scrollY = scrollY,
+            innerHeight = innerH,
+        )
+    }
+
     private fun shouldDismissSelectionOnOutsideTap(): Boolean {
         if (!pendingOutsideTapDismiss || !selectionActive) return false
         val dx = kotlin.math.abs(lastTouchX - touchDownX)
@@ -2236,6 +2396,18 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     }
 
     private fun beginSelectionHandleDrag(handle: ReaderTextSelectionTouch.SelectionHandle) {
+        val codeSpan = codeSelectionSpan
+        if (codeSpan != null && codeSpan.hasSelection()) {
+            activeSelectionHandle = handle
+            codeHandleDraggingEnd = handle == ReaderTextSelectionTouch.SelectionHandle.END
+            codeSelectionAnchor = when (handle) {
+                ReaderTextSelectionTouch.SelectionHandle.START ->
+                    (codeSpan.selectionEnd - 1).coerceAtLeast(codeSpan.selectionStart)
+                ReaderTextSelectionTouch.SelectionHandle.END -> codeSpan.selectionStart
+            }
+            parent?.requestDisallowInterceptTouchEvent(true)
+            return
+        }
         val spannable = text as? Spannable ?: return
         var start = Selection.getSelectionStart(spannable)
         var end = Selection.getSelectionEnd(spannable)
@@ -2254,6 +2426,9 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     }
 
     private fun updateSelectionFromHandleDrag(x: Float, y: Float): Boolean {
+        if (codeSelectionSpan != null) {
+            return extendCodeBlockSelectionTo(x, y)
+        }
         val anchor = selectionHandleAnchorOffset
         if (anchor < 0) return false
         val layout = layout ?: return false
@@ -2289,6 +2464,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
      * 若再次减 scroll，选区就会悬在屏幕上而不随正文移动。
      */
     private fun drawReaderSelectionBackground(canvas: Canvas) {
+        if (codeSelectionSpan != null) return
         if (!customSelectionSessionActive || !selectionActive || !hasSelectionRange()) return
         val layout = layout ?: return
         val spannable = text as? Spannable ?: return
@@ -2317,32 +2493,39 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     private fun drawReaderSelectionHandles(canvas: Canvas) {
         if (!customSelectionSessionActive || !selectionActive || !hasSelectionRange()) return
-        val spannable = text as? Spannable ?: return
-        var start = Selection.getSelectionStart(spannable)
-        var end = Selection.getSelectionEnd(spannable)
-        if (start < 0 || end < 0 || start == end) return
-        if (start > end) {
-            val swap = start
-            start = end
-            end = swap
+        val startPoint: Pair<Float, Float>
+        val endPoint: Pair<Float, Float>
+        val codeSpan = codeSelectionSpan
+        if (codeSpan != null && codeSpan.hasSelection()) {
+            startPoint = codeHandleViewPosition(isEnd = false) ?: return
+            endPoint = codeHandleViewPosition(isEnd = true) ?: return
+        } else {
+            val spannable = text as? Spannable ?: return
+            var start = Selection.getSelectionStart(spannable)
+            var end = Selection.getSelectionEnd(spannable)
+            if (start < 0 || end < 0 || start == end) return
+            if (start > end) {
+                val swap = start
+                start = end
+                end = swap
+            }
+            startPoint = ReaderTextSelectionTouch.selectionHandlePositionOnTextView(
+                this,
+                start,
+                isEnd = false,
+            ) ?: return
+            endPoint = ReaderTextSelectionTouch.selectionHandlePositionOnTextView(
+                this,
+                end,
+                isEnd = true,
+            ) ?: return
         }
-        val startPoint = ReaderTextSelectionTouch.selectionHandlePositionOnTextView(
-            this,
-            start,
-            isEnd = false,
-        ) ?: return
-        val endPoint = ReaderTextSelectionTouch.selectionHandlePositionOnTextView(
-            this,
-            end,
-            isEnd = true,
-        ) ?: return
         val density = resources.displayMetrics.density
         val radius = 7f * density
         val stem = 5f * density
         selectionHandlePaint.color = ColorUtils.setAlphaComponent(readerSelectionColor, 255)
         selectionHandlePaint.strokeWidth = 2.5f * density
         for (point in listOf(startPoint, endPoint)) {
-            // helper 返回触摸用视口坐标；onDraw canvas 已带 scroll 平移，绘制需还原为内容坐标。
             val drawX = point.first + scrollX
             val drawY = point.second + scrollY
             canvas.drawLine(
@@ -2359,6 +2542,54 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 selectionHandlePaint,
             )
         }
+    }
+
+    private fun codeHandleViewPosition(isEnd: Boolean): Pair<Float, Float>? {
+        val span = codeSelectionSpan ?: return null
+        if (!span.hasSelection()) return null
+        val origin = codeSpanOrigin(span) ?: return null
+        val offset = if (isEnd) span.selectionEnd else span.selectionStart
+        val layoutPoint = span.handlePositionInLayout(
+            offset,
+            isEnd,
+            paint,
+            origin.first,
+            origin.second,
+        ) ?: return null
+        return (layoutPoint.first + totalPaddingLeft - scrollX) to
+            (layoutPoint.second + totalPaddingTop - scrollY)
+    }
+
+    private fun selectionHandleAtIncludingCode(x: Float, y: Float): ReaderTextSelectionTouch.SelectionHandle? {
+        val codeSpan = codeSelectionSpan
+        if (codeSpan != null && codeSpan.hasSelection()) {
+            val startPoint = codeHandleViewPosition(isEnd = false) ?: return null
+            val endPoint = codeHandleViewPosition(isEnd = true) ?: return null
+            val radius = ReaderTextSelectionTouch.HANDLE_TOUCH_RADIUS_DP *
+                resources.displayMetrics.density
+            val maxDistance = radius * radius
+            fun dist(px: Float, py: Float): Float {
+                val dx = x - px
+                val dy = y - py
+                return dx * dx + dy * dy
+            }
+            val startDistance = dist(startPoint.first, startPoint.second)
+            val endDistance = dist(endPoint.first, endPoint.second)
+            val startHit = startDistance <= maxDistance
+            val endHit = endDistance <= maxDistance
+            return when {
+                startHit && endHit ->
+                    if (startDistance <= endDistance) {
+                        ReaderTextSelectionTouch.SelectionHandle.START
+                    } else {
+                        ReaderTextSelectionTouch.SelectionHandle.END
+                    }
+                startHit -> ReaderTextSelectionTouch.SelectionHandle.START
+                endHit -> ReaderTextSelectionTouch.SelectionHandle.END
+                else -> null
+            }
+        }
+        return ReaderTextSelectionTouch.selectionHandleAtOnTextView(this, x, y)
     }
 
     /**
@@ -2478,7 +2709,9 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 val copyDown = span?.isOnCopyButton(contentX, contentY) == true
                 if (span != null && (span.canScrollHorizontally() || copyDown)) {
                     removeCallbacks(settleViewportAfterScrollRunnable)
-                    cancelSelectionLongPress()
+                    if (copyDown) {
+                        cancelSelectionLongPress()
+                    }
                     pointerDown = true
                     touchDownX = event.x
                     touchDownY = event.y
@@ -2492,6 +2725,9 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                     gestureOnCodeBlock = true
                     interceptOverflowCodeGesture = true
                     parent?.requestDisallowInterceptTouchEvent(true)
+                    if (!copyDown) {
+                        maybeScheduleSelectionLongPress()
+                    }
                     return true
                 }
                 interceptOverflowCodeGesture = false
@@ -2507,7 +2743,11 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                         codeCopyDown = false
                     }
                     when {
+                        codeSelectionSpan != null -> {
+                            extendCodeBlockSelectionTo(event.x, event.y)
+                        }
                         codeScrolling || (adx > touchSlop && adx >= ady) -> {
+                            cancelSelectionLongPress()
                             val delta = lastCodeTouchX - event.x
                             lastCodeTouchX = event.x
                             span.scrollBy(delta)
@@ -2515,6 +2755,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                             invalidateMutableCodeBlockSpan(span)
                         }
                         ady > touchSlop && ady > adx && allowVerticalScroll -> {
+                            cancelSelectionLongPress()
                             val deltaY = event.y - lastCodeTouchY
                             lastCodeTouchY = event.y
                             val layoutH = layout?.height ?: 0
@@ -2578,7 +2819,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 // 这样本次手势可以继续滚动、打开链接或长按新位置，且不会被 Editor
                 // 先折叠 range、随后又由 restoreSavedSelectionRange 拉回孤儿高亮。
                 val touchedSelectionHandle = if (selectionActive && customSelectionSessionActive) {
-                    ReaderTextSelectionTouch.selectionHandleAtOnTextView(this, event.x, event.y)
+                    selectionHandleAtIncludingCode(event.x, event.y)
                 } else {
                     null
                 }
@@ -2634,7 +2875,11 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 }
                 if (freezeSelectionExtendUntilUp) {
                     if (!isTapGesture(event.x, event.y)) {
-                        extendSelectionFromAnchorToTouch(event.x, event.y)
+                        if (codeSelectionSpan != null) {
+                            extendCodeBlockSelectionTo(event.x, event.y)
+                        } else {
+                            extendSelectionFromAnchorToTouch(event.x, event.y)
+                        }
                     }
                     parent?.requestDisallowInterceptTouchEvent(true)
                     return true
@@ -2887,21 +3132,45 @@ internal fun applyHighlightsToRenderedText(
     highlightColorArgb: Int,
     sourceContentLength: Int = -1,
 ) {
-    if (highlights.isEmpty()) return
     val text = ensureReaderSpannable(textView) ?: return
     val full = text.toString()
+    val codeSpans = text.getSpans(0, text.length, ReaderScrollableCodeBlockSpan::class.java)
+    codeSpans.forEach { it.clearHighlightRanges() }
+    if (highlights.isEmpty()) {
+        textView.invalidate()
+        return
+    }
     highlights.forEach { highlight ->
-        val range = resolveHighlightDisplayedRange(
-            displayed = full,
-            highlight = highlight,
-            sourceContentLength = sourceContentLength,
-        ) ?: return@forEach
         val spanColor = if (android.graphics.Color.alpha(highlight.color) < 16) {
             highlightColorArgb
         } else {
             highlight.color
         }
         val style = space.liushenme.markdownreader.model.HighlightStyle.fromStorageKey(highlight.style)
+        val snippet = highlight.highlightedText
+        var appliedToCode = false
+        if (snippet.isNotEmpty()) {
+            for (codeSpan in codeSpans) {
+                val idx = codeSpan.indexOfSnippet(snippet)
+                if (idx < 0) continue
+                codeSpan.addHighlightRange(
+                    CodeBlockHighlightRange(
+                        start = idx,
+                        end = idx + snippet.length,
+                        color = spanColor,
+                        underline = style != space.liushenme.markdownreader.model.HighlightStyle.Background,
+                        wavy = style == space.liushenme.markdownreader.model.HighlightStyle.Wavy,
+                    ),
+                )
+                appliedToCode = true
+            }
+        }
+        if (appliedToCode) return@forEach
+        val range = resolveHighlightDisplayedRange(
+            displayed = full,
+            highlight = highlight,
+            sourceContentLength = sourceContentLength,
+        ) ?: return@forEach
         val spanStart = range.first
         val spanEnd = range.last + 1
         val span: Any = when (style) {
@@ -2934,6 +3203,25 @@ internal fun applyHighlightDecorationAtRange(
 ) {
     val text = ensureReaderSpannable(textView) ?: return
     if (start < 0 || end > text.length || start >= end) return
+    val codeSpan = text.getSpans(start, end, ReaderScrollableCodeBlockSpan::class.java)
+        .firstOrNull { span ->
+            val spanStart = text.getSpanStart(span)
+            val spanEnd = text.getSpanEnd(span)
+            spanStart >= 0 && spanStart < end && spanEnd > start && span.hasSelection()
+        }
+    if (codeSpan != null) {
+        codeSpan.addHighlightRange(
+            CodeBlockHighlightRange(
+                start = codeSpan.selectionStart,
+                end = codeSpan.selectionEnd,
+                color = colorArgb,
+                underline = style != space.liushenme.markdownreader.model.HighlightStyle.Background,
+                wavy = style == space.liushenme.markdownreader.model.HighlightStyle.Wavy,
+            ),
+        )
+        textView.invalidate()
+        return
+    }
     text.getSpans(start, end, HighlightBackgroundSpan::class.java).forEach { text.removeSpan(it) }
     text.getSpans(start, end, HighlightUnderlineSpan::class.java).forEach { text.removeSpan(it) }
     val span: Any = when (style) {
@@ -2954,6 +3242,8 @@ internal fun clearReaderHighlightSpans(textView: TextView) {
     if (text !is Spannable || text.isEmpty()) return
     text.getSpans(0, text.length, HighlightBackgroundSpan::class.java).forEach { text.removeSpan(it) }
     text.getSpans(0, text.length, HighlightUnderlineSpan::class.java).forEach { text.removeSpan(it) }
+    text.getSpans(0, text.length, ReaderScrollableCodeBlockSpan::class.java)
+        .forEach { it.clearHighlightRanges() }
     textView.invalidate()
 }
 
@@ -2963,6 +3253,11 @@ internal fun clearReaderHighlightSpansAtRange(textView: TextView, start: Int, en
     if (start < 0 || end > text.length || start >= end) return
     text.getSpans(start, end, HighlightBackgroundSpan::class.java).forEach { text.removeSpan(it) }
     text.getSpans(start, end, HighlightUnderlineSpan::class.java).forEach { text.removeSpan(it) }
+    text.getSpans(start, end, ReaderScrollableCodeBlockSpan::class.java).forEach { span ->
+        if (span.hasSelection()) {
+            span.removeHighlightRangeMatching(span.selectedText())
+        }
+    }
     textView.invalidate()
 }
 

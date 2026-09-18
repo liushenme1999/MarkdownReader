@@ -232,6 +232,8 @@
     <string name="reader_line_spacing_value">%1$.2fx</string>
     <string name="reader_code_block_wrap">Wrap code blocks</string>
     <string name="reader_code_block_wrap_summary">When off, long code can be scrolled horizontally inside the block</string>
+    <string name="reader_hide_system_bars">Hide system bars while reading</string>
+    <string name="reader_hide_system_bars_summary">Hide the status bar and navigation bar during immersive reading. They reappear when you show the toolbar. Applies to Markdown, TXT, and PDF.</string>
     <string name="reader_code_block_copy">Copy</string>
     <string name="reader_code_block_copied">Code copied</string>
     <string name="reader_marks_sheet_title">Bookmarks &amp; highlights</string>
@@ -373,6 +375,7 @@
     <string name="reading_settings_section_appearance">Appearance</string>
     <string name="reading_settings_section_reading_theme">Color &amp; background</string>
     <string name="reading_settings_section_typography">Typography</string>
+    <string name="reading_settings_section_display">Reading screen</string>
     <string name="reading_settings_section_page_turn">Page turn</string>
 
     <string name="statistics_title">Reading stats</string>

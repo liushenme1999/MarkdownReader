@@ -110,4 +110,39 @@ class ReaderScrollableCodeBlockTest {
         assertEquals("", ReaderCodeBlockLanguage.label(null))
         assertEquals("", ReaderCodeBlockLanguage.label("  "))
     }
+
+    @Test
+    fun offsetAt_andSelectedText_useInnerLayout() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = true
+        ReaderCodeBlockSettings.viewportWidthPx = 400
+        val markwon = ReaderMarkwonFactory.create(context)
+        val rendered = markwon.toMarkdown("```kotlin\nval hello = 1\n```")
+        val span = rendered.getSpans(0, rendered.length, ReaderScrollableCodeBlockSpan::class.java).single()
+        val paint = Paint().apply { textSize = 40f }
+        span.prepareForTouch(paint, 400)
+        span.getSize(paint, rendered, 0, 1, Paint.FontMetricsInt())
+        val y = span.headerHeightPx(paint) + 20f
+        val offset = span.offsetAt(24f, y, paint, originLeft = 0f, originTop = 0f)
+        assertTrue("offsetAt should hit code, got $offset", offset != null)
+        val start = offset!!
+        val end = (start + 1).coerceAtMost(span.codeLength())
+        span.setSelection(start, end)
+        assertTrue(span.hasSelection())
+        val selected = span.selectedText()
+        assertTrue(selected.isNotEmpty())
+        assertTrue(span.rawCode.contains(selected))
+
+        span.setSelection(0, 3)
+        assertEquals(span.rawCode.take(3), span.selectedText())
+
+        val idx = span.indexOfSnippet("hello")
+        assertTrue(idx >= 0)
+        span.addHighlightRange(
+            CodeBlockHighlightRange(idx, idx + 5, 0xFFFFFF00.toInt()),
+        )
+        assertEquals(1, span.highlightRangesForTest().size)
+        span.removeHighlightRangeMatching("hello")
+        assertTrue(span.highlightRangesForTest().isEmpty())
+    }
 }

@@ -59,6 +59,7 @@ fun ShelfStyleSystemBarsEffect(
     applyNavigationBar: Boolean = true,
     navigationBarColor: Color = backgroundColor,
     iconContrastColor: Color = backgroundColor,
+    systemBarsVisible: Boolean = true,
 ) {
     val view = LocalView.current
     val activity = view.context as Activity
@@ -83,16 +84,22 @@ fun ShelfStyleSystemBarsEffect(
                 lightNavigationBarIcons = useLightBarIcons,
             )
         }
+        SystemBarAppearance.setSystemBarsVisible(activity, view, systemBarsVisible)
     }
 
     SideEffect { apply() }
 
-    DisposableEffect(lifecycleOwner, barArgb, navArgb, useLightBarIcons, applyNavigationBar) {
+    DisposableEffect(lifecycleOwner, barArgb, navArgb, useLightBarIcons, applyNavigationBar, systemBarsVisible) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) apply()
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            if (!systemBarsVisible) {
+                SystemBarAppearance.setSystemBarsVisible(activity, view, true)
+            }
+        }
     }
 }
 

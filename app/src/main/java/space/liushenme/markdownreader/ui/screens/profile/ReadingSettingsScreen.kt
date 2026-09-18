@@ -37,6 +37,7 @@ import space.liushenme.markdownreader.ui.components.ReaderSettingsChoiceOption
 import space.liushenme.markdownreader.ui.components.ReaderSettingsGroupCard
 import space.liushenme.markdownreader.ui.components.ReaderSettingsHintBanner
 import space.liushenme.markdownreader.ui.components.ReaderSettingsSectionTitle
+import space.liushenme.markdownreader.ui.components.ReaderSettingsSwitchRow
 import space.liushenme.markdownreader.ui.components.ReaderWideSliderRow
 import space.liushenme.markdownreader.ui.components.ReadingStyleSettingsBlock
 import space.liushenme.markdownreader.ui.components.ShelfStyleTopAppBar
@@ -55,6 +56,7 @@ fun ReadingSettingsScreen(
     val readerPaddingDp by viewModel.readerPaddingDp.collectAsState()
     val lineSpacing by viewModel.readerLineSpacingMultiplier.collectAsState()
     val codeBlockWrap by viewModel.codeBlockWrap.collectAsState()
+    val hideSystemBars by viewModel.hideSystemBars.collectAsState()
     val pageTurnMode by viewModel.pageTurnMode.collectAsState()
     val appThemeMode by viewModel.appThemeMode.collectAsState()
     val appLanguage by viewModel.appLanguage.collectAsState()
@@ -199,6 +201,18 @@ fun ReadingSettingsScreen(
                             onCheckedChange = viewModel::setCodeBlockWrap,
                         )
                     }
+                }
+            }
+
+            Column {
+                ReaderSettingsSectionTitle(stringResource(R.string.reading_settings_section_display))
+                ReaderSettingsGroupCard {
+                    ReaderSettingsSwitchRow(
+                        title = stringResource(R.string.reader_hide_system_bars),
+                        summary = stringResource(R.string.reader_hide_system_bars_summary),
+                        checked = hideSystemBars,
+                        onCheckedChange = viewModel::setHideSystemBars,
+                    )
                 }
             }
 
