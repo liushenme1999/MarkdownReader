@@ -289,6 +289,13 @@
     <string name="profile_title">我的</string>
     <string name="about_dialog_title">關於 MD閱讀器</string>
     <string name="about_version">版本號：%1$s</string>
+    <string name="about_check_update">檢查更新</string>
+    <string name="about_check_update_cd">檢查是否有新版本</string>
+    <string name="about_update_already_latest">已是最新版本</string>
+    <string name="about_update_check_failed">檢查更新失敗，請稍後再試</string>
+    <string name="about_update_found_title">發現新版本</string>
+    <string name="about_update_found_message">發現新版本 %1$s，可前往 GitHub 下載安裝。</string>
+    <string name="about_update_go_download">去下載</string>
     <string name="about_supported_formats">支援的檔案格式：</string>
     <string name="about_format_md">  - Markdown (.md)</string>
     <string name="about_format_txt">  - 文字檔 (.txt)</string>

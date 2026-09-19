@@ -7,20 +7,30 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,12 +44,16 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
+import kotlinx.coroutines.flow.collectLatest
 import space.liushenme.markdownreader.BuildConfig
 import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.ui.components.ShelfStyleTopAppBar
@@ -47,11 +61,61 @@ import space.liushenme.markdownreader.ui.components.ShelfStyleTopBarBackground
 import space.liushenme.markdownreader.ui.components.shelfStylePageBackground
 
 @Composable
-fun AboutScreen(navController: NavController) {
+fun AboutScreen(
+    navController: NavController,
+    viewModel: AboutViewModel = hiltViewModel(),
+) {
     val pageBg = shelfStylePageBackground()
+    val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val checking by viewModel.checking.collectAsState()
+    val newerRelease by viewModel.newerRelease.collectAsState()
+    val alreadyLatest = stringResource(R.string.about_update_already_latest)
+    val checkFailed = stringResource(R.string.about_update_check_failed)
+
+    LaunchedEffect(viewModel) {
+        viewModel.messages.collectLatest { message ->
+            val text = when (message) {
+                AboutUpdateMessage.AlreadyLatest -> alreadyLatest
+                AboutUpdateMessage.CheckFailed -> checkFailed
+            }
+            snackbarHostState.showSnackbar(text)
+        }
+    }
+
+    val pending = newerRelease
+    if (pending != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissNewerRelease() },
+            title = { Text(stringResource(R.string.about_update_found_title)) },
+            text = {
+                Text(stringResource(R.string.about_update_found_message, pending.versionName))
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.dismissNewerRelease()
+                        runCatching {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(pending.pageUrl)),
+                            )
+                        }
+                    },
+                ) {
+                    Text(stringResource(R.string.about_update_go_download))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissNewerRelease() }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            },
+        )
+    }
 
     Scaffold(
         containerColor = pageBg,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             ShelfStyleTopBarBackground(pageBg) {
                 ShelfStyleTopAppBar(
@@ -104,11 +168,34 @@ fun AboutScreen(navController: NavController) {
 
                 Spacer(modifier = Modifier.height(6.dp))
 
-                Text(
-                    text = stringResource(R.string.about_version, BuildConfig.VERSION_NAME),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        text = stringResource(R.string.about_version, BuildConfig.VERSION_NAME),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    if (checking) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        val checkLabel = stringResource(R.string.about_check_update_cd)
+                        TextButton(
+                            onClick = { viewModel.checkForUpdate() },
+                            modifier = Modifier.semantics { contentDescription = checkLabel },
+                        ) {
+                            Text(
+                                text = stringResource(R.string.about_check_update),
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                        }
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(20.dp))
 

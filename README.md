@@ -26,6 +26,8 @@
 3. 打开已下载的 APK 完成安装
 
 > Debug 包与中间产物仍不纳入版本库；仓库只保留最新正式包，便于直接下载。
+>
+> 应用内「关于 → 检查更新」读取仓库根目录 [latest.json](latest.json)。发版时请与 APK、`versionName` / `versionCode` 一并更新。
 
 ## 功能特性
 
@@ -168,6 +170,8 @@ RELEASE_KEY_PASSWORD=你的密钥密码
 ```bash
 ./gradlew assembleRelease
 ```
+
+发版时请同步更新根目录 [latest.json](latest.json) 的 `versionName`、`versionCode`、`pageUrl`，供应用内检查更新。
 
 > 请勿将 keystore 或密码写入仓库。`signing/` 与 `*.keystore` 已在 `.gitignore` 中忽略。
 
