@@ -7,6 +7,7 @@ import space.liushenme.markdownreader.data.repository.AppCacheRepository
 import space.liushenme.markdownreader.data.repository.ReadingProgressRepository
 import space.liushenme.markdownreader.data.repository.UserProfile
 import space.liushenme.markdownreader.data.repository.UserProfileRepository
+import space.liushenme.markdownreader.update.AppUpdateRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
@@ -18,6 +19,7 @@ class ProfileViewModel @Inject constructor(
     private val userProfileRepository: UserProfileRepository,
     private val appCacheRepository: AppCacheRepository,
     readingProgressRepository: ReadingProgressRepository,
+    appUpdateRepository: AppUpdateRepository,
 ) : ViewModel() {
 
     val profile = userProfileRepository.profile.stateIn(
@@ -46,6 +48,12 @@ class ProfileViewModel @Inject constructor(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = 0,
+    )
+
+    val availableUpdate = appUpdateRepository.availableUpdate.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = appUpdateRepository.availableUpdate.value,
     )
 
     fun setNickname(nickname: String) {

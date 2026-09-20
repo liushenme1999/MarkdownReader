@@ -301,6 +301,9 @@
     <string name="about_version">版本号：%1$s</string>
     <string name="about_check_update">检查更新</string>
     <string name="about_check_update_cd">检查是否有新版本</string>
+    <string name="about_update_version">更新版本</string>
+    <string name="about_update_version_cd">查看并下载新版本</string>
+    <string name="profile_about_update_badge_cd">有新版本</string>
     <string name="about_update_already_latest">已是最新版本</string>
     <string name="about_update_check_failed">检查更新失败，请稍后重试</string>
     <string name="about_update_found_title">发现新版本</string>

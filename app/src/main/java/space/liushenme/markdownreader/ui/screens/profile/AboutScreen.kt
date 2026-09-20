@@ -69,7 +69,8 @@ fun AboutScreen(
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val checking by viewModel.checking.collectAsState()
-    val newerRelease by viewModel.newerRelease.collectAsState()
+    val availableUpdate by viewModel.availableUpdate.collectAsState()
+    val showUpdateDialog by viewModel.showUpdateDialog.collectAsState()
     val alreadyLatest = stringResource(R.string.about_update_already_latest)
     val checkFailed = stringResource(R.string.about_update_check_failed)
 
@@ -83,10 +84,10 @@ fun AboutScreen(
         }
     }
 
-    val pending = newerRelease
-    if (pending != null) {
+    val pending = availableUpdate
+    if (showUpdateDialog && pending != null) {
         AlertDialog(
-            onDismissRequest = { viewModel.dismissNewerRelease() },
+            onDismissRequest = { viewModel.dismissUpdateDialog() },
             title = { Text(stringResource(R.string.about_update_found_title)) },
             text = {
                 Text(stringResource(R.string.about_update_found_message, pending.versionName))
@@ -94,7 +95,7 @@ fun AboutScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.dismissNewerRelease()
+                        viewModel.dismissUpdateDialog()
                         runCatching {
                             context.startActivity(
                                 Intent(Intent.ACTION_VIEW, Uri.parse(pending.pageUrl)),
@@ -106,7 +107,7 @@ fun AboutScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { viewModel.dismissNewerRelease() }) {
+                TextButton(onClick = { viewModel.dismissUpdateDialog() }) {
                     Text(stringResource(R.string.action_cancel))
                 }
             },
@@ -178,19 +179,32 @@ fun AboutScreen(
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    if (checking) {
+                    if (checking && availableUpdate == null) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(16.dp),
                             strokeWidth = 2.dp,
                         )
                     } else {
-                        val checkLabel = stringResource(R.string.about_check_update_cd)
+                        val hasUpdate = availableUpdate != null
+                        val actionLabel = stringResource(
+                            if (hasUpdate) {
+                                R.string.about_update_version_cd
+                            } else {
+                                R.string.about_check_update_cd
+                            },
+                        )
                         TextButton(
-                            onClick = { viewModel.checkForUpdate() },
-                            modifier = Modifier.semantics { contentDescription = checkLabel },
+                            onClick = { viewModel.onUpdateActionClick() },
+                            modifier = Modifier.semantics { contentDescription = actionLabel },
                         ) {
                             Text(
-                                text = stringResource(R.string.about_check_update),
+                                text = stringResource(
+                                    if (hasUpdate) {
+                                        R.string.about_update_version
+                                    } else {
+                                        R.string.about_check_update
+                                    },
+                                ),
                                 style = MaterialTheme.typography.labelLarge,
                             )
                         }

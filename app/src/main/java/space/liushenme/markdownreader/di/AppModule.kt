@@ -16,6 +16,10 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
+import space.liushenme.markdownreader.BuildConfig
+import space.liushenme.markdownreader.update.AppUpdateChecker
+import space.liushenme.markdownreader.update.AppUpdateFetcher
+import space.liushenme.markdownreader.update.AppUpdateRepository
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -51,4 +55,14 @@ object AppModule {
     @Provides
     fun provideDeletedGitProjectDao(database: AppDatabase): DeletedGitProjectDao =
         database.deletedGitProjectDao()
+
+    @Provides
+    @Singleton
+    fun provideAppUpdateFetcher(): AppUpdateFetcher =
+        AppUpdateFetcher { AppUpdateChecker.fetchLatest() }
+
+    @Provides
+    @Singleton
+    fun provideAppUpdateRepository(fetcher: AppUpdateFetcher): AppUpdateRepository =
+        AppUpdateRepository(fetcher, BuildConfig.VERSION_CODE)
 }

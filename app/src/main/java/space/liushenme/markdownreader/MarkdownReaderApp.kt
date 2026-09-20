@@ -8,6 +8,7 @@ import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
 import space.liushenme.markdownreader.markdown.DiagramWebViewRenderer
 import space.liushenme.markdownreader.platform.AppLocaleController
 import space.liushenme.markdownreader.platform.MainThreadCrashGuard
+import space.liushenme.markdownreader.update.AppUpdateRepository
 import dagger.hilt.android.HiltAndroidApp
 import java.lang.ref.WeakReference
 import javax.inject.Inject
@@ -26,6 +27,9 @@ class MarkdownReaderApp : Application() {
     @Inject
     lateinit var bookContentHashBackfill: BookContentHashBackfill
 
+    @Inject
+    lateinit var appUpdateRepository: AppUpdateRepository
+
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     @Volatile
@@ -40,6 +44,9 @@ class MarkdownReaderApp : Application() {
         registerActivityLifecycleCallbacks(LocaleSyncCallbacks())
         appScope.launch(Dispatchers.IO) {
             bookContentHashBackfill.runIfNeeded()
+        }
+        appScope.launch {
+            appUpdateRepository.refresh()
         }
     }
 

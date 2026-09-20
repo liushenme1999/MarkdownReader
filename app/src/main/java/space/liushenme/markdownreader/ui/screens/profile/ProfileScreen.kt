@@ -23,6 +23,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -49,6 +51,7 @@ fun ProfileScreen(
     val todayReadingMinutes by viewModel.todayReadingMinutes.collectAsState()
     val totalReadingDays by viewModel.totalReadingDays.collectAsState()
     val continuousReadingDays by viewModel.continuousReadingDays.collectAsState()
+    val availableUpdate by viewModel.availableUpdate.collectAsState()
 
     var showClearCacheDialog by remember { mutableStateOf(false) }
 
@@ -320,6 +323,8 @@ fun ProfileScreen(
                         icon = Icons.Default.Info,
                         title = stringResource(R.string.profile_menu_about),
                         subtitle = stringResource(R.string.profile_menu_about_subtitle),
+                        showBadge = availableUpdate != null,
+                        badgeContentDescription = stringResource(R.string.profile_about_update_badge_cd),
                         onClick = { navController.navigate(AppRoutes.ABOUT) }
                     )
                 }
@@ -386,7 +391,9 @@ private fun ProfileMenuItem(
     icon: ImageVector,
     title: String,
     subtitle: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    showBadge: Boolean = false,
+    badgeContentDescription: String? = null,
 ) {
     Row(
         modifier = Modifier
@@ -403,10 +410,30 @@ private fun ProfileMenuItem(
         )
         Spacer(modifier = Modifier.width(16.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                title,
-                style = MaterialTheme.typography.bodyLarge
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.bodyLarge
+                )
+                if (showBadge) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFE53935))
+                            .then(
+                                if (badgeContentDescription != null) {
+                                    Modifier.semantics {
+                                        contentDescription = badgeContentDescription
+                                    }
+                                } else {
+                                    Modifier
+                                },
+                            ),
+                    )
+                }
+            }
             Text(
                 subtitle,
                 style = MaterialTheme.typography.bodySmall,

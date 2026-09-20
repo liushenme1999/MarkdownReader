@@ -291,6 +291,9 @@
     <string name="about_version">Version: %1$s</string>
     <string name="about_check_update">Check for updates</string>
     <string name="about_check_update_cd">Check for a newer version</string>
+    <string name="about_update_version">Update</string>
+    <string name="about_update_version_cd">View and download the new version</string>
+    <string name="profile_about_update_badge_cd">New version available</string>
     <string name="about_update_already_latest">You are on the latest version</string>
     <string name="about_update_check_failed">Could not check for updates. Try again later.</string>
     <string name="about_update_found_title">New version available</string>

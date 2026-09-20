@@ -291,6 +291,9 @@
     <string name="about_version">版本號：%1$s</string>
     <string name="about_check_update">檢查更新</string>
     <string name="about_check_update_cd">檢查是否有新版本</string>
+    <string name="about_update_version">更新版本</string>
+    <string name="about_update_version_cd">查看並下載新版本</string>
+    <string name="profile_about_update_badge_cd">有新版本</string>
     <string name="about_update_already_latest">已是最新版本</string>
     <string name="about_update_check_failed">檢查更新失敗，請稍後再試</string>
     <string name="about_update_found_title">發現新版本</string>

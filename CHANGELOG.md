@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-09-20
+
+### 新增
+
+- 进入应用后后台检查更新；发现新版本时「我的 → 关于应用」显示红点
+- 关于页有新版本时显示「更新版本」，点开即弹出发现新版本对话框；没有新版本时仍为「检查更新」
+
 ## [1.1.1] - 2026-09-20
 
 ### 优化
@@ -225,7 +232,8 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.10...v1.1.0
 [1.0.10]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.9...v1.0.10

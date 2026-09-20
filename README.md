@@ -8,7 +8,7 @@
 | **包名** | `space.liushenme.markdownreader` |
 | **最低系统** | Android 7.0 (API 24) |
 | **目标 SDK** | 35 |
-| **当前版本** | 1.1.1 (versionCode 13) |
+| **当前版本** | 1.1.2 (versionCode 14) |
 | **仓库** | [github.com/liukejun1999/MarkdownReader](https://github.com/liushenme1999/MarkdownReader) |
 
 ## 安装包下载
@@ -17,7 +17,7 @@
 
 | 版本 | 下载 | 大小约 |
 |------|------|--------|
-| **1.1.1** | [MD阅读器_release_1.1.1.apk](app/release/MD阅读器_release_1.1.1.apk) | 16 MB |
+| **1.1.2** | [MD阅读器_release_1.1.2.apk](app/release/MD阅读器_release_1.1.2.apk) | 16 MB |
 
 安装说明：
 
@@ -27,7 +27,7 @@
 
 > Debug 包与中间产物仍不纳入版本库；仓库只保留最新正式包，便于直接下载。
 >
-> 应用内「关于 → 检查更新」读取仓库根目录 [latest.json](latest.json)。发版时请与 APK、`versionName` / `versionCode` 一并更新。
+> 启动后会在后台读取仓库根目录 [latest.json](latest.json)。有新版本时「我的 → 关于应用」显示红点，进入后可点「更新版本」。发版时请与 APK、`versionName` / `versionCode` 一并更新。
 
 ## 功能特性
 
