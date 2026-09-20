@@ -2,6 +2,7 @@ package space.liushenme.markdownreader.ui.screens.profile
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import android.util.Log
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
@@ -39,7 +40,8 @@ class AboutViewModel @Inject constructor() : ViewModel() {
                 } else {
                     messageChannel.trySend(AboutUpdateMessage.AlreadyLatest)
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                Log.w("AboutViewModel", "check for update failed", e)
                 messageChannel.trySend(AboutUpdateMessage.CheckFailed)
             } finally {
                 _checking.value = false

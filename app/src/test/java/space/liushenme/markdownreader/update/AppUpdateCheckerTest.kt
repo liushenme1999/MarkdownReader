@@ -48,4 +48,14 @@ class AppUpdateCheckerTest {
         )
         assertNull(AppUpdateChecker.parseLatestJson("not-json"))
     }
+
+    @Test
+    fun candidateUrls_areHttpsMirrors() {
+        assertTrue(AppUpdateChecker.CANDIDATE_URLS.size >= 2)
+        assertEquals(AppUpdateChecker.LATEST_JSON_URL, AppUpdateChecker.CANDIDATE_URLS.first())
+        AppUpdateChecker.CANDIDATE_URLS.forEach { url ->
+            assertTrue(url, url.startsWith("https://"))
+            assertTrue(url, url.endsWith("latest.json"))
+        }
+    }
 }

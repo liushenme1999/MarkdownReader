@@ -9,6 +9,7 @@ import io.noties.markwon.image.ImageSizeResolver
 import io.noties.markwon.utils.SpanUtils
 import ru.noties.jlatexmath.JLatexMathDrawable
 import ru.noties.jlatexmath.awt.Color
+import space.liushenme.markdownreader.markdown.ReaderLatexBlockStyle
 
 /**
  * 行内公式与汉字垂直居中对齐（默认实现偏下，且在阅读行距倍数下更明显）。
@@ -34,7 +35,7 @@ internal class ReaderInlineLatexSpan(
         }
         val height = spanHeight(async)
         if (fm != null) {
-            applyFontMetrics(fm, paint, height)
+            ReaderLatexBlockStyle.expandInlineLatexFontMetrics(fm, paint, height)
         }
         return spanWidth(async)
     }
@@ -76,15 +77,6 @@ internal class ReaderInlineLatexSpan(
             result.icon().setForeground(Color(paint.color))
             appliedTextColor = true
         }
-    }
-
-    private fun applyFontMetrics(fm: Paint.FontMetricsInt, paint: Paint, height: Int) {
-        val targetH = height.coerceAtLeast(1)
-        val center = ((paint.ascent() + paint.descent()) / 2f).toInt()
-        fm.ascent = center - targetH / 2
-        fm.descent = center + targetH / 2
-        fm.top = fm.ascent
-        fm.bottom = fm.descent
     }
 
     private fun spanWidth(async: JLatextAsyncDrawable): Int {

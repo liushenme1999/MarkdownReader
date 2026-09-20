@@ -18,6 +18,36 @@ import org.robolectric.annotation.Config
 class ReaderLatexBlockStyleTest {
 
     @Test
+    fun inlineLatexHorizontalPadding_isHalfOfPreviousSixDp() {
+        val context: Context = RuntimeEnvironment.getApplication()
+        val density = context.resources.displayMetrics.density
+        assertEquals((3f * density + 0.5f).toInt(), ReaderLatexBlockStyle.inlinePadHPx(density))
+        assertEquals(3f, ReaderLatexBlockStyle.INLINE_LATEX_PAD_H_DP, 0f)
+    }
+
+    @Test
+    fun inlineCodeHorizontalPadding_usesOneThirdOfSideGap() {
+        val context: Context = RuntimeEnvironment.getApplication()
+        val density = context.resources.displayMetrics.density
+        assertEquals((2f * density + 0.5f).toInt(), ReaderLatexBlockStyle.inlineCodePadHPx(density))
+        assertEquals(2f, ReaderLatexBlockStyle.INLINE_CODE_PAD_H_DP, 0f)
+        assertEquals(1f / 3f, ReaderLatexBlockStyle.INLINE_CODE_SIDE_GAP_FRACTION, 0f)
+        assertEquals(3f, ReaderLatexBlockStyle.INLINE_CODE_CORNER_RADIUS_DP, 0f)
+    }
+
+    @Test
+    fun expandInlineLatexFontMetrics_keepsTallerPeerOnSameLine() {
+        val paint = android.graphics.Paint().apply { textSize = 40f }
+        val fm = android.graphics.Paint.FontMetricsInt().also { paint.getFontMetricsInt(it) }
+        val firstAscent = fm.ascent
+        ReaderLatexBlockStyle.expandInlineLatexFontMetrics(fm, paint, contentHeightPx = 80, padVPx = 4)
+        val tallAscent = fm.ascent
+        assertTrue(tallAscent < firstAscent)
+        ReaderLatexBlockStyle.expandInlineLatexFontMetrics(fm, paint, contentHeightPx = 20, padVPx = 4)
+        assertEquals(tallAscent, fm.ascent)
+    }
+
+    @Test
     fun blockBackground_isRoundedDrawable() {
         val context: Context = RuntimeEnvironment.getApplication()
         val drawable = ReaderLatexBlockStyle.blockBackground(context)

@@ -914,6 +914,61 @@ internal fun globalSourceCharAtTextViewTop(
     ).coerceIn(0, sourceContent.length)
 }
 
+/**
+ * 小标题栏：先看 TextView 视口里的 HeadingSpan，再退回源码视口区间估算。
+ */
+internal fun currentChapterEntryFromDisplayedViewport(
+    tocEntries: List<MarkdownTocEntry>,
+    textView: TextView?,
+    windowStart: Int,
+    windowEnd: Int,
+    fallbackTopChar: Int,
+    fallbackBottomChar: Int = fallbackTopChar,
+): MarkdownTocEntry? {
+    if (tocEntries.isEmpty()) return null
+    val fromSpans = textView?.let { tv ->
+        val displayed = tv.text ?: return@let null
+        currentChapterEntryFromHeadingStarts(
+            tocEntries = tocEntries,
+            headingStarts = markdownHeadingSpanStarts(displayed),
+            viewportTop = charOffsetAtScrollTop(tv),
+            viewportBottom = charOffsetAtScrollBottom(tv),
+            windowStart = windowStart,
+            windowEnd = windowEnd,
+            displayedText = displayed.toString(),
+        )
+    }
+    return fromSpans ?: currentChapterEntryForViewport(
+        tocEntries,
+        fallbackTopChar,
+        fallbackBottomChar,
+    )
+}
+
+/** 视口底部在全书源码中的字符下标。 */
+internal fun globalSourceCharAtTextViewBottom(
+    sourceContent: String,
+    windowStart: Int,
+    windowEnd: Int,
+    textView: TextView?,
+    renderPlainText: Boolean,
+    tocEntries: List<MarkdownTocEntry>,
+): Int {
+    if (textView == null || sourceContent.isEmpty()) {
+        return windowEnd.coerceIn(0, sourceContent.length)
+    }
+    val renderedBottom = charOffsetAtScrollBottom(textView)
+    return resolveSourceCharOffset(
+        sourceContent = sourceContent,
+        windowStart = windowStart,
+        windowEnd = windowEnd,
+        displayedText = textView.text,
+        renderedOffset = renderedBottom,
+        renderPlainText = renderPlainText,
+        tocEntries = tocEntries,
+    ).coerceIn(0, sourceContent.length)
+}
+
 /** 打开书籍时优先用 [currentPosition]（源码坐标），否则由 [readingProgress] 推算。 */
 internal fun resolveStoredCharPos(
     currentPosition: Int,
@@ -1119,6 +1174,17 @@ internal fun charOffsetAtScrollTop(tv: TextView): Int {
     val y = (tv.scrollY + tv.paddingTop).coerceAtLeast(0)
     val line = layout.getLineForVertical(y).coerceIn(0, (layout.lineCount - 1).coerceAtLeast(0))
     return layout.getLineStart(line).coerceIn(0, (len - 1).coerceAtLeast(0))
+}
+
+/** 视口底部附近的展示层字符下标，用于判断页面上是否已出现下一节标题。 */
+internal fun charOffsetAtScrollBottom(tv: TextView): Int {
+    val layout = tv.layout ?: return 0
+    val len = tv.text?.length ?: 0
+    if (len == 0) return 0
+    val innerH = (tv.height - tv.paddingTop - tv.paddingBottom).coerceAtLeast(0)
+    val y = (tv.scrollY + tv.paddingTop + innerH).coerceAtLeast(0)
+    val line = layout.getLineForVertical(y).coerceIn(0, (layout.lineCount - 1).coerceAtLeast(0))
+    return (layout.getLineEnd(line) - 1).coerceIn(0, (len - 1).coerceAtLeast(0))
 }
 
 /** 按视口顶部的字符下标估算窗口内阅读进度（0..1），不受 Mermaid/大图行高影响。 */

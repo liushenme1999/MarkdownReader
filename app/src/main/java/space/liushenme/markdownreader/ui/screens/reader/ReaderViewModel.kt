@@ -74,6 +74,21 @@ class ReaderViewModel @Inject constructor(
     private val _readingProgress = MutableStateFlow(0f)
     val readingProgress: StateFlow<Float> = _readingProgress.asStateFlow()
 
+    /** 视口顶部源码坐标；章节小标题按它（及底部）定位，不经过百分比量化。 */
+    private val _viewportTopChar = MutableStateFlow(0)
+    val viewportTopChar: StateFlow<Int> = _viewportTopChar.asStateFlow()
+
+    /** 视口底部源码坐标；页面上已露出的标题优先于视口顶之上的上一节。 */
+    private val _viewportBottomChar = MutableStateFlow(0)
+    val viewportBottomChar: StateFlow<Int> = _viewportBottomChar.asStateFlow()
+
+    /**
+     * 当前应对齐小标题栏的目录项 [MarkdownTocEntry.sourceOffset]。
+     * 由阅读页按可见 HeadingSpan 写入；未就绪时为 null，标题栏退回视口区间估算。
+     */
+    private val _visibleChapterOffset = MutableStateFlow<Int?>(null)
+    val visibleChapterOffset: StateFlow<Int?> = _visibleChapterOffset.asStateFlow()
+
     val readingStyleState: StateFlow<ReadingStyleState> =
         readerSettingsRepository.readingStyleState
             .stateIn(
@@ -164,6 +179,22 @@ class ReaderViewModel @Inject constructor(
     private var readingForeground: Boolean = false
     /** 最近一次按视口顶部更新的全书字符下标，退出时优先落盘，避免 float 反算偏差。 */
     private var lastKnownReadingCharPos: Int = 0
+
+    private fun setViewportChars(top: Int, bottom: Int = top, contentLen: Int = _content.value.length) {
+        val len = contentLen.coerceAtLeast(0)
+        val t = top.coerceIn(0, len)
+        val b = bottom.coerceIn(t, len)
+        lastKnownReadingCharPos = t
+        if (_viewportTopChar.value != t) _viewportTopChar.value = t
+        if (_viewportBottomChar.value != b) _viewportBottomChar.value = b
+    }
+
+    private fun setVisibleChapterOffset(offset: Int?) {
+        val normalized = offset?.coerceAtLeast(0)
+        if (_visibleChapterOffset.value != normalized) {
+            _visibleChapterOffset.value = normalized
+        }
+    }
     /** 视口已到最后一页或文末；不单独把进度抬到 100%。 */
     private var lastKnownReachedEnd: Boolean = false
     /**
@@ -247,12 +278,16 @@ class ReaderViewModel @Inject constructor(
             finishPromptDismissedThisSession = alreadyFinished
             finishPromptEnabled = false
             _showMarkFinishedPrompt.value = false
-            lastKnownReadingCharPos = resolveStoredCharPos(
-                currentPosition = latestBook.currentPosition,
-                readingProgress = latestBook.readingProgress,
-                contentLength = text.length,
-                totalChars = latestBook.totalChars.coerceAtLeast(text.length.coerceAtLeast(1)),
+            setViewportChars(
+                top = resolveStoredCharPos(
+                    currentPosition = latestBook.currentPosition,
+                    readingProgress = latestBook.readingProgress,
+                    contentLength = text.length,
+                    totalChars = latestBook.totalChars.coerceAtLeast(text.length.coerceAtLeast(1)),
+                ),
+                contentLen = text.length,
             )
+            setVisibleChapterOffset(null)
             lastKnownProgressPreview = latestBook.progressPreviewText.trim()
             if (text.isNotEmpty() && text.length != latestBook.totalChars) {
                 val synced = latestBook.copy(totalChars = text.length)
@@ -342,12 +377,18 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    /** 仅刷新界面进度，不立刻落盘（滚动时实时更新标题栏百分比）。 */
-    fun updateVisibleReadingProgress(globalChar: Int, reachedEnd: Boolean = false) {
+    /** 仅刷新界面进度，不立刻落盘（滚动时实时更新标题栏百分比与章节名）。 */
+    fun updateVisibleReadingProgress(
+        globalChar: Int,
+        reachedEnd: Boolean = false,
+        bottomChar: Int? = null,
+        chapterOffset: Int? = null,
+    ) {
         val contentLen = _content.value.length
         if (contentLen <= 0) return
         val pos = globalChar.coerceIn(0, contentLen)
-        lastKnownReadingCharPos = pos
+        setViewportChars(pos, bottomChar ?: pos, contentLen)
+        setVisibleChapterOffset(chapterOffset)
         val progress = applyViewportProgress(pos, contentLen, reachedEnd)
         if ((_readingProgress.value * 100).toInt() == (progress * 100).toInt()) {
             maybeShowMarkFinishedPrompt()
@@ -362,11 +403,18 @@ class ReaderViewModel @Inject constructor(
         globalChar: Int,
         previewText: String? = null,
         reachedEnd: Boolean = false,
+        bottomChar: Int? = null,
+        chapterOffset: Int? = null,
     ) {
         val contentLen = _content.value.length
         if (contentLen <= 0) return
         val pos = globalChar.coerceIn(0, contentLen)
-        lastKnownReadingCharPos = pos
+        setViewportChars(
+            pos,
+            bottomChar ?: _viewportBottomChar.value.coerceAtLeast(pos),
+            contentLen,
+        )
+        if (chapterOffset != null) setVisibleChapterOffset(chapterOffset)
         previewText?.let { lastKnownProgressPreview = normalizeReadingPreviewText(it) }
         val progress = applyViewportProgress(pos, contentLen, reachedEnd)
         _readingProgress.value = progress
@@ -384,7 +432,7 @@ class ReaderViewModel @Inject constructor(
         val contentLen = _content.value.length
         if (contentLen <= 0) return
         val pos = globalChar.coerceIn(0, contentLen)
-        lastKnownReadingCharPos = pos
+        setViewportChars(pos, _viewportBottomChar.value.coerceAtLeast(pos), contentLen)
         previewText?.let { lastKnownProgressPreview = normalizeReadingPreviewText(it) }
         val progress = applyViewportProgress(pos, contentLen, reachedEnd)
         _readingProgress.value = progress

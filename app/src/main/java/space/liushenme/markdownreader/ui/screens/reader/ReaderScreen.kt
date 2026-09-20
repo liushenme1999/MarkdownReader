@@ -479,6 +479,59 @@ fun ReaderScreen(
         )
     }
 
+    fun currentBottomGlobalChar(): Int? {
+        if (readerContent.isEmpty()) return currentTopGlobalChar()
+        if (isPdfBook) return currentTopGlobalChar()
+        val tv = readerTextView.value
+        if (pageTurnMode != ReaderPageTurnMode.VerticalScroll && pageSpecs.isNotEmpty()) {
+            val page = pagerState.currentPage.coerceIn(0, pageSpecs.lastIndex)
+            val pageStart = pageSpecs[page].first
+            val pageEnd = pageSpecs.getOrNull(page + 1)?.first ?: readerContent.length
+            if (tv == null) return pageEnd.coerceIn(0, readerContent.length)
+            return globalSourceCharAtTextViewBottom(
+                sourceContent = readerContent,
+                windowStart = pageStart,
+                windowEnd = pageEnd,
+                textView = tv,
+                renderPlainText = renderPlainText,
+                tocEntries = tocEntries,
+            )
+        }
+        return globalSourceCharAtTextViewBottom(
+            sourceContent = readerContent,
+            windowStart = displayWindowStartChar,
+            windowEnd = displayWindowEndChar,
+            textView = tv,
+            renderPlainText = renderPlainText,
+            tocEntries = tocEntries,
+        )
+    }
+
+    fun currentDisplayWindow(): Pair<Int, Int> {
+        if (pageTurnMode != ReaderPageTurnMode.VerticalScroll && pageSpecs.isNotEmpty()) {
+            val page = pagerState.currentPage.coerceIn(0, pageSpecs.lastIndex)
+            val start = pageSpecs[page].first
+            val end = pageSpecs.getOrNull(page + 1)?.first ?: readerContent.length
+            return start to end
+        }
+        return displayWindowStartChar to displayWindowEndChar
+    }
+
+    fun currentChapterEntryNow(): MarkdownTocEntry? {
+        if (isPdfBook || tocEntries.isEmpty()) return null
+        val top = currentTopGlobalChar() ?: return null
+        val bottom = currentBottomGlobalChar() ?: top
+        val window = currentDisplayWindow()
+        return currentChapterEntryFromDisplayedViewport(
+            tocEntries = tocEntries,
+            textView = readerTextView.value,
+            windowStart = window.first,
+            windowEnd = window.second,
+            fallbackTopChar = top,
+            fallbackBottomChar = bottom,
+        )
+    }
+
     fun documentReachedEnd(): Boolean {
         if (readerContent.isEmpty()) return false
         if (isPdfBook && pdfPages.isNotEmpty()) {
@@ -503,6 +556,16 @@ fun ReaderScreen(
         }
         return charPos >= (readerContent.length - 1).coerceAtLeast(0) &&
             displayWindowEndChar >= readerContent.length
+    }
+
+    fun publishVisibleReadingProgress() {
+        val estimated = currentTopGlobalChar() ?: return
+        viewModel.updateVisibleReadingProgress(
+            estimated,
+            documentReachedEnd(),
+            currentBottomGlobalChar(),
+            currentChapterEntryNow()?.sourceOffset,
+        )
     }
 
     LaunchedEffect(readerLoadEpoch, pageTurnMode) {
@@ -586,9 +649,12 @@ fun ReaderScreen(
         if (pageTurnMode == ReaderPageTurnMode.VerticalScroll || pageSpecs.isEmpty()) return@LaunchedEffect
         snapshotFlow { pagerState.currentPage }.distinctUntilChanged().collect { page ->
             val start = pageSpecs.getOrNull(page)?.first ?: return@collect
+            val end = pageSpecs.getOrNull(page + 1)?.first ?: readerContent.length
             viewModel.updateReadingProgressAtChar(
                 start,
                 reachedEnd = page >= pageSpecs.lastIndex,
+                bottomChar = end,
+                chapterOffset = currentChapterEntryNow()?.sourceOffset,
             )
         }
     }
@@ -640,6 +706,34 @@ fun ReaderScreen(
             pendingScrollRestoreSnapToLine = true
             windowExpandInFlight = false
             expandRestoreGuard[0] = false
+        }
+        readerTextView.value?.post { publishVisibleReadingProgress() }
+    }
+
+    LaunchedEffect(
+        readerTextView.value,
+        displayedContent,
+        pagerState.currentPage,
+        displayWindowStartChar,
+        displayWindowEndChar,
+        coverUntilPositionRestore,
+        tocEntries,
+    ) {
+        if (isPdfBook || coverUntilPositionRestore) return@LaunchedEffect
+        val tv = readerTextView.value ?: return@LaunchedEffect
+        repeat(10) {
+            if (tv.layout != null && !tv.text.isNullOrEmpty()) {
+                val top = currentTopGlobalChar()
+                if (top != null) lastScrollTopGlobalChar = top
+                publishVisibleReadingProgress()
+                return@LaunchedEffect
+            }
+            delay(32)
+        }
+        if (tv.layout != null) {
+            val top = currentTopGlobalChar()
+            if (top != null) lastScrollTopGlobalChar = top
+            publishVisibleReadingProgress()
         }
     }
 
@@ -1443,6 +1537,8 @@ fun ReaderScreen(
                                                         viewModel.updateVisibleReadingProgress(
                                                             estimated,
                                                             atEnd,
+                                                            currentBottomGlobalChar(),
+                                                            currentChapterEntryNow()?.sourceOffset,
                                                         )
                                                         val now = System.currentTimeMillis()
                                                         if (readerTv?.allowReaderScrollSideEffects == true &&
@@ -1493,7 +1589,10 @@ fun ReaderScreen(
                                                 }
                                             },
                                             onReadingVerticalScroll = onReaderVerticalScroll,
-                                            onViewReady = { tv -> readerTextView.value = tv },
+                                            onViewReady = { tv ->
+                                                readerTextView.value = tv
+                                                tv.post { publishVisibleReadingProgress() }
+                                            },
                                             allowVerticalScroll = true,
                                             onSwipeRightBookmark = onReaderSwipeBookmark,
                                             onCenterTap = {
@@ -1544,6 +1643,7 @@ fun ReaderScreen(
                                             onPageTextViewReady = { pageIdx, tv ->
                                                 if (pageIdx == pagerState.currentPage) {
                                                     readerTextView.value = tv
+                                                    tv.post { publishVisibleReadingProgress() }
                                                 }
                                             },
                                             pdfFullWidthImages = isPdfBook,
@@ -1991,9 +2091,11 @@ fun ReaderScreen(
 
     // 目录
     if (showToc) {
-        val tocReadingProgress by viewModel.readingProgress.collectAsState()
-        val chapterEntry = remember(tocEntries, tocReadingProgress, totalChars) {
-            currentChapterEntryForProgress(tocEntries, tocReadingProgress, totalChars)
+        val tocTopChar by viewModel.viewportTopChar.collectAsState()
+        val tocBottomChar by viewModel.viewportBottomChar.collectAsState()
+        val tocChapterOffset by viewModel.visibleChapterOffset.collectAsState()
+        val chapterEntry = remember(tocEntries, tocTopChar, tocBottomChar, tocChapterOffset) {
+            chapterEntryForTitleBar(tocEntries, tocTopChar, tocBottomChar, tocChapterOffset)
         }
         TocSheet(
             entries = tocEntries,

@@ -35,8 +35,8 @@ class OtimesLatexTest {
         val context: Context = RuntimeEnvironment.getApplication()
         val density = context.resources.displayMetrics.density
         val bg = ReaderLatexBlockStyle.inlineLatexBackground(context)
-        val padH = (6f * density + 0.5f).toInt()
-        val padV = (4f * density + 0.5f).toInt()
+        val padH = ReaderLatexBlockStyle.inlinePadHPx(density)
+        val padV = ReaderLatexBlockStyle.inlinePadVPx(density)
         val d = JLatexMathDrawable.builder("{\\otimes}")
             .textSize(14f * density)
             .background(bg)

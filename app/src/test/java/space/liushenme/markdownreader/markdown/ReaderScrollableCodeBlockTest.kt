@@ -145,4 +145,33 @@ class ReaderScrollableCodeBlockTest {
         span.removeHighlightRangeMatching("hello")
         assertTrue(span.highlightRangesForTest().isEmpty())
     }
+
+    @Test
+    fun selectionBoundsInLayout_sitsOnInnerTextNotBlockTop() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = true
+        ReaderCodeBlockSettings.viewportWidthPx = 400
+        val markwon = ReaderMarkwonFactory.create(context)
+        val rendered = markwon.toMarkdown(
+            "```kotlin\nline one\nline two\nline three selected\nline four\n```",
+        )
+        val span = rendered.getSpans(0, rendered.length, ReaderScrollableCodeBlockSpan::class.java).single()
+        val paint = Paint().apply { textSize = 40f }
+        span.prepareForTouch(paint, 400)
+        span.getSize(paint, rendered, 0, 1, Paint.FontMetricsInt())
+        val idx = span.indexOfSnippet("selected")
+        assertTrue(idx >= 0)
+        span.setSelection(idx, idx + "selected".length)
+        val header = span.headerHeightPx(paint)
+        val bounds = span.selectionBoundsInLayout(paint, originLeft = 0f, originTop = 0f)
+        assertTrue(bounds != null)
+        assertTrue(
+            "inner selection should be below the language header, top=${bounds!!.top} header=$header",
+            bounds.top > header,
+        )
+        assertTrue(
+            "anchor height should be one text line, h=${bounds.height()}",
+            bounds.height() < paint.textSize * 3,
+        )
+    }
 }

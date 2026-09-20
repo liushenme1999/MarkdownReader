@@ -113,8 +113,11 @@ internal fun ReaderImmersiveChapterTitleBar(
     reserveStatusBarInset: Boolean = true,
 ) {
     val readingProgress by viewModel.readingProgress.collectAsState()
-    val chapterEntry = remember(tocEntries, readingProgress, totalChars) {
-        currentChapterEntryForProgress(tocEntries, readingProgress, totalChars)
+    val viewportTopChar by viewModel.viewportTopChar.collectAsState()
+    val viewportBottomChar by viewModel.viewportBottomChar.collectAsState()
+    val visibleChapterOffset by viewModel.visibleChapterOffset.collectAsState()
+    val chapterEntry = remember(tocEntries, viewportTopChar, viewportBottomChar, visibleChapterOffset) {
+        chapterEntryForTitleBar(tocEntries, viewportTopChar, viewportBottomChar, visibleChapterOffset)
     }
     ReaderImmersiveChapterTitleBar(
         title = chapterEntry?.rawTitle ?: chapterEntry?.title ?: fallbackTitle,
@@ -131,11 +134,26 @@ internal fun rememberChapterTitleForProgress(
     tocEntries: List<MarkdownTocEntry>,
     totalChars: Int,
 ): String? {
-    val readingProgress by viewModel.readingProgress.collectAsState()
-    val chapterEntry = remember(tocEntries, readingProgress, totalChars) {
-        currentChapterEntryForProgress(tocEntries, readingProgress, totalChars)
+    val viewportTopChar by viewModel.viewportTopChar.collectAsState()
+    val viewportBottomChar by viewModel.viewportBottomChar.collectAsState()
+    val visibleChapterOffset by viewModel.visibleChapterOffset.collectAsState()
+    val chapterEntry = remember(tocEntries, viewportTopChar, viewportBottomChar, visibleChapterOffset) {
+        chapterEntryForTitleBar(tocEntries, viewportTopChar, viewportBottomChar, visibleChapterOffset)
     }
     return chapterEntry?.rawTitle ?: chapterEntry?.title
+}
+
+internal fun chapterEntryForTitleBar(
+    tocEntries: List<MarkdownTocEntry>,
+    topChar: Int,
+    bottomChar: Int,
+    visibleChapterOffset: Int?,
+): MarkdownTocEntry? {
+    val pinned = visibleChapterOffset?.let { offset ->
+        tocEntries.firstOrNull { it.sourceOffset == offset }
+            ?: tocEntries.lastOrNull { it.sourceOffset <= offset }
+    }
+    return pinned ?: currentChapterEntryForViewport(tocEntries, topChar, bottomChar)
 }
 
 @Composable

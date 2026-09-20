@@ -164,6 +164,94 @@ internal class ReaderScrollableCodeBlockSpan(
         return offset.coerceIn(0, (content.length - 1).coerceAtLeast(0))
     }
 
+    /** 是否点在代码块内部选区高亮上（含少量容错）。 */
+    fun isSelectionHit(
+        contentX: Float,
+        contentY: Float,
+        paint: Paint,
+        originLeft: Float,
+        originTop: Float,
+        slop: Float = 8f,
+    ): Boolean {
+        if (!hasSelection()) return false
+        val layout = ensureLayout(paint)
+        val headerH = headerHeight(paint)
+        val localX = contentX - originLeft - padH + scrollX
+        val localY = contentY - originTop - headerH - padV
+        if (localY < 0f) return false
+        var hit = false
+        forEachLineRange(layout, selectionStart, selectionEnd) { left, right, baseline ->
+            val top = baseline - layout.paint.textSize
+            val bottom = baseline + layout.paint.descent()
+            if (localX >= left - slop && localX <= right + slop &&
+                localY >= top - slop && localY <= bottom + slop
+            ) {
+                hit = true
+            }
+        }
+        return hit
+    }
+
+    /**
+     * 内部选区在 TextView layout 坐标中的包围盒（已含代码块横滑，未含 TextView padding/scrollY）。
+     * 供 Floating ActionMode 锚在选中文字旁，而不是整块代码框顶部。
+     */
+    fun selectionBoundsInLayout(
+        paint: Paint,
+        originLeft: Float,
+        originTop: Float,
+    ): RectF? {
+        if (!hasSelection()) return null
+        val layout = ensureLayout(paint)
+        if (layout.lineCount <= 0) return null
+        val headerH = headerHeight(paint)
+        var left = Float.POSITIVE_INFINITY
+        var top = Float.POSITIVE_INFINITY
+        var right = Float.NEGATIVE_INFINITY
+        var bottom = Float.NEGATIVE_INFINITY
+        var any = false
+        forEachLineRange(layout, selectionStart, selectionEnd) { rangeLeft, rangeRight, baseline ->
+            val lineTop = baseline - layout.paint.textSize
+            val lineBottom = baseline + layout.paint.descent()
+            val contentL = originLeft + padH - scrollX + rangeLeft
+            val contentR = originLeft + padH - scrollX + rangeRight
+            val contentT = originTop + headerH + padV + lineTop
+            val contentB = originTop + headerH + padV + lineBottom
+            left = min(left, contentL)
+            right = max(right, contentR)
+            top = min(top, contentT)
+            bottom = max(bottom, contentB)
+            any = true
+        }
+        if (!any) {
+            val start = handlePositionInLayout(
+                selectionStart,
+                isEnd = false,
+                paint = paint,
+                originLeft = originLeft,
+                originTop = originTop,
+            ) ?: return null
+            val end = handlePositionInLayout(
+                selectionEnd,
+                isEnd = true,
+                paint = paint,
+                originLeft = originLeft,
+                originTop = originTop,
+            ) ?: start
+            left = min(start.first, end.first)
+            right = max(start.first, end.first)
+            val glyphTop = min(start.second, end.second) - layout.paint.textSize
+            top = glyphTop
+            bottom = max(start.second, end.second)
+        }
+        return RectF(
+            left,
+            top,
+            right.coerceAtLeast(left + 1f),
+            bottom.coerceAtLeast(top + 1f),
+        )
+    }
+
     fun handlePositionInLayout(
         offset: Int,
         isEnd: Boolean,

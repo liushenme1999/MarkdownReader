@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-09-20
+
+### 优化
+
+- 小标题栏按当前屏幕里看到的标题对齐，不再跟进度百分比错位
+- 行内公式左右阴影减半；同一行多个公式、列表项中的底色不再错位
+- 行内代码底色铺到与两侧文字间隙的三分之一；同一行多段代码不再盖住前面文字
+- 代码块内点击空白可取消选区，点屏幕中间可唤出功能栏；复制菜单贴着选中文本
+- 检查更新：GitHub raw 失败后自动改走 jsDelivr 等镜像
+
 ## [1.1.0] - 2026-09-19
 
 ### 新增
@@ -215,7 +225,8 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.10...v1.1.0
 [1.0.10]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.9...v1.0.10
 [1.0.9]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.8...v1.0.9

@@ -15,8 +15,8 @@ internal class ReaderMathSymbolSpan(
 ) : ReplacementSpan() {
 
     private val density = context.resources.displayMetrics.density
-    private val padH = (6f * density + 0.5f).toInt()
-    private val padV = (4f * density + 0.5f).toInt()
+    private val padH = ReaderLatexBlockStyle.inlinePadHPx(density)
+    private val padV = ReaderLatexBlockStyle.inlinePadVPx(density)
     private val symbolText = symbol.toString()
 
     override fun getSize(
@@ -27,12 +27,10 @@ internal class ReaderMathSymbolSpan(
         fm: Paint.FontMetricsInt?,
     ): Int {
         val symbolPaint = symbolPaint(paint)
+        val symbolFm = symbolPaint.fontMetricsInt
+        val glyphH = (symbolFm.descent - symbolFm.ascent).coerceAtLeast(1)
         if (fm != null) {
-            symbolPaint.getFontMetricsInt(fm)
-            fm.ascent -= padV
-            fm.descent += padV
-            fm.top = fm.ascent
-            fm.bottom = fm.descent
+            ReaderLatexBlockStyle.expandInlineLatexFontMetrics(fm, paint, glyphH, padV)
         }
         return (symbolPaint.measureText(symbolText) + padH * 2 + 0.5f).toInt()
     }
@@ -50,19 +48,24 @@ internal class ReaderMathSymbolSpan(
     ) {
         val symbolPaint = symbolPaint(paint)
         val textWidth = symbolPaint.measureText(symbolText)
-        val fm = symbolPaint.fontMetricsInt
-        val textTop = y + fm.ascent
-        val textBottom = y + fm.descent
+        val glyphH = symbolPaint.descent() - symbolPaint.ascent()
+        val centerY = y + (paint.ascent() + paint.descent()) / 2f
+        val boxHalf = glyphH / 2f + padV
 
         val background = ReaderLatexBlockStyle.inlineLatexBackground(context, paperColorArgb).mutate()
         background.setBounds(
-            (x - padH).toInt(),
-            textTop - padV,
-            (x + textWidth + padH).toInt(),
-            textBottom + padV,
+            x.toInt(),
+            (centerY - boxHalf).toInt(),
+            (x + textWidth + padH * 2).toInt(),
+            (centerY + boxHalf).toInt(),
         )
         background.draw(canvas)
-        canvas.drawText(symbolText, x, y.toFloat(), symbolPaint)
+        canvas.drawText(
+            symbolText,
+            x + padH,
+            centerY - (symbolPaint.ascent() + symbolPaint.descent()) / 2f,
+            symbolPaint,
+        )
     }
 
     private fun symbolPaint(base: Paint): TextPaint =

@@ -27,8 +27,8 @@ internal class ReaderCompoundInlineLatexSpan(
 ) : ReplacementSpan() {
 
     private val density = context.resources.displayMetrics.density
-    private val padH = (6f * density + 0.5f).toInt()
-    private val padV = (4f * density + 0.5f).toInt()
+    private val padH = ReaderLatexBlockStyle.inlinePadHPx(density)
+    private val padV = ReaderLatexBlockStyle.inlinePadVPx(density)
     private val textColorArgb = textColor
     private var appliedTextColor = textColor != 0
     private val textSizePx = config.theme.inlineTextSize()
@@ -115,12 +115,7 @@ internal class ReaderCompoundInlineLatexSpan(
         val contentW = pieces.sumOf { it.width }
         val contentH = pieces.maxOfOrNull { it.height } ?: 0
         if (fm != null) {
-            val center = ((paint.ascent() + paint.descent()) / 2f).toInt()
-            val targetH = (contentH + padV * 2).coerceAtLeast(1)
-            fm.ascent = center - targetH / 2
-            fm.descent = center + targetH / 2
-            fm.top = fm.ascent
-            fm.bottom = fm.descent
+            ReaderLatexBlockStyle.expandInlineLatexFontMetrics(fm, paint, contentH, padV)
         }
         return contentW + padH * 2
     }
@@ -138,19 +133,18 @@ internal class ReaderCompoundInlineLatexSpan(
     ) {
         if (pieces.isEmpty()) return
         val contentW = pieces.sumOf { it.width }
-        val boxTop = y + paint.ascent() - padV
-        val boxBottom = y + paint.descent() + padV
+        val contentH = pieces.maxOf { it.height }
+        val centerY = y + (paint.ascent() + paint.descent()) / 2f
+        val boxHalf = contentH / 2f + padV
 
         val background = ReaderLatexBlockStyle.inlineLatexBackground(context, paperColorArgb).mutate()
         background.setBounds(
             x.toInt(),
-            boxTop.toInt(),
+            (centerY - boxHalf).toInt(),
             (x + contentW + padH * 2).toInt(),
-            boxBottom.toInt(),
+            (centerY + boxHalf).toInt(),
         )
         background.draw(canvas)
-
-        val centerY = y + (paint.ascent() + paint.descent()) / 2f
         var cursor = x + padH
         for (piece in pieces) {
             piece.draw(canvas, cursor, centerY, paint)

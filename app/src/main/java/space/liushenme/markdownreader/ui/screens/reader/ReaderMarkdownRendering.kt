@@ -657,6 +657,7 @@ internal fun bindReaderGesturesAndScroll(
         onScroll(localCharProgressAtScrollTop(tv))
     }
 
+    (textView as? SafeReaderTextView)?.onReaderCenterTap = onCenterTap
     textView.setOnTouchListener { v, e ->
         val tv = v as? TextView
         when (e.actionMasked) {
@@ -784,11 +785,11 @@ internal fun bindReaderGesturesAndScroll(
                     if (tv is SafeReaderTextView && tv.dispatchLinkClickIfPresent(e.x, e.y)) {
                         return@setOnTouchListener true
                     }
-                    val w = v.width.toFloat()
-                    val h = v.height.toFloat()
-                    if (w > 0f && h > 0f &&
-                        e.x in (w * 0.32f)..(w * 0.68f) &&
-                        e.y in (h * 0.36f)..(h * 0.64f)
+                    val onCodeBlock = tv is SafeReaderTextView &&
+                        tv.scrollableCodeBlockSpanAt(e.x, e.y) != null
+                    // 代码块由 TextView 自己处理中部点按，避免溢出手势独占时漏掉、普通路径重复触发。
+                    if (!onCodeBlock &&
+                        (tv as? SafeReaderTextView)?.isReaderCenterChromeZone(e.x, e.y) == true
                     ) {
                         onCenterTap()
                     }
@@ -911,6 +912,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
      * 用于尽早揭开进页遮罩，不必再等 Compose await 轮询。
      */
     var onOpenPositionReady: (() -> Unit)? = null
+    /** 代码块独占触摸时 OnTouchListener 收不到 UP，由此补中部点按唤栏。 */
+    var onReaderCenterTap: (() -> Unit)? = null
     /** 同一轮 Markdown 渲染只通知一次揭罩，避免 onLayout 重复 bump restore。 */
     private var openPositionSignaledForRender: Any? = null
 
@@ -1527,6 +1530,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     /** 选区在 TextView 坐标系中的包围盒（Floating ActionMode 锚点）。 */
     private fun selectionContentRectInView(selStart: Int, selEnd: Int): android.graphics.Rect? {
+        codeSelectionContentRectInView()?.let { return it }
         val layout = layout ?: return null
         val len = text?.length ?: return null
         if (len == 0) return null
@@ -1559,6 +1563,35 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             right.coerceAtLeast(left + 1),
             bottom.coerceAtLeast(top + 1),
         )
+    }
+
+    /** 代码块内部选区的 View 坐标，避免浮动菜单锚到整块 ReplacementSpan 顶部。 */
+    private fun codeSelectionContentRectInView(): android.graphics.Rect? {
+        val span = codeSelectionSpan ?: return null
+        if (!span.hasSelection()) return null
+        val origin = codeSpanOrigin(span) ?: return null
+        span.prepareForTouch(paint, codeBlockViewportWidth())
+        val bounds = span.selectionBoundsInLayout(paint, origin.first, origin.second) ?: return null
+        val left = (bounds.left + totalPaddingLeft - scrollX).toInt()
+        val top = (bounds.top + extendedPaddingTop - scrollY).toInt()
+        val right = (bounds.right + totalPaddingLeft - scrollX).toInt()
+        val bottom = (bounds.bottom + extendedPaddingTop - scrollY).toInt()
+        return android.graphics.Rect(
+            left,
+            top,
+            right.coerceAtLeast(left + 1),
+            bottom.coerceAtLeast(top + 1),
+        )
+    }
+
+    /** 单元测试：Floating ActionMode 当前锚点矩形。 */
+    internal fun selectionActionModeRectForTest(): android.graphics.Rect? {
+        val range = currentSelectionRange()
+        return if (range != null) {
+            selectionContentRectInView(range.first, range.last + 1)
+        } else {
+            codeSelectionContentRectInView()
+        }
     }
 
     /** 选区在窗口坐标系中的包围盒（用于划线浮窗定位）。 */
@@ -1706,6 +1739,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         cancelLongPress()
         parent?.requestDisallowInterceptTouchEvent(true)
         restoreSelectionActionMode()
+        pendingOutsideTapDismiss = false
         invalidateMutableCodeBlockSpan(span)
         return true
     }
@@ -1800,10 +1834,15 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                     return true
                 }
                 val consumed = codeScrolling
+                val idleTap = event.actionMasked == MotionEvent.ACTION_UP &&
+                    !consumed &&
+                    !freezeSelectionExtendUntilUp &&
+                    span != null &&
+                    handleCodeBlockIdleTap(event.x, event.y)
                 codeScrolling = false
                 codeCopyDown = false
                 activeCodeBlockSpan = null
-                return consumed
+                return consumed || idleTap
             }
         }
         return false
@@ -2074,8 +2113,59 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         return start >= 0 && end >= 0 && start != end
     }
 
-    private fun isTouchNearSelection(x: Float, y: Float): Boolean =
-        ReaderTextSelectionTouch.isTouchNearSelectionOnTextView(this, x, y)
+    private fun isTouchNearSelection(x: Float, y: Float): Boolean {
+        if (codeSelectionSpan != null && codeSelectionSpan?.hasSelection() == true) {
+            if (selectionHandleAtIncludingCode(x, y) != null) return true
+            return isTouchOnCodeBlockInnerSelection(x, y)
+        }
+        return ReaderTextSelectionTouch.isTouchNearSelectionOnTextView(this, x, y)
+    }
+
+    fun isReaderCenterChromeZone(x: Float, y: Float): Boolean {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0f || h <= 0f) return false
+        return x in (w * 0.32f)..(w * 0.68f) && y in (h * 0.36f)..(h * 0.64f)
+    }
+
+    private fun isTouchOnCodeBlockInnerSelection(x: Float, y: Float): Boolean {
+        val span = codeSelectionSpan ?: return false
+        if (!span.hasSelection()) return false
+        val origin = codeSpanOrigin(span) ?: return false
+        span.prepareForTouch(paint, codeBlockViewportWidth())
+        val contentX = x - totalPaddingLeft
+        val contentY = y + scrollY - totalPaddingTop
+        val slop = 8f * resources.displayMetrics.density
+        return span.isSelectionHit(
+            contentX,
+            contentY,
+            paint,
+            origin.first,
+            origin.second,
+            slop,
+        )
+    }
+
+    /**
+     * 代码块内轻点：点在选区外则取消选中；无选区且落在屏幕中部则唤起功能栏。
+     * @return true 表示已消费此次轻点。
+     */
+    private fun handleCodeBlockIdleTap(x: Float, y: Float): Boolean {
+        if (!isTapGesture(x, y)) return false
+        if (codeSelectionSpan?.hasSelection() == true) {
+            if (selectionHandleAtIncludingCode(x, y) != null) return false
+            if (!isTouchOnCodeBlockInnerSelection(x, y)) {
+                dismissSelection()
+                return true
+            }
+            return false
+        }
+        if (!selectionActive && isReaderCenterChromeZone(x, y)) {
+            onReaderCenterTap?.invoke()
+            return true
+        }
+        return false
+    }
 
     private fun ensureSelectionInteractionMode() {
         movementMethod = selectionMovement
@@ -2787,6 +2877,12 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                         )
                     if (tapCopy && span != null) {
                         copyCodeBlockToClipboard(span)
+                    } else if (event.actionMasked == MotionEvent.ACTION_UP &&
+                        !codeScrolling &&
+                        !freezeSelectionExtendUntilUp &&
+                        span != null
+                    ) {
+                        handleCodeBlockIdleTap(event.x, event.y)
                     }
                     return finishOverflowCodeGesture()
                 }
@@ -2825,7 +2921,10 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 }
                 if (touchedSelectionHandle != null) {
                     beginSelectionHandleDrag(touchedSelectionHandle)
-                } else if (selectionActive && !isTouchNearSelection(event.x, event.y)) {
+                } else if (selectionActive &&
+                    codeSelectionSpan == null &&
+                    !isTouchNearSelection(event.x, event.y)
+                ) {
                     dismissSelection()
                 }
                 pointerDown = true
