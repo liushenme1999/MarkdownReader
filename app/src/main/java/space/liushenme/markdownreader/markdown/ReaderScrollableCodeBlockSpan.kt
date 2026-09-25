@@ -141,13 +141,19 @@ internal class ReaderScrollableCodeBlockSpan(
         paint: Paint,
         originLeft: Float,
         originTop: Float,
+        clampToContent: Boolean = false,
     ): Int? {
         val layout = ensureLayout(paint)
         if (layout.lineCount <= 0) return null
         val headerH = headerHeight(paint)
         val localX = contentX - originLeft - padH + scrollX
-        val localY = contentY - originTop - headerH - padV
-        if (localY < 0f) return null
+        var localY = contentY - originTop - headerH - padV
+        if (clampToContent) {
+            val maxY = (layout.height - 1).toFloat().coerceAtLeast(0f)
+            localY = localY.coerceIn(0f, maxY)
+        } else if (localY < 0f) {
+            return null
+        }
         val line = layout.getLineForVertical(localY.toInt().coerceAtLeast(0))
             .coerceIn(0, layout.lineCount - 1)
         val lineStart = layout.getLineStart(line)
@@ -314,9 +320,38 @@ internal class ReaderScrollableCodeBlockSpan(
             scrollXF = 0f
             return false
         }
-        scrollXF = (scrollXF + dx).coerceIn(0f, max.toFloat())
+        val next = (scrollXF + dx).coerceIn(0f, max.toFloat())
+        if (kotlin.math.abs(next - scrollXF) < 0.001f) return false
+        scrollXF = next
         scrollX = scrollXF.toInt()
         return true
+    }
+
+    /**
+     * 拖选区时手指贴近代码框左右边缘（或已拖出可视区）应横滑的增量。
+     * 向右为正（露出更靠右的代码），向左为负。
+     */
+    fun selectionEdgeScrollDelta(
+        contentX: Float,
+        originLeft: Float,
+        viewportWidth: Int,
+    ): Float {
+        if (!canScrollHorizontally()) return 0f
+        val left = originLeft
+        val right = originLeft + viewportWidth.coerceAtLeast(1)
+        val edge = SELECTION_EDGE_DP * density
+        val maxStep = SELECTION_EDGE_MAX_STEP_DP * density
+        return when {
+            contentX >= right - edge -> {
+                val t = ((contentX - (right - edge)) / edge).coerceIn(0.25f, 2f)
+                maxStep * t
+            }
+            contentX <= left + edge -> {
+                val t = (((left + edge) - contentX) / edge).coerceIn(0.25f, 2f)
+                -maxStep * t
+            }
+            else -> 0f
+        }
     }
 
     fun scrollBy(dx: Int): Boolean = scrollBy(dx.toFloat())
@@ -656,6 +691,10 @@ internal class ReaderScrollableCodeBlockSpan(
         return if (end == code.length) code else code.subSequence(0, end)
     }
 
+    companion object {
+        internal const val SELECTION_EDGE_DP = 36f
+        internal const val SELECTION_EDGE_MAX_STEP_DP = 10f
+    }
 }
 
 internal data class CodeBlockHighlightRange(

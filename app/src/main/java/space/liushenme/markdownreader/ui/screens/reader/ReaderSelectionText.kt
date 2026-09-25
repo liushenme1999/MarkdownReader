@@ -1,6 +1,8 @@
 package space.liushenme.markdownreader.ui.screens.reader
 
 import android.content.Context
+import android.text.GetChars
+import android.text.Spannable
 import android.text.Spanned
 import android.text.style.ImageSpan
 import android.text.style.ReplacementSpan
@@ -113,6 +115,43 @@ private fun replacementPlainText(
     val raw = body.subSequence(start, end).toString()
     if (raw.isNotEmpty() && raw.all { it == '\uFFFC' }) return null
     return raw.takeIf { it.isNotEmpty() }
+}
+
+/**
+ * 系统翻译 / PROCESS_TEXT 会 `getText().subSequence(selStart, selEnd)`。
+ * 代码块选区在 TextView 上对应整段 ReplacementSpan（常为 `\uFFFC`），这里改导出内部选中源码。
+ */
+internal class ProcessTextExportSpannable(
+    val delegate: Spannable,
+) : Spannable by delegate, GetChars {
+    override fun subSequence(startIndex: Int, endIndex: Int): CharSequence {
+        return exportedSelectionOrNull(startIndex, endIndex)
+            ?: delegate.subSequence(startIndex, endIndex)
+    }
+
+    override fun getChars(start: Int, end: Int, dest: CharArray, destoff: Int) {
+        val exported = exportedSelectionOrNull(start, end)
+        if (exported != null && exported.length == end - start) {
+            exported.toString().toCharArray(dest, destoff)
+            return
+        }
+        when (val body = delegate) {
+            is GetChars -> body.getChars(start, end, dest, destoff)
+            else -> body.subSequence(start, end).toString().toCharArray(dest, destoff)
+        }
+    }
+
+    private fun exportedSelectionOrNull(startIndex: Int, endIndex: Int): CharSequence? {
+        val start = minOf(startIndex, endIndex)
+        val end = maxOf(startIndex, endIndex)
+        if (start >= end) return null
+        return delegate.getSpans(start, end, ReaderScrollableCodeBlockSpan::class.java)
+            .firstOrNull { span ->
+                span.hasSelection() &&
+                    delegate.getSpanStart(span) == start &&
+                    delegate.getSpanEnd(span) == end
+            }?.selectedText()
+    }
 }
 
 internal fun formatInlineLatexSelectionText(latex: String): String {

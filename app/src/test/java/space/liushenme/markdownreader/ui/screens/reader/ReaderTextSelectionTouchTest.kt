@@ -132,6 +132,38 @@ class ReaderTextSelectionTouchTest {
     }
 
     @Test
+    fun rangeBetween_latinWord_handleDragCanSelectPartialCharacters() {
+        val context = RuntimeEnvironment.getApplication()
+        val tv = TextView(context).apply {
+            text = "Supercalifragilisticexpialidocious extra"
+            textSize = 22f
+            measure(
+                View.MeasureSpec.makeMeasureSpec(1200, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.EXACTLY),
+            )
+            layout(0, 0, 1200, 200)
+        }
+        val layout = tv.layout ?: error("layout missing")
+        val text = tv.text
+        val wordEnd = text.indexOf(' ')
+        val full = ReaderTextSelectionTouch.rangeAround(text, layout, text.indexOf('c'))
+        assertEquals(0, full.first)
+        assertEquals(wordEnd - 1, full.last)
+
+        val mid = text.indexOf('f')
+        val shrunk = ReaderTextSelectionTouch.rangeBetween(
+            text,
+            layout,
+            full.last,
+            mid,
+            selectLatinWord = false,
+        )
+        assertEquals(mid, shrunk.first)
+        assertEquals(full.last, shrunk.last)
+        assertEquals("fragilisticexpialidocious", text.substring(shrunk.first, shrunk.last + 1))
+    }
+
+    @Test
     fun rangeAround_latinWord_selectsWholeWordOnSameLine() {
         val context = RuntimeEnvironment.getApplication()
         val tv = TextView(context).apply {

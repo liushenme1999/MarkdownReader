@@ -1,6 +1,7 @@
 package space.liushenme.markdownreader.ui.screens.reader
 
 import android.content.Context
+import android.text.Spannable
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.ReplacementSpan
@@ -96,5 +97,11 @@ class ReaderSelectionTextTest {
         span.setSelection(idx, idx + 5)
         assertEquals("hello", extractReaderSelectionText(rendered, start, end, context))
         assertTrue(readerSelectionHasActionableText(rendered, start, end, context))
+
+        val exported = ProcessTextExportSpannable(rendered as Spannable)
+            .subSequence(start, end)
+            .toString()
+        assertEquals("hello", exported)
+        assertFalse(exported.contains('\uFFFC'))
     }
 }

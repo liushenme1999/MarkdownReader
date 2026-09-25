@@ -314,6 +314,8 @@ internal object ReaderTextSelectionTouch {
     /**
      * 从锚点字到当前字的连续选区：两端各自按 [rangeAround] 取单元，再取闭包。
      * 中间可跨行，但起止落在真实字符上，而不是单独的换行 offset。
+     *
+     * 长按扩选可 [selectLatinWord] = true 按词走；拖动句柄应收成字符级，传入 false。
      */
     fun rangeBetween(
         text: CharSequence,

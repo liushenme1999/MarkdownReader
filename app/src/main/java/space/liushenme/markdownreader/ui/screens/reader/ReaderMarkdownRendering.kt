@@ -1037,7 +1037,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             return when (item?.itemId) {
                 MENU_ID_COPY -> copySelectionToClipboard()
                 MENU_ID_HIGHLIGHT, MENU_ID_CANCEL_HIGHLIGHT -> handleHighlightMenuClick(mode)
-                else -> false
+                else -> launchProcessTextFromMenu(item)
             }
         }
 
@@ -1127,6 +1127,22 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         }
     }
 
+    /**
+     * 系统翻译从 [getText] 截当前选区。代码块内部选区在底层只是对象替换符，
+     * 导出时换成真正选中的源码。
+     */
+    override fun getText(): CharSequence {
+        val raw = super.getText() ?: return ""
+        val spannable = raw as? Spannable ?: return raw
+        val span = codeSelectionSpan
+        if (span == null || !span.hasSelection()) return raw
+        val cached = processTextExportText
+        if (cached != null && cached.delegate === spannable) return cached
+        return ProcessTextExportSpannable(spannable).also { processTextExportText = it }
+    }
+
+    private var processTextExportText: ProcessTextExportSpannable? = null
+
     private fun populateSelectionMenu(menu: Menu?) {
         menu ?: return
         menu.clear()
@@ -1152,6 +1168,32 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         appliedMenuShowsCancel = showCancel
         // 若系统/ROM 在 clear 之后又塞回「搜索」，立刻剔除
         stripSearchMenuItems(menu)
+        patchProcessTextMenuItems(menu)
+    }
+
+    /** 系统翻译读取 Menu Intent 里预先写入的选区；代码块必须改成内部源码。 */
+    private fun patchProcessTextMenuItems(menu: Menu?) {
+        menu ?: return
+        val selected = currentSelectedText()
+        if (selected.isBlank()) return
+        for (i in 0 until menu.size()) {
+            val item = menu.getItem(i) ?: continue
+            val intent = item.intent ?: continue
+            if (intent.action == Intent.ACTION_PROCESS_TEXT) {
+                intent.putExtra(Intent.EXTRA_PROCESS_TEXT, selected)
+                intent.putExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, true)
+            }
+        }
+    }
+
+    private fun launchProcessTextFromMenu(item: MenuItem?): Boolean {
+        val intent = item?.intent ?: return false
+        if (intent.action != Intent.ACTION_PROCESS_TEXT) return false
+        val selected = currentSelectedText()
+        if (selected.isBlank()) return false
+        intent.putExtra(Intent.EXTRA_PROCESS_TEXT, selected)
+        intent.putExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, true)
+        return runCatching { context.startActivity(intent) }.isSuccess
     }
 
     /** 去掉划词菜单里的「搜索」（含 WEB_SEARCH / 标题匹配）。 */
@@ -1199,7 +1241,9 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     }
 
     private fun hideSelectionSearchActionChips() {
-        stripSearchMenuItems(readerSelectionActionMode?.menu)
+        val menu = readerSelectionActionMode?.menu
+        stripSearchMenuItems(menu)
+        patchProcessTextMenuItems(menu)
         for (root in currentWindowDecorRoots()) {
             hideSearchLabeledViews(root)
         }
@@ -1700,9 +1744,36 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         codeSelectionSpan = null
         codeSelectionAnchor = -1
         codeHandleDraggingEnd = null
+        processTextExportText = null
+        stopCodeSelectionAutoScroll()
     }
 
     internal fun codeSelectionSpanForTest(): ReaderScrollableCodeBlockSpan? = codeSelectionSpan
+
+    internal fun currentSelectedTextForTest(): String = currentSelectedText()
+
+    internal fun setCodeInnerSelectionForTest(start: Int, end: Int, anchor: Int = start) {
+        val span = codeSelectionSpan ?: return
+        span.setSelection(start, end)
+        codeSelectionAnchor = anchor
+        processTextExportText = null
+    }
+
+    internal fun dragCodeSelectionHandleToOffsetForTest(
+        handle: ReaderTextSelectionTouch.SelectionHandle,
+        currentOffset: Int,
+    ): Boolean {
+        beginSelectionHandleDrag(handle)
+        return applyCodeSelectionToOffset(currentOffset)
+    }
+
+    internal fun wouldExtendCodeSelectionOnMoveForTest(): Boolean =
+        shouldExtendExistingCodeSelection()
+
+    internal fun extendCodeBlockSelectionToForTest(x: Float, y: Float): Boolean =
+        extendCodeBlockSelectionTo(x, y)
+
+    internal fun codeBlockScrollXForTest(): Int = codeSelectionSpan?.scrollX ?: 0
 
     private fun startCodeBlockSelectionAtPressed(): Boolean {
         val span = scrollableCodeBlockSpanAt(touchDownX, touchDownY) ?: return false
@@ -1744,15 +1815,82 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         return true
     }
 
+    private var lastCodeSelectionDragX = 0f
+    private var lastCodeSelectionDragY = 0f
+    private var codeSelectionAutoScrollScheduled = false
+    private val codeSelectionAutoScrollRunnable = Runnable {
+        codeSelectionAutoScrollScheduled = false
+        if (!shouldExtendExistingCodeSelection()) return@Runnable
+        if (codeSelectionSpan?.canScrollHorizontally() != true) return@Runnable
+        extendCodeBlockSelectionTo(lastCodeSelectionDragX, lastCodeSelectionDragY)
+    }
+
     private fun extendCodeBlockSelectionTo(x: Float, y: Float): Boolean {
+        lastCodeSelectionDragX = x
+        lastCodeSelectionDragY = y
         val span = codeSelectionSpan ?: return false
         if (codeSelectionAnchor < 0) return false
         span.prepareForTouch(paint, codeBlockViewportWidth())
         val origin = codeSpanOrigin(span) ?: return false
+        val scrolled = autoScrollCodeBlockForSelectionDrag(span, origin.first, x)
         val contentX = x - totalPaddingLeft
         val contentY = y + scrollY - totalPaddingTop
-        val current = span.offsetAt(contentX, contentY, paint, origin.first, origin.second)
-            ?: return false
+        val current = span.offsetAt(
+            contentX,
+            contentY,
+            paint,
+            origin.first,
+            origin.second,
+            clampToContent = true,
+        )
+        val applied = if (current != null) {
+            applyCodeSelectionToOffset(current)
+        } else {
+            scrolled
+        }
+        if (scrolled) {
+            scheduleCodeSelectionAutoScroll()
+        } else {
+            stopCodeSelectionAutoScroll()
+        }
+        return applied
+    }
+
+    private fun autoScrollCodeBlockForSelectionDrag(
+        span: ReaderScrollableCodeBlockSpan,
+        originLeft: Float,
+        viewX: Float,
+    ): Boolean {
+        if (!span.canScrollHorizontally()) return false
+        val contentX = viewX - totalPaddingLeft
+        val delta = span.selectionEdgeScrollDelta(
+            contentX = contentX,
+            originLeft = originLeft,
+            viewportWidth = codeBlockViewportWidth(),
+        )
+        if (kotlin.math.abs(delta) < 0.5f) return false
+        if (!span.scrollBy(delta)) return false
+        invalidateMutableCodeBlockSpan(span)
+        return true
+    }
+
+    private fun scheduleCodeSelectionAutoScroll() {
+        if (codeSelectionAutoScrollScheduled) return
+        codeSelectionAutoScrollScheduled = true
+        postOnAnimation(codeSelectionAutoScrollRunnable)
+    }
+
+    private fun stopCodeSelectionAutoScroll() {
+        codeSelectionAutoScrollScheduled = false
+        removeCallbacks(codeSelectionAutoScrollRunnable)
+    }
+
+    private fun shouldExtendExistingCodeSelection(): Boolean =
+        activeSelectionHandle != null || freezeSelectionExtendUntilUp
+
+    private fun applyCodeSelectionToOffset(current: Int): Boolean {
+        val span = codeSelectionSpan ?: return false
+        if (codeSelectionAnchor < 0) return false
         val start = minOf(codeSelectionAnchor, current)
         val end = (maxOf(codeSelectionAnchor, current) + 1).coerceAtMost(span.codeLength())
         if (end <= start) return false
@@ -1786,7 +1924,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             }
             MotionEvent.ACTION_MOVE -> {
                 val span = activeCodeBlockSpan ?: return false
-                if (codeSelectionSpan != null) {
+                if (shouldExtendExistingCodeSelection()) {
                     extendCodeBlockSelectionTo(event.x, event.y)
                     return true
                 }
@@ -2525,12 +2663,13 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         val spannable = ensureReaderSpannable(this) ?: return false
         val current = ReaderTextSelectionTouch.offsetNearestCharOnTextView(this, x, y) ?: return false
         if (!canSelectAtOffset(current)) return false
+        // 句柄拖动按字符走，才能把长按选中的整词再收成部分字母。
         val range = ReaderTextSelectionTouch.rangeBetween(
             spannable,
             layout,
             anchor,
             current,
-            selectLatinWord = !renderPlainTextBody,
+            selectLatinWord = false,
         )
         if (range.isEmpty()) return false
         val start = range.first
@@ -2544,6 +2683,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     private fun finishSelectionHandleDrag() {
         activeSelectionHandle = null
         selectionHandleAnchorOffset = -1
+        stopCodeSelectionAutoScroll()
         restoreSelectionActionMode()
         parent?.requestDisallowInterceptTouchEvent(true)
         invalidate()
@@ -2797,7 +2937,16 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 val contentX = event.x - totalPaddingLeft
                 val contentY = event.y + scrollY - totalPaddingTop
                 val copyDown = span?.isOnCopyButton(contentX, contentY) == true
-                if (span != null && (span.canScrollHorizontally() || copyDown)) {
+                val touchedHandle = if (span != null &&
+                    codeSelectionSpan != null &&
+                    selectionActive &&
+                    customSelectionSessionActive
+                ) {
+                    selectionHandleAtIncludingCode(event.x, event.y)
+                } else {
+                    null
+                }
+                if (span != null && (span.canScrollHorizontally() || copyDown || touchedHandle != null)) {
                     removeCallbacks(settleViewportAfterScrollRunnable)
                     if (copyDown) {
                         cancelSelectionLongPress()
@@ -2815,7 +2964,10 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                     gestureOnCodeBlock = true
                     interceptOverflowCodeGesture = true
                     parent?.requestDisallowInterceptTouchEvent(true)
-                    if (!copyDown) {
+                    if (touchedHandle != null) {
+                        cancelSelectionLongPress()
+                        beginSelectionHandleDrag(touchedHandle)
+                    } else if (!copyDown) {
                         maybeScheduleSelectionLongPress()
                     }
                     return true
@@ -2833,7 +2985,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                         codeCopyDown = false
                     }
                     when {
-                        codeSelectionSpan != null -> {
+                        shouldExtendExistingCodeSelection() -> {
                             extendCodeBlockSelectionTo(event.x, event.y)
                         }
                         codeScrolling || (adx > touchSlop && adx >= ady) -> {
@@ -2884,6 +3036,12 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                     ) {
                         handleCodeBlockIdleTap(event.x, event.y)
                     }
+                    if (activeSelectionHandle != null) {
+                        if (event.actionMasked == MotionEvent.ACTION_UP) {
+                            updateSelectionFromHandleDrag(event.x, event.y)
+                        }
+                        finishSelectionHandleDrag()
+                    }
                     return finishOverflowCodeGesture()
                 }
             }
@@ -2899,6 +3057,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         gestureOnCodeBlock = false
         pointerDown = false
         isVerticalScrollDrag = false
+        stopCodeSelectionAutoScroll()
         clearLockedSelectionGesture()
         cancelSelectionLongPress()
         parent?.requestDisallowInterceptTouchEvent(false)

@@ -5,6 +5,7 @@ import android.view.View
 import android.widget.FrameLayout
 import io.noties.markwon.Markwon
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -205,6 +206,200 @@ class ReaderCodeBlockGestureTest {
             up.recycle()
         }
         assertTrue("center tap should toggle chrome, count=$centerTapped", centerTapped == 1)
+    }
+
+    @Test
+    fun processTextExport_usesInnerCodeSelectionNotObjectReplacement() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = true
+        ReaderCodeBlockSettings.viewportWidthPx = 400
+        val markwon: Markwon = ReaderMarkwonFactory.create(context)
+        val rendered = markwon.toMarkdown("```kotlin\nval hello = 1\n```")
+        val span = rendered
+            .getSpans(0, rendered.length, ReaderScrollableCodeBlockSpan::class.java)
+            .single()
+        val textView = layoutReader(context, markwon, rendered)
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 40f, 80f, 0)
+        try {
+            textView.onTouchEvent(down)
+            assertTrue(textView.fireScheduledSelectionLongPressForTest())
+            val idx = span.rawCode.indexOf("hello")
+            textView.setCodeInnerSelectionForTest(idx, idx + 5)
+            val body = textView.text as android.text.Spanned
+            val start = body.getSpanStart(span)
+            val end = body.getSpanEnd(span)
+            assertEquals("hello", body.subSequence(start, end).toString())
+            assertEquals("hello", textView.currentSelectedTextForTest())
+        } finally {
+            down.recycle()
+        }
+    }
+
+    @Test
+    fun codeHandleDrag_keepsOppositeEndWhenExtendingStartThenEnd() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = true
+        ReaderCodeBlockSettings.viewportWidthPx = 400
+        val markwon: Markwon = ReaderMarkwonFactory.create(context)
+        val rendered = markwon.toMarkdown("```\nabcdefghijklmnop\n```")
+        val span = rendered
+            .getSpans(0, rendered.length, ReaderScrollableCodeBlockSpan::class.java)
+            .single()
+        val textView = layoutReader(context, markwon, rendered)
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 40f, 80f, 0)
+        val up = MotionEvent.obtain(0, 40, MotionEvent.ACTION_UP, 40f, 80f, 0)
+        try {
+            textView.onTouchEvent(down)
+            assertTrue(textView.fireScheduledSelectionLongPressForTest())
+            textView.onTouchEvent(up)
+            val code = span.rawCode
+            assertTrue(code.length >= 16)
+            // 第一次从前往后：选中 [4, 10)，锚点仍停在起点 4
+            textView.setCodeInnerSelectionForTest(start = 4, end = 10, anchor = 4)
+            assertEquals(code.substring(4, 10), span.selectedText())
+            assertTrue(!textView.wouldExtendCodeSelectionOnMoveForTest())
+
+            // 再从起点往前拖：应固定末尾
+            assertTrue(
+                textView.dragCodeSelectionHandleToOffsetForTest(
+                    ReaderTextSelectionTouch.SelectionHandle.START,
+                    0,
+                ),
+            )
+            assertEquals(code.substring(0, 10), span.selectedText())
+
+            // 从末尾往后拖：应固定起点
+            assertTrue(
+                textView.dragCodeSelectionHandleToOffsetForTest(
+                    ReaderTextSelectionTouch.SelectionHandle.END,
+                    14,
+                ),
+            )
+            assertEquals(code.substring(0, 15), span.selectedText())
+        } finally {
+            down.recycle()
+            up.recycle()
+        }
+    }
+
+    @Test
+    fun codeHandleDrag_firstBackwardThenExtendEndKeepsStart() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = true
+        ReaderCodeBlockSettings.viewportWidthPx = 400
+        val markwon: Markwon = ReaderMarkwonFactory.create(context)
+        val rendered = markwon.toMarkdown("```\nabcdefghijklmnop\n```")
+        val span = rendered
+            .getSpans(0, rendered.length, ReaderScrollableCodeBlockSpan::class.java)
+            .single()
+        val textView = layoutReader(context, markwon, rendered)
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 40f, 80f, 0)
+        val up = MotionEvent.obtain(0, 40, MotionEvent.ACTION_UP, 40f, 80f, 0)
+        try {
+            textView.onTouchEvent(down)
+            assertTrue(textView.fireScheduledSelectionLongPressForTest())
+            textView.onTouchEvent(up)
+            val code = span.rawCode
+            assertTrue(code.length >= 16)
+            // 第一次从后往前：选中 [4, 10)，锚点停在原按下的末尾
+            textView.setCodeInnerSelectionForTest(start = 4, end = 10, anchor = 9)
+            assertTrue(
+                textView.dragCodeSelectionHandleToOffsetForTest(
+                    ReaderTextSelectionTouch.SelectionHandle.END,
+                    14,
+                ),
+            )
+            assertEquals(code.substring(4, 15), span.selectedText())
+        } finally {
+            down.recycle()
+            up.recycle()
+        }
+    }
+
+    @Test
+    fun unwrappedCode_dragSelectionAtRightEdge_scrollsToKeepHandleVisible() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = false
+        ReaderCodeBlockSettings.viewportWidthPx = 352
+        val markwon: Markwon = ReaderMarkwonFactory.create(context)
+        val longLine = "val result = " + "abcdefghij".repeat(60)
+        val rendered = markwon.toMarkdown("```kotlin\n$longLine\n```")
+        val span = rendered
+            .getSpans(0, rendered.length, ReaderScrollableCodeBlockSpan::class.java)
+            .single()
+        val textView = layoutReader(context, markwon, rendered)
+        val spanned = textView.text as android.text.Spanned
+        val offset = spanned.getSpanStart(span)
+        val line = textView.layout.getLineForOffset(offset)
+        val y = textView.totalPaddingTop +
+            textView.layout.getLineTop(line) + span.headerHeightPx(textView.paint) + 16f
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 40f, y, 0)
+        val up = MotionEvent.obtain(0, 40, MotionEvent.ACTION_UP, 40f, y, 0)
+        try {
+            textView.dispatchTouchEvent(down)
+            assertTrue(textView.fireScheduledSelectionLongPressForTest())
+            textView.dispatchTouchEvent(up)
+            textView.setCodeInnerSelectionForTest(start = 0, end = 2, anchor = 0)
+            val beforeScroll = span.scrollX
+            val beforeEnd = span.selectionEnd
+            val edgeX = (textView.width - 2).toFloat()
+            repeat(10) {
+                textView.extendCodeBlockSelectionToForTest(edgeX, y)
+            }
+            assertTrue(
+                "right-edge drag should pan the code, scrollX=${span.scrollX}",
+                span.scrollX > beforeScroll,
+            )
+            assertTrue(
+                "selection should grow with the pan, end=${span.selectionEnd}",
+                span.selectionEnd > beforeEnd,
+            )
+            assertTrue(textView.codeBlockScrollXForTest() == span.scrollX)
+        } finally {
+            down.recycle()
+            up.recycle()
+        }
+    }
+
+    @Test
+    fun unwrappedCode_dragSelectionAtLeftEdge_scrollsBack() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = false
+        ReaderCodeBlockSettings.viewportWidthPx = 352
+        val markwon: Markwon = ReaderMarkwonFactory.create(context)
+        val longLine = "val result = " + "abcdefghij".repeat(60)
+        val rendered = markwon.toMarkdown("```kotlin\n$longLine\n```")
+        val span = rendered
+            .getSpans(0, rendered.length, ReaderScrollableCodeBlockSpan::class.java)
+            .single()
+        val textView = layoutReader(context, markwon, rendered)
+        val spanned = textView.text as android.text.Spanned
+        val offset = spanned.getSpanStart(span)
+        val line = textView.layout.getLineForOffset(offset)
+        val y = textView.totalPaddingTop +
+            textView.layout.getLineTop(line) + span.headerHeightPx(textView.paint) + 16f
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 40f, y, 0)
+        val up = MotionEvent.obtain(0, 40, MotionEvent.ACTION_UP, 40f, y, 0)
+        try {
+            textView.dispatchTouchEvent(down)
+            assertTrue(textView.fireScheduledSelectionLongPressForTest())
+            textView.dispatchTouchEvent(up)
+            assertTrue(span.scrollBy(180f))
+            val start = 40
+            textView.setCodeInnerSelectionForTest(start = start, end = start + 8, anchor = start + 7)
+            val beforeScroll = span.scrollX
+            val leftX = textView.totalPaddingLeft + 2f
+            repeat(10) {
+                textView.extendCodeBlockSelectionToForTest(leftX, y)
+            }
+            assertTrue(
+                "left-edge drag should pan back, before=$beforeScroll after=${span.scrollX}",
+                span.scrollX < beforeScroll,
+            )
+        } finally {
+            down.recycle()
+            up.recycle()
+        }
     }
 
     private fun layoutReader(

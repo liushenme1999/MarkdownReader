@@ -6,6 +6,15 @@
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-09-25
+
+### 优化
+
+- 长按仍选中整词，拖动句柄可按字符调整选区
+- 代码框选区交给系统翻译时使用内部源码，不再是对象占位符乱码
+- 代码框拖句柄扩选时固定对侧端点，不再丢掉原选区
+- 不换行代码框把选区拖出左右边缘时平滑横滑，句柄保持可见
+
 ## [1.1.2] - 2026-09-20
 
 ### 新增
@@ -232,7 +241,8 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/liushenme1999/MarkdownReader/compare/v1.0.10...v1.1.0

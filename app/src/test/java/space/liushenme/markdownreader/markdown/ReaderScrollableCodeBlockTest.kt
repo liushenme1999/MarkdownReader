@@ -88,6 +88,42 @@ class ReaderScrollableCodeBlockTest {
     }
 
     @Test
+    fun selectionEdgeScrollDelta_rightAndLeftEdges() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = false
+        ReaderCodeBlockSettings.viewportWidthPx = 240
+        val markwon = ReaderMarkwonFactory.create(context)
+        val longLine = "val x = " + "abcdefghij".repeat(40)
+        val rendered = markwon.toMarkdown("```kotlin\n$longLine\n```")
+        val span = rendered.getSpans(0, rendered.length, ReaderScrollableCodeBlockSpan::class.java).single()
+        val paint = Paint().apply { textSize = 40f }
+        span.getSize(paint, rendered, 0, 1, Paint.FontMetricsInt())
+        span.prepareForTouch(paint, 240)
+        assertTrue(span.canScrollHorizontally())
+
+        val right = span.selectionEdgeScrollDelta(
+            contentX = 240f,
+            originLeft = 0f,
+            viewportWidth = 240,
+        )
+        val center = span.selectionEdgeScrollDelta(
+            contentX = 120f,
+            originLeft = 0f,
+            viewportWidth = 240,
+        )
+        val left = span.selectionEdgeScrollDelta(
+            contentX = 0f,
+            originLeft = 0f,
+            viewportWidth = 240,
+        )
+        assertTrue("right edge should scroll forward, delta=$right", right > 0f)
+        assertEquals(0f, center, 0.01f)
+        assertTrue("left edge should scroll backward, delta=$left", left < 0f)
+        assertTrue(span.scrollBy(right))
+        assertTrue(span.scrollX > 0)
+    }
+
+    @Test
     fun wrapOn_longLine_doesNotScroll() {
         val context = RuntimeEnvironment.getApplication()
         ReaderCodeBlockSettings.wrapEnabled = true
