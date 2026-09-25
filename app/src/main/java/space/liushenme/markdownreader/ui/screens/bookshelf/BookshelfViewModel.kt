@@ -157,6 +157,17 @@ class BookshelfViewModel @Inject constructor(
                 toastChannel.trySend(
                     appContext.getString(R.string.toast_git_import_success, outcome.title),
                 )
+                val backupError = withContext(Dispatchers.IO) {
+                    backupManager.backupIfConfigured().exceptionOrNull()
+                }
+                if (backupError != null) {
+                    toastChannel.trySend(
+                        appContext.getString(
+                            R.string.backup_toast_backup_failed,
+                            backupError.message ?: appContext.getString(R.string.error_unknown),
+                        ),
+                    )
+                }
                 if (outcome.sizeWarn) {
                     val mb = (outcome.sizeBytes / (1024L * 1024L)).toInt().coerceAtLeast(1)
                     toastChannel.trySend(

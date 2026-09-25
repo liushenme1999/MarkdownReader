@@ -67,6 +67,11 @@ data class ProgressSyncResult(
     val pushed: Boolean,
 )
 
+private data class AbsorbedGitSnapshot(
+    val pulled: Int,
+    val needsPush: Boolean,
+)
+
 @Singleton
 class BackupManager @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -143,7 +148,7 @@ class BackupManager @Inject constructor(
                 pulledCount += mergeAndApplyGitProjectTombstones(unpackDir)
                 if (localTombstonesNeedPush(unpackDir)) needPush = true
 
-                // 跨设备：云端有、本机无的 Git 项目在同步时浅克隆到本机（与完整恢复一致）
+                // 跨设备：云端有、本机无的 Git 项目只补书架元数据，点进项目再克隆
                 val gitMetaPulled = mergeGitProjectsFromBackup(
                     unpackDir = unpackDir,
                     cloneMissing = false,
@@ -223,6 +228,20 @@ class BackupManager @Inject constructor(
                 }
 
                 if (needPush) {
+                    var baseFile = latest
+                    var refreshes = 0
+                    while (refreshes < GitProjectSyncPolicy.MAX_PRE_PUSH_REMERGES) {
+                        val newest = latestBackupFile(rootUrl, auth)
+                        if (newest == null || !GitProjectSyncPolicy.isNewerBackup(baseFile, newest)) {
+                            break
+                        }
+                        refreshes++
+                        downloadBackup(rootUrl, auth, newest, unpackDir)
+                        baseFile = newest
+                        val absorbed = absorbGitSnapshot(unpackDir)
+                        pulledCount += absorbed.pulled
+                        if (absorbed.needsPush) needPush = true
+                    }
                     // 进度同步推送只更新元数据，避免下拉刷新时卡在正文上传
                     backupUnlocked(includeMissingContents = false)
                 } else {
@@ -384,9 +403,34 @@ class BackupManager @Inject constructor(
     }
 
     private suspend fun latestBackupFile(rootUrl: String, auth: Authorization): WebDavFile? {
-        return WebDav(rootUrl, auth).listFiles()
-            .filter { !it.isDir && it.displayName.startsWith("backup") }
-            .maxByOrNull { it.lastModify }
+        return GitProjectSyncPolicy.selectLatestBackup(WebDav(rootUrl, auth).listFiles())
+    }
+
+    private suspend fun downloadBackup(
+        rootUrl: String,
+        auth: Authorization,
+        file: WebDavFile,
+        unpackDir: File,
+    ) {
+        if (zipFile.exists()) zipFile.delete()
+        WebDav(rootUrl + file.displayName, auth).downloadTo(zipFile.absolutePath, true)
+        unpackDir.deleteRecursively()
+        unpackDir.mkdirs()
+        BackupZip.unzipTo(zipFile, unpackDir)
+    }
+
+    /**
+     * 把备份里的删除墓碑和 Git 项目元数据并进本机。
+     * 下拉刷新不克隆仓库，只补书架记录。
+     */
+    private suspend fun absorbGitSnapshot(unpackDir: File): AbsorbedGitSnapshot {
+        var pulled = mergeAndApplyBookTombstones(unpackDir)
+        pulled += mergeAndApplyGitProjectTombstones(unpackDir)
+        var needsPush = localTombstonesNeedPush(unpackDir)
+        val gitMeta = mergeGitProjectsFromBackup(unpackDir, cloneMissing = false)
+        pulled += gitMeta
+        if (localGitProjectsNeedPush(unpackDir)) needsPush = true
+        return AbsorbedGitSnapshot(pulled, needsPush)
     }
 
     private suspend fun ensureAuthorized(config: WebDavConfig): Authorization {
@@ -1067,10 +1111,13 @@ class BackupManager @Inject constructor(
     ): Int {
         val remotes = readJsonList(File(unpackDir, "git_projects.json"), GitProjectBackup::class.java)
         if (remotes.isEmpty()) return 0
-        val deletedUrls = deletedGitProjectDao.getAllRemoteUrls().toSet()
+        val tombstones = deletedGitProjectDao.getAll()
         val pending = remotes.filter { remote ->
-            remote.remoteUrl.isNotBlank() &&
-                deletedUrls.none { GitHubRepoUrlParser.sameRepo(it, remote.remoteUrl) }
+            if (remote.remoteUrl.isBlank()) return@filter false
+            val tomb = tombstones.firstOrNull {
+                GitHubRepoUrlParser.sameRepo(it.remoteUrl, remote.remoteUrl)
+            } ?: return@filter true
+            !GitProjectSyncPolicy.tombstoneBlocksImport(remote.addTime.time, tomb.deletedAt)
         }
         val outcomes = mapLimitedParallel(pending, GIT_RESTORE_CLONE_PARALLELISM) { remote ->
             mergeGitProject(remote, cloneMissing = cloneMissing)
@@ -1084,8 +1131,14 @@ class BackupManager @Inject constructor(
     ): Boolean {
         val canonicalUrl = GitHubRepoUrlParser.canonicalBrowseUrl(remote.remoteUrl)
             ?: remote.remoteUrl
-        if (findDeletedGitProject(canonicalUrl) != null) {
+        val tomb = findDeletedGitProject(canonicalUrl)
+        if (tomb != null &&
+            GitProjectSyncPolicy.tombstoneBlocksImport(remote.addTime.time, tomb.deletedAt)
+        ) {
             return false
+        }
+        if (tomb != null) {
+            revokeGitProjectTombstones(canonicalUrl)
         }
         var local = gitProjectDao.getByRemoteUrl(canonicalUrl)
             ?: gitProjectDao.getByRemoteUrl(remote.remoteUrl)
@@ -1320,7 +1373,7 @@ class BackupManager @Inject constructor(
 
     private fun wasReaddedAfterTombstone(addedAt: Date?, deletedAt: Long): Boolean {
         val added = addedAt?.time ?: return false
-        return added >= deletedAt
+        return !GitProjectSyncPolicy.tombstoneBlocksImport(added, deletedAt)
     }
 
     private suspend fun revokeGitProjectTombstones(remoteUrl: String) {

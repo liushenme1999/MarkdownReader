@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-09-25
+
+### 修复
+
+- Git 项目跨设备同步：一台导入后，另一台下拉刷新能在书架看到该项目
+- 删除后又导入时，以较新的导入时间为准，不再被旧删除记录挡住
+- 已配置 WebDAV 时，导入成功会立刻上传备份；上传前若云端已有更新的包，先合并再上传
+
 ## [1.1.3] - 2026-09-25
 
 ### 优化
@@ -241,7 +249,8 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.3...HEAD
+[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.4...HEAD
+[1.1.4]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.0...v1.1.1
