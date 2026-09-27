@@ -48,7 +48,11 @@ object BookContentLoader {
     ): ImportLoadResult {
         return when (format) {
             ImportedBookFormat.MARKDOWN, ImportedBookFormat.TXT ->
-                ImportLoadResult(loadExtractedFromUri(context, uri, format))
+                ImportLoadResult(
+                    ExtractedBookText.plainBody(
+                        readPlainTextFromUri(context, uri, onPdfProgress),
+                    ),
+                )
             ImportedBookFormat.PDF -> {
                 val file = copyUriToCacheFile(context, uri, ".pdf")
                     ?: return ImportLoadResult(ExtractedBookText.plainBody(placeholder(context, format)))
@@ -152,46 +156,91 @@ object BookContentLoader {
         }
     }
 
-    fun readPlainTextFromUri(context: Context, uri: Uri): String {
-        val bytes = readBytesCapped(context, uri, MAX_TEXT_SCAN_BYTES) ?: return ""
+    fun readPlainTextFromUri(
+        context: Context,
+        uri: Uri,
+        onProgress: ((read: Int, total: Int, coverJpeg: ByteArray?) -> Unit)? = null,
+    ): String {
+        val bytes = readBytesCapped(context, uri, MAX_TEXT_SCAN_BYTES, onProgress) ?: return ""
+        onProgress?.invoke(bytes.size.coerceAtLeast(1), bytes.size.coerceAtLeast(1), null)
         return TextEncodingDetector.decode(bytes)
     }
 
-    fun readBytesCapped(context: Context, uri: Uri, maxBytes: Int): ByteArray? {
-        readBytesViaFileDescriptor(context, uri, maxBytes)?.let { return it }
-        return readBytesViaInputStream(context, uri, maxBytes)
+    fun readBytesCapped(
+        context: Context,
+        uri: Uri,
+        maxBytes: Int,
+        onProgress: ((read: Int, total: Int, coverJpeg: ByteArray?) -> Unit)? = null,
+    ): ByteArray? {
+        val hinted = contentLengthHint(context, uri, maxBytes)
+        readBytesViaFileDescriptor(context, uri, maxBytes, hinted, onProgress)?.let { return it }
+        return readBytesViaInputStream(context, uri, maxBytes, hinted, onProgress)
     }
 
-    private fun readBytesViaFileDescriptor(context: Context, uri: Uri, maxBytes: Int): ByteArray? {
+    private fun contentLengthHint(context: Context, uri: Uri, maxBytes: Int): Int {
+        val length = runCatching {
+            context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize }
+        }.getOrNull() ?: return 0
+        if (length <= 0L) return 0
+        return length.coerceAtMost(maxBytes.toLong()).toInt()
+    }
+
+    private fun readBytesViaFileDescriptor(
+        context: Context,
+        uri: Uri,
+        maxBytes: Int,
+        totalHint: Int,
+        onProgress: ((read: Int, total: Int, coverJpeg: ByteArray?) -> Unit)?,
+    ): ByteArray? {
         return runCatching {
             context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
                 FileInputStream(pfd.fileDescriptor).use { fis ->
-                    copyStreamToByteArrayWithCap(fis, maxBytes)
+                    copyStreamToByteArrayWithCap(fis, maxBytes, totalHint, onProgress)
                 }
             }
         }.getOrNull()
     }
 
-    private fun readBytesViaInputStream(context: Context, uri: Uri, maxBytes: Int): ByteArray? {
+    private fun readBytesViaInputStream(
+        context: Context,
+        uri: Uri,
+        maxBytes: Int,
+        totalHint: Int,
+        onProgress: ((read: Int, total: Int, coverJpeg: ByteArray?) -> Unit)?,
+    ): ByteArray? {
         return context.contentResolver.openInputStream(uri)?.use { raw ->
             BufferedInputStream(raw).use { input ->
-                copyStreamToByteArrayWithCap(input, maxBytes)
+                copyStreamToByteArrayWithCap(input, maxBytes, totalHint, onProgress)
             }
         }
     }
 
-    private fun copyStreamToByteArrayWithCap(input: InputStream, maxBytes: Int): ByteArray {
+    private fun copyStreamToByteArrayWithCap(
+        input: InputStream,
+        maxBytes: Int,
+        totalHint: Int = 0,
+        onProgress: ((read: Int, total: Int, coverJpeg: ByteArray?) -> Unit)? = null,
+    ): ByteArray {
         val out = java.io.ByteArrayOutputStream(
             (32 * 1024).coerceAtMost(maxBytes).coerceAtLeast(256)
         )
         val buf = ByteArray(8192)
         var total = 0
+        var lastReported = -1
+        val knownTotal = totalHint.coerceAtMost(maxBytes).coerceAtLeast(0)
         while (total < maxBytes) {
             val toRead = (maxBytes - total).coerceAtMost(buf.size)
             val n = input.read(buf, 0, toRead)
             if (n <= 0) break
             out.write(buf, 0, n)
             total += n
+            if (onProgress != null && knownTotal > 0 && total - lastReported >= 64 * 1024) {
+                lastReported = total
+                onProgress(total.coerceAtMost(knownTotal), knownTotal, null)
+            }
+        }
+        if (onProgress != null && knownTotal > 0) {
+            onProgress(total.coerceAtMost(knownTotal), knownTotal, null)
         }
         return out.toByteArray()
     }

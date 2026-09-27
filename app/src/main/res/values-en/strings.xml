@@ -253,6 +253,7 @@
     <string name="selection_placeholder_diagram">[Diagram]</string>
     <string name="selection_placeholder_image">[Image]</string>
     <string name="bookmark_default_preview">Bookmark</string>
+    <string name="annotation_anchor_pending">Needs confirmation</string>
     <string name="reader_mark_finished_title">Mark as finished?</string>
     <string name="reader_mark_finished_message">You\'ve reached the end. Mark this as finished and set progress to 100%?</string>
     <string name="reader_mark_finished_confirm">Mark as finished</string>

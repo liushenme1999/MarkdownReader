@@ -192,6 +192,7 @@ internal fun ReaderPagedMarkdownHost(
                 readerPaddingTopDp = readerPaddingTopDp,
                 readerLineSpacingMultiplier = readerLineSpacingMultiplier,
                 highlights = pageHighlights,
+                retainedHighlights = highlights,
                 modifier = Modifier.fillMaxSize(),
                 onHighlightMenuClick = onHighlightMenuClick,
                 resolveExistingHighlightId = resolveExistingHighlightId,

@@ -42,7 +42,7 @@ class FindHighlightIdForDisplayedSelectionTest {
     }
 
     @Test
-    fun findsUniqueTextMatchWhenPositionsDiffer() {
+    fun doesNotMatchSameTextAtADifferentPlace() {
         val list = listOf(
             HighlightEntity(
                 id = 9L,
@@ -53,9 +53,6 @@ class FindHighlightIdForDisplayedSelectionTest {
                 createTime = Date(),
             ),
         )
-        assertEquals(
-            9L,
-            findHighlightIdForDisplayedSelection(list, "选中", 2, 4),
-        )
+        assertNull(findHighlightIdForDisplayedSelection(list, "选中", 2, 4))
     }
 }

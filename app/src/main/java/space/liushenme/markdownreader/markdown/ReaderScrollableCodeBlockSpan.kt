@@ -112,9 +112,29 @@ internal class ReaderScrollableCodeBlockSpan(
     }
 
     fun addHighlightRange(range: CodeBlockHighlightRange) {
-        highlightRanges.removeAll { it.start == range.start && it.end == range.end }
+        highlightRanges.removeAll {
+            if (range.highlightId != 0L) it.highlightId == range.highlightId
+            else it.highlightId == 0L && it.start == range.start && it.end == range.end
+        }
         highlightRanges += range
     }
+
+    fun hasHighlightId(highlightId: Long): Boolean =
+        highlightRanges.any { it.highlightId == highlightId }
+
+    fun replaceHighlightId(oldId: Long, newId: Long): Boolean {
+        var changed = false
+        for (index in highlightRanges.indices) {
+            val range = highlightRanges[index]
+            if (range.highlightId != oldId) continue
+            highlightRanges[index] = range.copy(highlightId = newId)
+            changed = true
+        }
+        return changed
+    }
+
+    fun removeHighlightRangesById(highlightId: Long): Boolean =
+        highlightRanges.removeAll { it.highlightId == highlightId }
 
     fun removeHighlightRangeMatching(snippet: String) {
         if (snippet.isEmpty()) return
@@ -124,11 +144,70 @@ internal class ReaderScrollableCodeBlockSpan(
         }
     }
 
+    fun highlightRangeCovering(offset: Int): CodeBlockHighlightRange? =
+        highlightRanges.firstOrNull { offset in it.start until it.end }
+
     fun indexOfSnippet(snippet: String): Int {
-        if (snippet.isEmpty()) return -1
-        val inRaw = rawCode.indexOf(snippet)
-        if (inRaw >= 0 && inRaw + snippet.length <= content.length) return inRaw
-        return content.toString().indexOf(snippet)
+        return rangeOfSnippet(snippet)?.first ?: -1
+    }
+
+    /**
+     * Finds the code range while tolerating renderer whitespace differences. The returned range
+     * always uses the displayed content offsets, which are the offsets consumed by the span layout.
+     */
+    fun rangeOfSnippet(snippet: String): IntRange? {
+        if (snippet.isEmpty()) return null
+        val displayed = content.toString()
+        displayed.indexOf(snippet).takeIf { it >= 0 }?.let { return it until it + snippet.length }
+        rawCode.indexOf(snippet).takeIf { it >= 0 && it + snippet.length <= displayed.length }?.let {
+            return it until it + snippet.length
+        }
+        val normalizedDisplayed = normalizedCodeWithOffsets(displayed)
+        val normalizedSnippet = normalizeCodeForSearch(snippet)
+        if (normalizedSnippet.isEmpty()) return null
+        val normalizedStart = normalizedDisplayed.text.indexOf(normalizedSnippet)
+        if (normalizedStart < 0) return null
+        val start = normalizedDisplayed.offsets[normalizedStart]
+        val endIndex = normalizedStart + normalizedSnippet.length - 1
+        val end = (normalizedDisplayed.offsets.getOrNull(endIndex)?.plus(1) ?: start)
+        return start until end
+    }
+
+    private data class NormalizedCode(val text: String, val offsets: IntArray)
+
+    private fun normalizedCodeWithOffsets(value: String): NormalizedCode {
+        val text = StringBuilder(value.length)
+        val offsets = ArrayList<Int>(value.length)
+        var pendingSpace = false
+        value.forEachIndexed { index, ch ->
+            if (ch.isWhitespace()) {
+                pendingSpace = text.isNotEmpty()
+            } else {
+                if (pendingSpace && text.isNotEmpty()) {
+                    text.append(' ')
+                    offsets += index - 1
+                }
+                text.append(ch)
+                offsets += index
+                pendingSpace = false
+            }
+        }
+        return NormalizedCode(text.toString(), offsets.toIntArray())
+    }
+
+    private fun normalizeCodeForSearch(value: String): String =
+        value.trim().replace(Regex("\\s+"), " ")
+
+    /**
+     * 代码行在这一整块 ReplacementSpan 里的纵向偏移。
+     * 外层 TextView 把整块代码当成一行，只滚到行顶会停在代码开头。
+     */
+    fun offsetTopInLine(contentOffset: Int, paint: Paint): Int {
+        if (content.isEmpty()) return 0
+        val layout = ensureLayout(paint)
+        val safe = contentOffset.coerceIn(0, (content.length - 1).coerceAtLeast(0))
+        val line = layout.getLineForOffset(safe).coerceIn(0, (layout.lineCount - 1).coerceAtLeast(0))
+        return headerHeight(paint) + padV + layout.getLineTop(line)
     }
 
     /**
@@ -285,6 +364,9 @@ internal class ReaderScrollableCodeBlockSpan(
     fun headerHeightPx(paint: Paint): Int = headerHeight(paint)
 
     fun highlightRangesForTest(): List<CodeBlockHighlightRange> = highlightRanges.toList()
+
+    internal fun contentSliceForTest(start: Int, end: Int): String =
+        content.subSequence(start.coerceAtLeast(0), end.coerceIn(0, content.length)).toString()
 
     fun maxScrollX(): Int {
         if (wrapEnabled) return 0
@@ -703,4 +785,5 @@ internal data class CodeBlockHighlightRange(
     val color: Int,
     val underline: Boolean = false,
     val wavy: Boolean = false,
+    val highlightId: Long = 0L,
 )

@@ -348,7 +348,9 @@ internal fun BookmarksSheet(
     onDeleteBookmark: (space.liushenme.markdownreader.data.local.entity.BookmarkEntity) -> Unit,
     onHighlightClick: (HighlightEntity) -> Unit,
     onDeleteHighlight: (HighlightEntity) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    pendingBookmarkIds: Set<Long> = emptySet(),
+    pendingHighlightIds: Set<Long> = emptySet(),
 ) {
     var selectedTab by remember { mutableStateOf(ReaderMarksSheetTab.Bookmarks) }
     var revealedBookmarkId by remember { mutableStateOf<Long?>(null) }
@@ -431,6 +433,7 @@ internal fun BookmarksSheet(
                                 BookmarkItem(
                                     bookmark = bookmark,
                                     totalChars = totalChars,
+                                    pending = bookmark.id in pendingBookmarkIds,
                                     revealedBookmarkId = revealedBookmarkId,
                                     onRevealChange = { id -> revealedBookmarkId = id },
                                     onClick = { onBookmarkClick(bookmark) },
@@ -467,6 +470,7 @@ internal fun BookmarksSheet(
                                 HighlightListItem(
                                     highlight = highlight,
                                     totalChars = totalChars,
+                                    pending = highlight.id in pendingHighlightIds,
                                     revealedHighlightId = revealedHighlightId,
                                     onRevealChange = { id -> revealedHighlightId = id },
                                     onClick = { onHighlightClick(highlight) },
@@ -607,7 +611,8 @@ internal fun BookmarkItem(
     revealedBookmarkId: Long?,
     onRevealChange: (Long?) -> Unit,
     onClick: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    pending: Boolean = false,
 ) {
     val density = LocalDensity.current
     val deleteWidthPx = with(density) { 72.dp.toPx() }
@@ -730,6 +735,9 @@ internal fun BookmarkItem(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+                if (pending) {
+                    PendingAnchorLabel()
+                }
             }
         }
     }
@@ -742,7 +750,8 @@ internal fun HighlightListItem(
     revealedHighlightId: Long?,
     onRevealChange: (Long?) -> Unit,
     onClick: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    pending: Boolean = false,
 ) {
     val density = LocalDensity.current
     val deleteWidthPx = with(density) { 72.dp.toPx() }
@@ -872,8 +881,21 @@ internal fun HighlightListItem(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+                if (pending) {
+                    PendingAnchorLabel()
+                }
             }
         }
     }
+}
+
+@Composable
+private fun PendingAnchorLabel() {
+    Spacer(modifier = Modifier.height(4.dp))
+    Text(
+        text = stringResource(R.string.annotation_anchor_pending),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.tertiary,
+    )
 }
 

@@ -253,6 +253,7 @@
     <string name="selection_placeholder_diagram">[圖表]</string>
     <string name="selection_placeholder_image">[圖片]</string>
     <string name="bookmark_default_preview">書籤</string>
+    <string name="annotation_anchor_pending">待確認</string>
     <string name="reader_mark_finished_title">標記為已讀完？</string>
     <string name="reader_mark_finished_message">已經到這篇的結尾，要標記為已讀完並把進度設為 100% 嗎？</string>
     <string name="reader_mark_finished_confirm">標記已讀完</string>

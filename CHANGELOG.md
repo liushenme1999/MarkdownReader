@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-09-27
+
+### 修复
+
+- 统一书签、划线和正文命中逻辑，修复小标题长按选区和划线渲染不稳定的问题
+- 修复点击划线后点击其他区域导致已保存划线消失的问题
+- 修复退出阅读页后重新进入时标题、正文、公式和代码块划线无法恢复的问题
+- 代码块划线恢复支持源码与渲染文本的缩进、换行和空白差异，避免重复代码内容串位
+- 修复异步 Markdown 渲染完成前恢复划线时机不正确的问题
+
 ## [1.1.4] - 2026-09-25
 
 ### 修复
@@ -249,7 +259,8 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.4...HEAD
+[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.5...HEAD
+[1.1.5]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.4...v1.1.5
 [1.1.4]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.1...v1.1.2

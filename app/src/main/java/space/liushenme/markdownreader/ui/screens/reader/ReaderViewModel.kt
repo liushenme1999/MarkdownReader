@@ -17,6 +17,7 @@ import space.liushenme.markdownreader.data.repository.ReadingProgressRepository
 import space.liushenme.markdownreader.data.repository.ReadingSessionStats
 import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
 import space.liushenme.markdownreader.importing.BookContentLoader
+import space.liushenme.markdownreader.importing.BookTocEnricher
 import space.liushenme.markdownreader.importing.ExtractedBookText
 import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.importing.ParsedBookStorage
@@ -25,6 +26,9 @@ import space.liushenme.markdownreader.importing.UrlBookDownloader
 import space.liushenme.markdownreader.markdown.MarkdownInlineHtml
 import space.liushenme.markdownreader.markdown.MarkdownPreprocessor
 import space.liushenme.markdownreader.model.HighlightStyle
+import space.liushenme.markdownreader.ui.screens.reader.anchor.captureTextAnchor
+import space.liushenme.markdownreader.ui.screens.reader.anchor.sourceSpanForRenderedQuote
+import space.liushenme.markdownreader.ui.screens.reader.anchor.withCapturedAnchor
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
 import space.liushenme.markdownreader.ui.theme.ReadingStyleState
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
@@ -261,7 +265,13 @@ class ReaderViewModel @Inject constructor(
             _book.value = latestBook
             val text = MarkdownPreprocessor.stripLocalRelativeImages(extracted.body)
             _content.value = text
-            _structuredToc.value = extracted.toc
+            val format = ImportedBookFormat.fromStored(latestBook.importFormat)
+            // 再次对齐：strip / materialize 后旧 toc 偏移可能已失效；在 IO 线程重解析，避免跳错章。
+            val alignedToc = BookTocEnricher.alignToBody(
+                format,
+                extracted.copy(body = text),
+            ).toc
+            _structuredToc.value = alignedToc
                 .map {
                     MarkdownTocEntry(
                         level = it.level,
@@ -624,8 +634,10 @@ class ReaderViewModel @Inject constructor(
                         context = appContext,
                     ),
                     note = note,
-                    createTime = Date()
-                )
+                    createTime = Date(),
+                ).let { entity ->
+                    anchorFor(raw, pos, pos)?.let(entity::withCapturedAnchor) ?: entity
+                }
                 bookmarkRepository.addBookmark(bookmark)
             }
         }
@@ -673,15 +685,16 @@ class ReaderViewModel @Inject constructor(
             bookmarkRepository.deleteBookmark(near)
             false
         } else {
-            bookmarkRepository.addBookmark(
-                BookmarkEntity(
-                    bookId = book.id,
-                    position = pos,
-                    previewText = preview,
-                    note = null,
-                    createTime = Date()
-                )
-            )
+            val bookmark = BookmarkEntity(
+                bookId = book.id,
+                position = pos,
+                previewText = preview,
+                note = null,
+                createTime = Date(),
+            ).let { entity ->
+                anchorFor(raw, pos, pos)?.let(entity::withCapturedAnchor) ?: entity
+            }
+            bookmarkRepository.addBookmark(bookmark)
             true
         }
     }
@@ -698,16 +711,29 @@ class ReaderViewModel @Inject constructor(
         color: androidx.compose.ui.graphics.Color,
         style: HighlightStyle = lastHighlightStyle.value,
         sourceStartHint: Int = lastKnownReadingCharPos,
+        forcedSourceSpan: Pair<Int, Int>? = null,
+        sourceSearchRange: IntRange? = null,
     ): Long? = withContext(NonCancellable) {
         if (selectedText.isBlank()) return@withContext null
         val book = _book.value ?: return@withContext null
         val content = _content.value
         if (content.isEmpty()) return@withContext null
         val hint = sourceStartHint.coerceIn(0, content.length)
-        // 源码中找不到完全匹配时仍按 hint 落库，渲染侧靠 highlightedText 在展示层匹配
-        val startPos = resolveHighlightSourceStart(content, selectedText, hint)
-            ?: hint.coerceIn(0, (content.length - selectedText.length).coerceAtLeast(0))
-        val endPos = (startPos + selectedText.length).coerceAtMost(content.length)
+        // 选区是排版后的文字，源码里可能夹着标记。标题选区用标题行，避免正文同句抢走。
+        val forced = forcedSourceSpan?.takeIf { (start, end) ->
+            start in 0 until content.length && end in (start + 1)..content.length
+        }
+        val searchStart = sourceSearchRange?.first?.coerceIn(0, content.length) ?: 0
+        val searchEnd = sourceSearchRange?.last?.plus(1)?.coerceIn(searchStart, content.length) ?: content.length
+        val span = forced ?: sourceSpanForRenderedQuote(
+            source = content,
+            rendered = selectedText,
+            hint = hint,
+            searchStart = searchStart,
+            searchEnd = searchEnd,
+        )
+        val startPos = span?.first ?: return@withContext null
+        val endPos = span.second
         if (endPos <= startPos) return@withContext null
         // 同一区域已有划线则复用，避免连点「划线」重复插入
         highlights.value.firstOrNull {
@@ -722,7 +748,9 @@ class ReaderViewModel @Inject constructor(
             color = colorArgb,
             style = style.storageKey,
             createTime = Date(),
-        )
+        ).let { entity ->
+            anchorFor(content, startPos, endPos)?.let(entity::withCapturedAnchor) ?: entity
+        }
         val id = highlightRepository.addHighlight(highlight)
         readerSettingsRepository.setLastHighlightPreference(colorArgb, style)
         // Flow 可能略滞后：乐观写入，保证浮窗打开瞬间就能看到划线
@@ -742,15 +770,21 @@ class ReaderViewModel @Inject constructor(
         color: androidx.compose.ui.graphics.Color,
         style: HighlightStyle,
         sourceStartHint: Int,
+        forcedSourceSpan: Pair<Int, Int>? = null,
+        sourceSearchRange: IntRange? = null,
         onResult: (Long?) -> Unit = {},
     ) {
         viewModelScope.launch {
-            val id = addHighlightNow(
-                selectedText = selectedText,
-                color = color,
-                style = style,
-                sourceStartHint = sourceStartHint,
-            )
+            val id = runCatching {
+                addHighlightNow(
+                    selectedText = selectedText,
+                    color = color,
+                    style = style,
+                    sourceStartHint = sourceStartHint,
+                    forcedSourceSpan = forcedSourceSpan,
+                    sourceSearchRange = sourceSearchRange,
+                )
+            }.getOrNull()
             onResult(id)
         }
     }
@@ -780,6 +814,36 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
+    fun deleteHighlightById(highlightId: Long) {
+        if (highlightId <= 0L) return
+        viewModelScope.launch {
+            val existing = highlights.value.firstOrNull { it.id == highlightId } ?: return@launch
+            highlights.value = highlights.value.filterNot { it.id == highlightId }
+            highlightRepository.deleteHighlight(existing)
+        }
+    }
+
+    /** PDF 不写注解锚点。目录优先用导入时解析好的，没有再按正文现切。 */
+    private fun anchorFor(content: String, start: Int, end: Int) =
+        _book.value?.let { book ->
+            val format = ImportedBookFormat.fromStored(book.importFormat)
+            if (format.isPdf || PdfReaderContent.looksLikePdfBody(content)) return@let null
+            val toc = _structuredToc.value?.takeIf { it.isNotEmpty() }
+                ?: if (format.usesReaderPlainBody) {
+                    parsePlainTextToc(content)
+                } else {
+                    parseMarkdownToc(content)
+                }
+            captureTextAnchor(
+                document = content,
+                plainText = format.usesReaderPlainBody,
+                start = start,
+                end = end,
+                toc = toc,
+                docHash = book.contentHash,
+            )
+        }
+
     private fun highlightColorArgb(color: androidx.compose.ui.graphics.Color): Int =
         if (color.alpha < 0.06f) {
             ReaderSettingsRepository.DEFAULT_HIGHLIGHT_COLOR_ARGB
@@ -787,36 +851,6 @@ class ReaderViewModel @Inject constructor(
             color.toArgb()
         }
 
-    /**
-     * 在全书源码中定位划线起点：优先命中 [hint]，否则取距 hint 最近的一处匹配。
-     */
-    private fun resolveHighlightSourceStart(
-        content: String,
-        selectedText: String,
-        hint: Int,
-    ): Int? {
-        if (selectedText.isEmpty() || content.isEmpty()) return null
-        val safeHint = hint.coerceIn(0, content.length)
-        if (safeHint + selectedText.length <= content.length &&
-            content.regionMatches(safeHint, selectedText, 0, selectedText.length)
-        ) {
-            return safeHint
-        }
-        var best = -1
-        var bestDist = Int.MAX_VALUE
-        var from = 0
-        while (from <= content.length - selectedText.length) {
-            val idx = content.indexOf(selectedText, from)
-            if (idx < 0) break
-            val dist = abs(idx - safeHint)
-            if (dist < bestDist) {
-                bestDist = dist
-                best = idx
-            }
-            from = idx + 1
-        }
-        return best.takeIf { it >= 0 }
-    }
 
     fun setTheme(theme: ReadingTheme) {
         viewModelScope.launch {
@@ -1026,4 +1060,3 @@ internal fun resolveBookmarkPreviewText(
         ).ifEmpty { fallback }
     }
 }
-

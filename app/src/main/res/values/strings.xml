@@ -261,6 +261,7 @@
     <string name="selection_placeholder_diagram">[图表]</string>
     <string name="selection_placeholder_image">[图片]</string>
     <string name="bookmark_default_preview">书签</string>
+    <string name="annotation_anchor_pending">待确认</string>
     <string name="reader_mark_finished_title">标记为已读完？</string>
     <string name="reader_mark_finished_message">已经到这篇的结尾，要标记为已读完并把进度设为 100% 吗？</string>
     <string name="reader_mark_finished_confirm">标记已读完</string>

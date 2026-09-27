@@ -1,8 +1,10 @@
 package space.liushenme.markdownreader.ui.screens.reader
 
 import android.widget.TextView
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -14,6 +16,41 @@ import space.liushenme.markdownreader.R
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class PendingScrollReapplyTest {
+
+    @Test
+    fun awaitPagerMarkdownPage_usesRenderSignatureInsteadOfSourceLength() = runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val tv = TextView(context).apply {
+            // Markdown 源码可能很长，渲染结果只有这几个展示字符。
+            text = "渲染正文"
+            measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(400, android.view.View.MeasureSpec.EXACTLY),
+                android.view.View.MeasureSpec.makeMeasureSpec(200, android.view.View.MeasureSpec.EXACTLY),
+            )
+            layout(0, 0, 400, 200)
+            setTag(R.id.reader_markdown_render_complete, "page-render-sig")
+        }
+
+        assertEquals(
+            tv,
+            awaitPagerPageTextView(
+                pageTextViews = mapOf(0 to tv),
+                page = 0,
+                maxAttempts = 1,
+                expectedTextLength = null,
+                expectedRenderSig = "page-render-sig",
+            ),
+        )
+        assertNull(
+            awaitPagerPageTextView(
+                pageTextViews = mapOf(0 to tv),
+                page = 0,
+                maxAttempts = 1,
+                expectedTextLength = null,
+                expectedRenderSig = "other-render-sig",
+            ),
+        )
+    }
 
     @Test
     fun cancelPendingScrollReapply_invalidatesScheduledCallbacks() {
@@ -186,6 +223,27 @@ class ExpandScrollRestoreTest {
 }
 
 class ReaderPagingEngineTest {
+
+    @Test
+    fun normalizeDisplayedSelection_trimsTextAndDisplayedOffsetsTogether() {
+        assertEquals(
+            NormalizedDisplayedSelection(text = "目标", start = 11, end = 13),
+            normalizeDisplayedSelection(" 目标\n", displayedStart = 10, displayedEnd = 14),
+        )
+        assertEquals(null, normalizeDisplayedSelection(" \n\t", 3, 6))
+    }
+
+    @Test
+    fun annotationSourceOffset_doesNotScaleResolvedCoordinate() {
+        val target = AnnotationJumpTarget(
+            sourceOffset = 800,
+            previewText = "目标",
+            kind = AnnotationJumpKind.Highlight,
+            highlightId = 9L,
+        )
+        // 即使旧 totalChars 可能是 10_000，注解锚点在当前 1_000 字正文里仍应保持 800。
+        assertEquals(800, annotationSourceOffset(target, contentLength = 1_000))
+    }
 
     @Test
     fun locateExpandFingerprint_matchesAcrossLineBreaks() {
@@ -552,5 +610,63 @@ class ReaderPagingEngineTest {
         )
         assertEquals(expected, headingOffset)
         assertTrue(proportional != expected)
+    }
+
+    @Test
+    fun pagerSourceWindowEnd_usesNextPageSourceStart() {
+        val pages = listOf(0 until 120, 120 until 260)
+        val contentLen = 260
+        val renderedLength = 40
+        assertEquals(120, pagerSourceWindowEnd(pages, 0, contentLen))
+        assertEquals(contentLen, pagerSourceWindowEnd(pages, 1, contentLen))
+        assertTrue(pages[0].first + renderedLength != pagerSourceWindowEnd(pages, 0, contentLen))
+    }
+
+    @Test
+    fun annotationJumpWindow_skipsPrecedingCodeFence() {
+        val code = "```kotlin\n" + "val padding = 1\n".repeat(400) + "```\n"
+        val targetLine = "这里才是划线原文 unique-highlight-token"
+        val doc = "# 章\n\n$code\n$targetLine\n后面还有一段。\n"
+        val anchor = doc.indexOf("unique-highlight-token")
+        val (start, end) = computeAnnotationJumpReadingWindow(doc, anchor)
+        assertTrue(start <= anchor && anchor < end)
+        assertTrue(start > doc.indexOf("```kotlin"))
+        assertFalse(doc.substring(start, end).contains("val padding"))
+    }
+
+    @Test
+    fun annotationJumpWindow_keepsFenceWhenAnchorIsInsideCode() {
+        val doc = """
+            # 章
+
+            前文
+
+            ```
+            line-before
+            highlighted-inside-code
+            line-after
+            ```
+
+            后文
+        """.trimIndent()
+        val anchor = doc.indexOf("highlighted-inside-code")
+        val (start, end) = computeAnnotationJumpReadingWindow(doc, anchor)
+        val slice = doc.substring(start, end)
+        assertTrue(slice.contains("```"))
+        assertTrue(slice.contains("highlighted-inside-code"))
+        assertTrue(slice.trimEnd().endsWith("```") || slice.contains("```\n"))
+        assertFalse("未闭合围栏会把后文吞进代码块", slice.contains("后文") && !slice.contains("```"))
+    }
+
+    @Test
+    fun snapBounds_doesNotCutMathBlock() {
+        val math = "$$\n" + "x^2\n".repeat(30) + "$$\n"
+        val doc = "前文\n$math" + "公式后的划线目标\n"
+        val anchor = doc.indexOf("公式后的划线目标")
+        val cut = doc.indexOf("x^2") + 4
+        val (start, end) = snapBoundsOutsideFences(doc, cut, doc.length, anchor)
+        assertTrue(start > doc.indexOf("$$"))
+        assertTrue(start <= anchor && anchor < end)
+        assertFalse(doc.substring(start, end).startsWith("x^2"))
     }
 }

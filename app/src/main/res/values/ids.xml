@@ -12,6 +12,7 @@
     <item name="reader_pdf_layout_listeners" type="id" />
     <item name="reader_pdf_invert_pages" type="id" />
     <item name="reader_pending_scroll_char_offset" type="id" />
+    <item name="reader_pending_scroll_intra_px" type="id" />
     <item name="reader_pending_scroll_reapply_gen" type="id" />
     <!-- 扩窗后与 setParsedMarkdown 同帧恢复：源码锚点 + 新窗口范围 -->
     <item name="reader_pending_source_scroll_offset" type="id" />

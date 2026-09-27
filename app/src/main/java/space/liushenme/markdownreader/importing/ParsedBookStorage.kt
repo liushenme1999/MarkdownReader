@@ -98,11 +98,13 @@ object ParsedBookStorage {
         var body = materializeAssetUrls(rawBody, dir)
         body = MarkdownPreprocessor.stripLocalRelativeImages(body)
         val tocFile = File(dir, TOC_FILE)
-        val toc = if (tocFile.isFile) {
+        val storedToc = if (tocFile.isFile) {
             runCatching { tocFromJson(tocFile.readText(StandardCharsets.UTF_8)) }.getOrElse { emptyList() }
         } else {
             emptyList()
         }
+        // materialize 会把 book-asset:// 换成更长的 file://，旧 toc.json 偏移会整体错位。
+        val toc = BookTocEnricher.alignToBody(body, storedToc)
         return ExtractedBookText(body = body, toc = toc, coverImageBytes = null)
     }
 

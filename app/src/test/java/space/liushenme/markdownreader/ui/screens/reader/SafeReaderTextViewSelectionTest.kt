@@ -4,12 +4,15 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.text.Selection
 import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.ClickableSpan
 import android.view.MotionEvent
 import android.widget.FrameLayout
 import android.widget.PopupMenu
 import android.widget.TextView
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -17,6 +20,9 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import io.noties.markwon.image.AsyncDrawableSpan
+import space.liushenme.markdownreader.markdown.ReaderMarkwonFactory
+import io.noties.markwon.core.spans.HeadingSpan
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
@@ -304,6 +310,188 @@ class SafeReaderTextViewSelectionTest {
         )
         val layout = textView.layout!!
         assertEquals(layout.getLineForOffset(selStart), layout.getLineForOffset(selEnd - 1))
+    }
+
+    @Test
+    fun linkLongPress_startsSelectionInsteadOfOnlyClickHandling() {
+        val context = RuntimeEnvironment.getApplication()
+        val body = SpannableString("前文 链接文字 后文")
+        val linkStart = body.indexOf("链接文字")
+        var clicked = false
+        body.setSpan(
+            object : ClickableSpan() {
+                override fun onClick(widget: android.view.View) {
+                    clicked = true
+                }
+            },
+            linkStart,
+            linkStart + "链接文字".length,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+        )
+        val view = SafeReaderTextView(context).apply {
+            setText(body, TextView.BufferType.SPANNABLE)
+            textSize = 22f
+            setPadding(8, 8, 8, 8)
+            measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(400, android.view.View.MeasureSpec.EXACTLY),
+                android.view.View.MeasureSpec.makeMeasureSpec(200, android.view.View.MeasureSpec.EXACTLY),
+            )
+            layout(0, 0, 400, 200)
+        }
+        FrameLayout(context).apply {
+            addView(view)
+            measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(400, android.view.View.MeasureSpec.EXACTLY),
+                android.view.View.MeasureSpec.makeMeasureSpec(200, android.view.View.MeasureSpec.EXACTLY),
+            )
+            layout(0, 0, 400, 200)
+        }
+        val (x, y) = offsetXYForSpanOn(view, linkStart, linkStart + 1)
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
+        val up = MotionEvent.obtain(0, 700, MotionEvent.ACTION_UP, x, y, 0)
+        try {
+            view.onTouchEvent(down)
+            assertTrue(view.isSelectionLongPressScheduledForTest())
+            assertTrue(view.fireScheduledSelectionLongPressForTest())
+            assertTrue(view.hasVisibleTextSelection())
+            val selectedText = view.text as Spanned
+            assertTrue(Selection.getSelectionEnd(selectedText) > Selection.getSelectionStart(selectedText))
+            view.onTouchEvent(up)
+            assertFalse("long press must not dispatch the link click on ACTION_UP", clicked)
+        } finally {
+            down.recycle()
+            up.recycle()
+        }
+    }
+
+    @Test
+    fun inlineLatexAsyncDrawable_isSelectableForLongPress() {
+        val context = RuntimeEnvironment.getApplication()
+        val markwon = ReaderMarkwonFactory.create(context)
+        val rendered = markwon.toMarkdown("前文 ${'$'}x^2${'$'} 后文") as Spanned
+        val latex = rendered.getSpans(0, rendered.length, AsyncDrawableSpan::class.java)
+            .firstOrNull { it.javaClass.simpleName.contains("Latex", ignoreCase = true) }
+        assertNotNull("inline latex should be rendered as a latex drawable span", latex)
+        val view = SafeReaderTextView(context).apply {
+            setText(rendered, TextView.BufferType.SPANNABLE)
+            textSize = 22f
+            setPadding(8, 8, 8, 8)
+            measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(600, android.view.View.MeasureSpec.EXACTLY),
+                android.view.View.MeasureSpec.makeMeasureSpec(200, android.view.View.MeasureSpec.EXACTLY),
+            )
+            layout(0, 0, 600, 200)
+        }
+        FrameLayout(context).apply {
+            addView(view)
+            measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(600, android.view.View.MeasureSpec.EXACTLY),
+                android.view.View.MeasureSpec.makeMeasureSpec(200, android.view.View.MeasureSpec.EXACTLY),
+            )
+            layout(0, 0, 600, 200)
+        }
+        val start = rendered.getSpanStart(latex)
+        assertTrue(view.canSelectAtOffsetForTest(start))
+        val (x, y) = offsetXYForSpanOn(view, start, start + 1)
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
+        try {
+            view.onTouchEvent(down)
+            assertTrue(view.isSelectionLongPressScheduledForTest())
+            assertTrue(view.fireScheduledSelectionLongPressForTest())
+            assertTrue(view.hasVisibleTextSelection())
+            val selectedStart = Selection.getSelectionStart(view.text as Spanned)
+            val selectedEnd = Selection.getSelectionEnd(view.text as Spanned)
+            assertTrue(selectedEnd > selectedStart)
+        } finally {
+            down.recycle()
+        }
+    }
+
+    @Test
+    fun markdownHeadingLongPress_isSelectableLikeBodyText() {
+        val context = RuntimeEnvironment.getApplication()
+        val markwon = ReaderMarkwonFactory.create(context)
+        val rendered = markwon.toMarkdown("## (1) 准确率奖励\n\n正文内容") as Spanned
+        val heading = rendered.getSpans(0, rendered.length, HeadingSpan::class.java).single()
+        val headingStart = rendered.getSpanStart(heading)
+        val titleStart = rendered.toString().indexOf("准确率奖励", headingStart)
+        assertTrue(titleStart >= headingStart)
+        val view = SafeReaderTextView(context).apply {
+            setText(rendered, TextView.BufferType.SPANNABLE)
+            textSize = 22f
+            setPadding(8, 8, 8, 8)
+            measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(600, android.view.View.MeasureSpec.EXACTLY),
+                android.view.View.MeasureSpec.makeMeasureSpec(240, android.view.View.MeasureSpec.EXACTLY),
+            )
+            layout(0, 0, 600, 240)
+        }
+        FrameLayout(context).apply {
+            addView(view)
+            measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(600, android.view.View.MeasureSpec.EXACTLY),
+                android.view.View.MeasureSpec.makeMeasureSpec(240, android.view.View.MeasureSpec.EXACTLY),
+            )
+            layout(0, 0, 600, 240)
+        }
+        val (x, y) = offsetXYForSpanOn(view, titleStart, titleStart + 1)
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
+        try {
+            view.onTouchEvent(down)
+            assertTrue(view.isSelectionLongPressScheduledForTest())
+            assertTrue(view.fireScheduledSelectionLongPressForTest())
+            assertTrue(view.hasVisibleTextSelection())
+            val selected = view.text as Spanned
+            assertTrue(Selection.getSelectionEnd(selected) > Selection.getSelectionStart(selected))
+        } finally {
+            down.recycle()
+        }
+    }
+
+    @Test
+    fun markdownHeadingSelection_resolvesBackToSourceForHighlight() {
+        val context = RuntimeEnvironment.getApplication()
+        val source = "## (1) 准确率奖励\n\n正文内容"
+        val markwon = ReaderMarkwonFactory.create(context)
+        val rendered = markwon.toMarkdown(source) as Spanned
+        val heading = rendered.getSpans(0, rendered.length, HeadingSpan::class.java).single()
+        val titleStart = rendered.toString().indexOf("准确率奖励", rendered.getSpanStart(heading))
+        val selected = "准确率奖励"
+        val resolved = resolveSourceSpanForDisplayedSelection(
+            displayed = rendered,
+            displayedStart = titleStart,
+            displayedEnd = titleStart + selected.length,
+            selectedText = selected,
+            source = source,
+            renderPlainText = false,
+            windowStart = 0,
+            windowEnd = source.length,
+            toc = listOf(MarkdownTocEntry(2, "(1) 准确率奖励", 0)),
+        )
+        assertNotNull("heading selection should map to source", resolved)
+        assertEquals(source.indexOf("准确率奖励"), resolved!!.start)
+    }
+
+    @Test
+    fun markdownHeadingSelection_resolvesWithoutLoadedToc() {
+        val context = RuntimeEnvironment.getApplication()
+        val source = "### 图 11.5 奖励函数设计\n\n正文内容"
+        val rendered = ReaderMarkwonFactory.create(context).toMarkdown(source) as Spanned
+        val heading = rendered.getSpans(0, rendered.length, HeadingSpan::class.java).single()
+        val start = rendered.toString().indexOf("奖励函数设计", rendered.getSpanStart(heading))
+        val resolved = resolveSourceSpanForDisplayedSelection(
+            displayed = rendered,
+            displayedStart = start,
+            displayedEnd = start + "奖励函数设计".length,
+            selectedText = "奖励函数设计",
+            source = source,
+            renderPlainText = false,
+            windowStart = 0,
+            windowEnd = source.length,
+            toc = emptyList(),
+        )
+        assertNotNull(resolved)
+        assertEquals(source.indexOf("奖励函数设计"), resolved!!.start)
     }
 
     @Test
@@ -715,5 +903,129 @@ class SafeReaderTextViewSelectionTest {
             textView.context.getString(space.liushenme.markdownreader.R.string.selection_menu_highlight),
             menu.getItem(1).title.toString(),
         )
+    }
+
+    @Test
+    fun outsideDownWhileStylePickerShowing_dismissesSelection() {
+        activateSelection()
+        textView.highlightStylePickerShowing = true
+        val down = MotionEvent.obtain(
+            0,
+            0,
+            MotionEvent.ACTION_DOWN,
+            textView.width - 2f,
+            textView.height - 2f,
+            0,
+        )
+        try {
+            textView.onTouchEvent(down)
+        } finally {
+            down.recycle()
+        }
+        assertFalse(textView.isInTextSelection())
+        assertFalse(textView.hasVisibleTextSelection())
+        assertFalse(textView.highlightStylePickerShowing)
+    }
+
+    @Test
+    fun outsideDownAfterHighlight_keepsActiveDraftThroughDatabaseRefresh() {
+        activateSelection()
+        val start = textView.text.indexOf("选中")
+        val draftId = -101L
+        textView.highlightStylePickerShowing = true
+        textView.registerDraftHighlight(draftId)
+        applyHighlightDecorationAtRange(
+            textView = textView,
+            start = start,
+            end = start + 2,
+            colorArgb = 0xFFFFFF00.toInt(),
+            style = space.liushenme.markdownreader.model.HighlightStyle.Background,
+            highlightId = draftId,
+        )
+
+        val down = MotionEvent.obtain(
+            0,
+            0,
+            MotionEvent.ACTION_DOWN,
+            textView.width - 2f,
+            textView.height - 2f,
+            0,
+        )
+        try {
+            textView.onTouchEvent(down)
+        } finally {
+            down.recycle()
+        }
+        refreshReaderHighlightSpans(
+            textView = textView,
+            highlights = emptyList(),
+            highlightColorArgb = 0xFFFFFF00.toInt(),
+            sourceContentLength = textView.text.length,
+            highlightSig = "outside-tap-draft",
+        )
+
+        assertFalse(textView.isInTextSelection())
+        assertTrue(textView.isDraftHighlightActive(draftId))
+        val text = textView.text as android.text.Spanned
+        val spans = text.getSpans(0, text.length, HighlightBackgroundSpan::class.java)
+        assertEquals(listOf(draftId), spans.map { it.highlightId })
+        assertEquals(start, text.getSpanStart(spans.single()))
+        assertEquals(start + 2, text.getSpanEnd(spans.single()))
+    }
+
+    @Test
+    fun systemClosesMenuWhileStylePickerOpen_clearsSelection() {
+        activateSelection()
+        textView.highlightStylePickerShowing = true
+        textView.simulateSystemActionModeDestroyForTest()
+        assertFalse(textView.isInTextSelection())
+        assertFalse(textView.hasVisibleTextSelection())
+        assertFalse(textView.highlightStylePickerShowing)
+    }
+
+    @Test
+    fun tapHighlight_selectsRange_outsideTapClearsIt() {
+        val view = wrappingReaderTextView("hello world")
+        val text = view.text as SpannableString
+        val start = text.indexOf("world")
+        text.setSpan(
+            HighlightBackgroundSpan(0xFFFFFF00.toInt(), highlightId = 3L),
+            start,
+            start + 5,
+            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+        )
+        val layout = view.layout!!
+        val line = layout.getLineForOffset(start)
+        val y = (layout.getLineTop(line) + layout.getLineBottom(line)) / 2f + view.extendedPaddingTop
+        var x = view.totalPaddingLeft + 1f
+        var hitX = -1f
+        while (x < view.width) {
+            val offset = ReaderTextSelectionTouch.offsetNearestCharOnTextView(view, x, y)
+            if (offset != null && offset in start until start + 5) {
+                hitX = x
+                break
+            }
+            x += 1f
+        }
+        assertTrue("no touch point maps onto the highlight", hitX >= 0f)
+        assertTrue(view.selectCoveringHighlightAt(hitX, y))
+        assertTrue(view.isInTextSelection())
+        assertEquals(start, Selection.getSelectionStart(text))
+        assertEquals(start + 5, Selection.getSelectionEnd(text))
+        val menu = PopupMenu(view.context, view).menu
+        view.populateSelectionMenuForTest(menu)
+        assertEquals(SafeReaderTextView.MENU_ID_CANCEL_HIGHLIGHT, menu.getItem(1).itemId)
+
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 8f, view.height - 4f, 0)
+        val up = MotionEvent.obtain(0, 40, MotionEvent.ACTION_UP, 8f, view.height - 4f, 0)
+        try {
+            view.onTouchEvent(down)
+            view.onTouchEvent(up)
+        } finally {
+            down.recycle()
+            up.recycle()
+        }
+        assertFalse(view.isInTextSelection())
+        assertFalse(view.hasVisibleTextSelection())
     }
 }

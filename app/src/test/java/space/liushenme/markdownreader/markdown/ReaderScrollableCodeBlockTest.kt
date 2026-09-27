@@ -210,4 +210,17 @@ class ReaderScrollableCodeBlockTest {
             bounds.height() < paint.textSize * 3,
         )
     }
+
+    @Test
+    fun indexOfSnippet_toleratesWhitespaceDifferencesAndReturnsDisplayedRange() {
+        val context = RuntimeEnvironment.getApplication()
+        val markwon = ReaderMarkwonFactory.create(context)
+        val rendered = markwon.toMarkdown("```kotlin\nval  value = 1\n```")
+        val span = rendered.getSpans(0, rendered.length, ReaderScrollableCodeBlockSpan::class.java).single()
+
+        val range = span.rangeOfSnippet("val value = 1")
+
+        assertTrue("normalized code should still be found", range != null)
+        assertEquals("val  value = 1", span.contentSliceForTest(range!!.first, range.last + 1))
+    }
 }

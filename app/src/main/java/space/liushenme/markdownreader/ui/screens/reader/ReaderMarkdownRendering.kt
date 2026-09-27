@@ -30,10 +30,14 @@ import android.text.method.ArrowKeyMovementMethod
 import android.text.method.LinkMovementMethod
 import android.text.method.MovementMethod
 import android.text.style.ImageSpan
+import android.text.style.ReplacementSpan
 import android.view.View
 import android.widget.TextView
 import android.widget.Toast
+import io.noties.markwon.ext.latex.ReaderCompoundInlineLatexSpan
+import io.noties.markwon.ext.latex.ReaderInlineLatexSpan
 import io.noties.markwon.image.AsyncDrawableSpan
+import space.liushenme.markdownreader.markdown.ReaderMathSymbolSpan
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -111,6 +115,7 @@ import space.liushenme.markdownreader.markdown.CodeBlockHighlightRange
 import space.liushenme.markdownreader.markdown.ReaderTableSpacing
 import ru.noties.jlatexmath.JLatexMathDrawable
 import java.io.File
+import java.util.concurrent.atomic.AtomicLong
 import io.noties.markwon.Markwon
 import io.noties.markwon.core.spans.HeadingSpan
 import kotlinx.coroutines.coroutineScope
@@ -131,6 +136,10 @@ internal val readerMarkwonRenderExecutor =
 
 /** Markwon 非线程安全（HtmlPlugin 内部状态）；串行化 parse/render，避免与后台 toMarkdown 并发。 */
 internal val markwonRenderLock = Any()
+
+private val readerDraftHighlightId = AtomicLong(-1L)
+
+internal fun nextReaderDraftHighlightId(): Long = readerDraftHighlightId.getAndDecrement()
 
 /** 曾用于主线程同步渲染；现一律走 [readerMarkwonRenderExecutor] 以避免 HtmlPlugin 并发崩溃。 */
 internal const val MARKWON_BACKGROUND_RENDER_THRESHOLD = 4000
@@ -165,17 +174,22 @@ internal fun syncReaderPendingHighlights(
     highlights: List<HighlightEntity>,
     highlightColorArgb: Int,
     sourceContentLength: Int,
+    sourceText: String? = null,
 ) {
     val safe = textView as? SafeReaderTextView ?: return
     safe.pendingHighlights = highlights
     safe.pendingHighlightColorArgb = highlightColorArgb
     safe.pendingHighlightSourceLength = sourceContentLength
+    if (sourceText != null) {
+        safe.pendingHighlightSourceText = sourceText
+    }
 }
 
 /** 用 TextView 上挂着的最新划线刷新 span。 */
 internal fun refreshReaderHighlightSpansFromPending(
     textView: TextView,
     fallbackSourceLength: Int = -1,
+    sourceText: String? = null,
 ) {
     val safe = textView as? SafeReaderTextView
     val highlights = safe?.pendingHighlights ?: emptyList()
@@ -191,6 +205,7 @@ internal fun refreshReaderHighlightSpansFromPending(
         highlightColorArgb = color,
         sourceContentLength = sourceLen,
         highlightSig = readerHighlightSignature(highlights),
+        sourceText = sourceText ?: safe?.pendingHighlightSourceText,
     )
 }
 
@@ -211,15 +226,20 @@ internal fun applyReaderTextContent(
         highlights = highlights,
         highlightColorArgb = highlightColorArgb,
         sourceContentLength = content.length,
+        sourceText = content,
     )
     val prevSig = textView.getTag(TAG_READER_RENDER_SIG) as? String
     val prevComplete = textView.getTag(R.id.reader_markdown_render_complete) as? String
     // 同签名已在渲染中或已完成：跳过，避免 AndroidView 误重建 / 周期重组触发全量 Markwon。
+    // 目录再次点同一章时窗口不变、签名相同，但仍须执行置顶，否则 scrollY 停在旧位置。
     if (prevSig == renderSig) {
         readerOpenDbg(
             "markwonQueue skip sameSig complete=${prevComplete == renderSig} " +
                 "contentLen=${content.length}",
         )
+        if (applyReaderScrollToTopIfAny(textView, clearAfter = true)) {
+            (textView as? SafeReaderTextView)?.signalOpenPositionReady("sameSigScrollToTop")
+        }
         return
     }
     textView.setTag(TAG_READER_RENDER_SIG, renderSig)
@@ -243,12 +263,13 @@ internal fun applyReaderTextContent(
     val sp = SpannableString(content)
     refreshStashedExpandAnchorBeforeContentSwap(textView)
     textView.setText(sp, TextView.BufferType.SPANNABLE)
+    // 先恢复划线，再按 highlightId 定位；重复文字时不能先走文本指纹回退。
+    refreshReaderHighlightSpansFromPending(textView, fallbackSourceLength = content.length)
     if (!applyReaderScrollToTopIfAny(textView, clearAfter = true)) {
         if (!applyStashedSavedPositionSnapIfAny(textView)) {
             applyStashedSourceScrollRestoreIfAny(textView, renderPlainText = true)
         }
     }
-    refreshReaderHighlightSpansFromPending(textView, fallbackSourceLength = content.length)
 }
 
 internal fun applyMarkdownContent(
@@ -266,6 +287,9 @@ internal fun applyMarkdownContent(
             "finishMarkdown completeTagTail=${renderSig.takeLast(48)} " +
                 "textLen=${textView.text?.length} layout=${textView.layout != null}",
         )
+        // 必须读 pending：闭包里的 highlights 可能是启动渲染时的空列表。并且要在 snap 前
+        // 完成 span/代码块范围恢复，确保划线跳转优先按真实 highlightId 定位。
+        refreshReaderHighlightSpansFromPending(textView, fallbackSourceLength = content.length)
         // 目录跳转置顶意图优先：直接 scrollY=0 并清意图，不再走扩窗 stash 恢复。
         // 打开书/书签 snap 次之：同帧滚到目标，避免 scrollY=0 先画一帧「别的章节」再跳回。
         // 扩窗滚动恢复交给 onLayout（首帧 draw 前）。此处若 layout 未就绪不要 post，
@@ -292,9 +316,6 @@ internal fun applyMarkdownContent(
         if (anchorIndex != null) {
             textView.post { space.liushenme.markdownreader.markdown.RenderedAnchorBinder.bind(textView, anchorIndex) }
         }
-        // 必须读 pending：闭包里的 highlights 可能是启动渲染时的空列表，二次进页时
-        // Room 热缓存会在 Markdown 完成前把划线刷上来，若此处用旧空列表会清掉并写死空签名。
-        refreshReaderHighlightSpansFromPending(textView, fallbackSourceLength = content.length)
         if (pdfFullWidthImages) {
             if (pdfCenterImageVertically) {
                 PdfImageLayoutHelper.clearLayoutState(textView)
@@ -363,6 +384,7 @@ internal fun MarkdownReaderView(
     readerPaddingTopDp: Int = readerPaddingDp,
     readerLineSpacingMultiplier: Float,
     highlights: List<space.liushenme.markdownreader.data.local.entity.HighlightEntity>,
+    retainedHighlights: List<HighlightEntity> = highlights,
     modifier: Modifier = Modifier.fillMaxSize(),
     onHighlightMenuClick: (
         text: String,
@@ -440,6 +462,7 @@ internal fun MarkdownReaderView(
                     highlights = highlights,
                     highlightColorArgb = theme.highlightColor.toArgb(),
                     sourceContentLength = content.length,
+                    sourceText = content,
                 )
                 applyReaderTextContent(
                     textView = this,
@@ -497,12 +520,14 @@ internal fun MarkdownReaderView(
             )
             val highlightSig = readerHighlightSignature(highlights)
             val highlightColorArgb = theme.highlightColor.toArgb()
+            textView.retainedHighlights = retainedHighlights.ifEmpty { highlights }
             // 无论正文是否变化，都同步最新划线，供异步渲染完成时读取。
             syncReaderPendingHighlights(
                 textView = textView,
                 highlights = highlights,
                 highlightColorArgb = highlightColorArgb,
                 sourceContentLength = content.length,
+                sourceText = content,
             )
             val prevContentSig = textView.getTag(TAG_READER_RENDER_SIG) as? String
             val prevHighlightSig = textView.getTag(TAG_READER_HIGHLIGHT_SIG) as? String
@@ -567,6 +592,9 @@ internal fun MarkdownReaderView(
                     // 正文尚未落地：只更新 pending，等 finishMarkdownRender 再刷，
                     // 避免在空/旧文本上写死 HIGHLIGHT_SIG 后被空闭包覆盖且不再重组。
                     textView.setTag(TAG_READER_HIGHLIGHT_SIG, null)
+                } else if (textView.highlightStylePickerShowing) {
+                    // 样式浮窗打开时保留选区上的即时划线，关掉后再按落库位置重刷。
+                    textView.setTag(TAG_READER_HIGHLIGHT_SIG, null)
                 } else {
                     refreshReaderHighlightSpans(
                         textView = textView,
@@ -574,6 +602,7 @@ internal fun MarkdownReaderView(
                         highlightColorArgb = highlightColorArgb,
                         sourceContentLength = content.length,
                         highlightSig = highlightSig,
+                        sourceText = content,
                     )
                 }
             }
@@ -669,7 +698,8 @@ internal fun bindReaderGesturesAndScroll(
                 touchState.codeScrolling = false
                 touchState.lastCodeTouchX = e.x
                 (tv as? SafeReaderTextView)?.prepareForNewTouch(e.x, e.y)
-                touchState.codeBlockSpan = (tv as? SafeReaderTextView)?.scrollableCodeBlockSpanAt(e.x, e.y)
+                val downTarget = (tv as? SafeReaderTextView)?.readerHitTargetAt(e.x, e.y)
+                touchState.codeBlockSpan = downTarget?.span as? ReaderScrollableCodeBlockSpan
                 // 手指按下即解除目录/书签跳转锁定：否则滑走后 diagram 仍按标题 offset 拉回。
                 if (allowVerticalScroll) {
                     clearPendingScrollCharOffset(tv)
@@ -690,8 +720,9 @@ internal fun bindReaderGesturesAndScroll(
                 ) {
                     return@setOnTouchListener false
                 }
+                val moveTarget = (tv as? SafeReaderTextView)?.readerHitTargetAt(e.x, e.y)
                 val codeSpan = touchState.codeBlockSpan
-                    ?: (tv as? SafeReaderTextView)?.scrollableCodeBlockSpanAt(e.x, e.y)
+                    ?: (moveTarget?.span as? ReaderScrollableCodeBlockSpan)
                 if (codeSpan != null && tv is SafeReaderTextView) {
                     val dx = e.x - touchState.downX
                     val dy = e.y - touchState.downY
@@ -766,6 +797,7 @@ internal fun bindReaderGesturesAndScroll(
                 if (tv is SafeReaderTextView && tv.isInTextSelection()) {
                     return@setOnTouchListener false
                 }
+                val dismissedSelection = (tv as? SafeReaderTextView)?.takeOutsideTapDismissedSelection() == true
                 val dx = e.x - touchState.downX
                 val dy = e.y - touchState.downY
                 val adx = kotlin.math.abs(dx)
@@ -776,8 +808,18 @@ internal fun bindReaderGesturesAndScroll(
                     ) {
                         return@setOnTouchListener true
                     }
-                    val previewBitmap = (tv as? SafeReaderTextView)
-                        ?.previewableBitmapAt(touchState.downX, touchState.downY)
+                    val upTarget = (tv as? SafeReaderTextView)?.readerHitTargetAt(
+                        touchState.downX,
+                        touchState.downY,
+                    )
+                    val previewBitmap = if (upTarget?.canPreview == true) {
+                        (tv as? SafeReaderTextView)?.previewableBitmapAt(
+                            touchState.downX,
+                            touchState.downY,
+                        )
+                    } else {
+                        null
+                    }
                     if (previewBitmap != null) {
                         onDiagramTap(previewBitmap)
                         return@setOnTouchListener true
@@ -785,10 +827,12 @@ internal fun bindReaderGesturesAndScroll(
                     if (tv is SafeReaderTextView && tv.dispatchLinkClickIfPresent(e.x, e.y)) {
                         return@setOnTouchListener true
                     }
-                    val onCodeBlock = tv is SafeReaderTextView &&
-                        tv.scrollableCodeBlockSpanAt(e.x, e.y) != null
+                    if (tv is SafeReaderTextView && tv.selectCoveringHighlightAt(e.x, e.y)) {
+                        return@setOnTouchListener true
+                    }
+                    val onCodeBlock = upTarget?.kind == ReaderHitKind.CODE_BLOCK
                     // 代码块由 TextView 自己处理中部点按，避免溢出手势独占时漏掉、普通路径重复触发。
-                    if (!onCodeBlock &&
+                    if (!dismissedSelection && !blockBookmarkSwipe && !onCodeBlock &&
                         (tv as? SafeReaderTextView)?.isReaderCenterChromeZone(e.x, e.y) == true
                     ) {
                         onCenterTap()
@@ -896,17 +940,29 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
      */
     private var suppressCancelTitleAfterLocalRemove: Boolean = false
     /**
-     * 划线样式浮窗是否正在显示。为 true 时 ActionMode 被系统销毁不连带清选区，
-     * 并尝试重新拉起浮动菜单（避免可聚焦窗口/ invalidate 导致「复制/划线」消失）。
+     * 划线样式浮窗是否正在显示。为 true 时暂不按落库结果重刷划线，保留选区上的即时样式。
+     * 点到选区外或系统关掉浮动菜单时仍结束选区，不再把「复制 / 取消划线」拉回来。
      */
     var highlightStylePickerShowing: Boolean = false
+    /** 本次按下已经因为点到选区外而清掉选区，松手时不要再唤出顶栏。 */
+    private var outsideTapDismissedSelection = false
+    /** 系统关掉浮动菜单后已 post 结束选区；测试里同步执行这段收尾。 */
+    internal var postedExternalSelectionDismissForTest = false
     /**
      * Compose update 写入的最新划线；异步 Markdown/PrecomputedText 完成时从此读取，
      * 避免启动渲染时闭包捕获的空列表在完成后把 span 清掉。
      */
     var pendingHighlights: List<HighlightEntity> = emptyList()
+    /**
+     * 全书划线，含当前窗口没投影成功的条目。
+     * 重刷时若源码坐标对不上展示层，用它把已经画上的样式留住。
+     */
+    var retainedHighlights: List<HighlightEntity> = emptyList()
+    private val activeDraftHighlightIds = LinkedHashSet<Long>()
+    private val cancelledDraftHighlightIds = LinkedHashSet<Long>()
     var pendingHighlightColorArgb: Int = 0
     var pendingHighlightSourceLength: Int = -1
+    var pendingHighlightSourceText: String? = null
     /**
      * 打开书/书签定位已落到正确 scroll 后回调（主线程）。
      * 用于尽早揭开进页遮罩，不必再等 Compose await 轮询。
@@ -916,6 +972,26 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     var onReaderCenterTap: (() -> Unit)? = null
     /** 同一轮 Markdown 渲染只通知一次揭罩，避免 onLayout 重复 bump restore。 */
     private var openPositionSignaledForRender: Any? = null
+
+    fun registerDraftHighlight(highlightId: Long) {
+        if (highlightId < 0L) activeDraftHighlightIds += highlightId
+    }
+
+    fun unregisterDraftHighlight(highlightId: Long) {
+        activeDraftHighlightIds -= highlightId
+    }
+
+    fun cancelDraftHighlight(highlightId: Long) {
+        if (highlightId >= 0L) return
+        activeDraftHighlightIds -= highlightId
+        cancelledDraftHighlightIds += highlightId
+    }
+
+    fun consumeDraftHighlightCancellation(highlightId: Long): Boolean =
+        cancelledDraftHighlightIds.remove(highlightId)
+
+    fun isDraftHighlightActive(highlightId: Long): Boolean =
+        highlightId < 0L && highlightId in activeDraftHighlightIds
 
     fun clearOpenPositionReadySignal() {
         openPositionSignaledForRender = null
@@ -940,6 +1016,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         drawReaderHighlightDecorations(this, canvas, underText = true)
         drawReaderSelectionBackground(canvas)
         super.onDraw(canvas)
+        // 行内公式的底色画在 ReplacementSpan 里，会盖住先画的选区；公式画完后再补一层。
+        drawInlineFormulaSelectionOverlay(canvas)
         drawReaderHighlightDecorations(this, canvas, underText = false)
         drawReaderSelectionHandles(canvas)
     }
@@ -987,6 +1065,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     private var selectionHandleAnchorOffset = -1
     private val readerSelectionColor = highlightColor
     private val selectionBackgroundPath = Path()
+    private val formulaSelectionPath = Path()
     private val selectionBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
@@ -1009,7 +1088,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     /** 划词选区是否已递增 suppressScrollRefCount（配对递减）。 */
     private var selectionIncrementedSuppress = false
     /** DOWN 时命中链接，UP 时优先跳转而非进入 Editor 选词。 */
-    private var pendingLinkSpan: ClickableSpan? = null
+    private var pendingLinkTarget: ReaderHitTarget? = null
 
     private val linkMovement = ReaderLinkMovementMethod.getInstance()
     private val selectionMovement = ArrowKeyMovementMethod.getInstance()
@@ -1045,20 +1124,6 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             if (readerSelectionActionMode == mode) readerSelectionActionMode = null
             // 主动重建菜单：保留选区，由 recreate 的 post 重新拉起 ActionMode。
             if (recreatingSelectionActionMode) return
-            // 样式浮窗期间系统可能因焦点/ invalidate 拆掉 ActionMode：保留选区并尝试恢复菜单。
-            if (highlightStylePickerShowing && selectionActive && !clearingSelectionUi) {
-                post {
-                    if (highlightStylePickerShowing &&
-                        selectionActive &&
-                        !clearingSelectionUi &&
-                        readerSelectionActionMode == null &&
-                        hasSelectionRange()
-                    ) {
-                        restoreSelectionActionMode()
-                    }
-                }
-                return
-            }
             // 手指仍按着且由我们扩选时，系统若暂时拆菜单，等当前手势结束再恢复。
             // 松手后不能继续保护，否则会留下「高亮还在、句柄已消失」的孤儿选区。
             if (freezeSelectionExtendUntilUp && pointerDown) {
@@ -1075,14 +1140,15 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 }
                 return
             }
-            // 菜单被系统关闭时同步结束本次自管选区，避免残留不可操作的高亮。
+            // 点到选区外时系统会先关掉浮动菜单。这里结束选区，样式浮窗也不能把按钮再拉起来。
             if (!clearingSelectionUi && selectionActive) {
+                postedExternalSelectionDismissForTest = true
                 post {
                     if (!clearingSelectionUi &&
                         selectionActive &&
                         readerSelectionActionMode == null &&
-                        !highlightStylePickerShowing &&
-                        !recreatingSelectionActionMode
+                        !recreatingSelectionActionMode &&
+                        !(freezeSelectionExtendUntilUp && pointerDown)
                     ) {
                         dismissSelection()
                     }
@@ -1319,9 +1385,23 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     }
 
     private fun currentSelectionExistingHighlightId(): Long? {
+        val codeSpan = codeSelectionSpan
+        if (codeSpan != null && codeSpan.hasSelection()) {
+            val covering = codeSpan.highlightRangeCovering(codeSpan.selectionStart)
+            if (covering != null &&
+                covering.highlightId > 0L &&
+                covering.start == codeSpan.selectionStart &&
+                covering.end == codeSpan.selectionEnd
+            ) {
+                return covering.highlightId
+            }
+        }
         val range = currentSelectionRange() ?: return null
         val start = range.first
         val endExclusive = range.last + 1
+        (text as? Spanned)?.let { spanned ->
+            readerHighlightIdCovering(spanned, start, endExclusive)?.let { return it }
+        }
         val boundId = selectionBoundHighlightId
         if (boundId != null &&
             selectionBoundStart >= 0 &&
@@ -1784,17 +1864,19 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         val origin = codeSpanOrigin(span) ?: return false
         val offset = span.offsetAt(contentX, contentY, paint, origin.first, origin.second)
             ?: return false
-        val end = (offset + 1).coerceAtMost(span.codeLength())
-        if (end <= offset) return false
+        val covering = span.highlightRangeCovering(offset)
+        val selStart = covering?.start ?: offset
+        val selEnd = covering?.end ?: (offset + 1).coerceAtMost(span.codeLength())
+        if (selEnd <= selStart) return false
         span.selectionFillColor = android.graphics.Color.argb(
             0x66,
             android.graphics.Color.red(readerSelectionColor),
             android.graphics.Color.green(readerSelectionColor),
             android.graphics.Color.blue(readerSelectionColor),
         )
-        span.setSelection(offset, end)
+        span.setSelection(selStart, selEnd)
         codeSelectionSpan = span
-        codeSelectionAnchor = offset
+        codeSelectionAnchor = selStart
         val spanned = ensureReaderSpannable(this) ?: return false
         val spanStart = spanned.getSpanStart(span)
         val spanEnd = spanned.getSpanEnd(span)
@@ -1804,7 +1886,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         selectionAnchorOffset = spanStart
         lockedSelectionStart = spanStart
         lockedSelectionEnd = spanEnd
-        freezeSelectionExtendUntilUp = true
+        // 点在已有划线上时保持整段选区，避免手指微移把选区收成一个字符。
+        freezeSelectionExtendUntilUp = covering == null
         if (!applySelectionOffsets(spanStart, spanEnd)) return false
         onSelectionChanged(spanStart, spanEnd)
         cancelLongPress()
@@ -2007,7 +2090,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     fun dispatchCodeBlockCopyIfPresent(x: Float, y: Float): Boolean {
         if (selectionActive) return false
-        val span = scrollableCodeBlockSpanAt(x, y) ?: return false
+        val target = readerHitTargetAt(x, y)
+        val span = target.span as? ReaderScrollableCodeBlockSpan ?: return false
         if (!span.isOnCopyButton(x - totalPaddingLeft, y + scrollY - totalPaddingTop)) {
             return false
         }
@@ -2031,9 +2115,10 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     fun dispatchLinkClickIfPresent(x: Float, y: Float): Boolean {
         if (selectionActive || gestureOnDiagram) return false
         if (!isTapGesture(x, y)) return false
-        if (previewableBitmapAt(x, y) != null) return false
-        val span = ReaderTextLinkTouch.findClickableSpanAt(this, x, y) ?: return false
-        pendingLinkSpan = null
+        val target = readerHitTargetAt(x, y)
+        if (target.kind != ReaderHitKind.LINK) return false
+        val span = target.span as? ClickableSpan ?: return false
+        pendingLinkTarget = null
         ReaderTextLinkTouch.dispatchClickableSpan(this, span)
         (text as? Spannable)?.let { Selection.removeSelection(it) }
         return true
@@ -2081,14 +2166,23 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         isVerticalScrollDrag = false
         lastDragDy = 0f
         windowExpandConsumedThisGesture = false
-        gestureOnDiagram = isTouchOnDiagramSpan(x, y)
-        gestureOnCodeBlock = scrollableCodeBlockSpanAt(x, y) != null
+        val target = readerHitTargetAt(x, y)
+        gestureOnDiagram = target.kind == ReaderHitKind.DIAGRAM
+        gestureOnCodeBlock = target.kind == ReaderHitKind.CODE_BLOCK
         allowReaderScrollSideEffects = false
-        if (selectionActive) {
+        outsideTapDismissedSelection = false
+        if (selectionActive || readerSelectionActionMode != null || hasSelectionRange()) {
             pendingOutsideTapDismiss = !isTouchNearSelection(x, y)
         } else {
             pendingOutsideTapDismiss = false
         }
+    }
+
+    /** 本次手势已因点到选区外清掉选区时返回 true，并清掉标记。 */
+    internal fun takeOutsideTapDismissedSelection(): Boolean {
+        val dismissed = outsideTapDismissedSelection
+        outsideTapDismissedSelection = false
+        return dismissed
     }
 
     fun markVerticalScrollDrag() {
@@ -2109,6 +2203,11 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     }
 
     fun dismissSelection() {
+        val hadChrome = selectionActive || readerSelectionActionMode != null || hasSelectionRange()
+        if (pointerDown && hadChrome) {
+            outsideTapDismissedSelection = true
+        }
+        highlightStylePickerShowing = false
         if (!selectionActive) {
             resetSelectionUiOnly()
             return
@@ -2148,9 +2247,15 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             override fun getMenuInflater(): android.view.MenuInflater =
                 throw UnsupportedOperationException()
         }
+        postedExternalSelectionDismissForTest = false
         readerSelectionActionMode = mode
         selectionActionModeCallback.onDestroyActionMode(mode)
-        if (!clearingSelectionUi && selectionActive && readerSelectionActionMode == null) {
+        if (postedExternalSelectionDismissForTest &&
+            !clearingSelectionUi &&
+            selectionActive &&
+            readerSelectionActionMode == null
+        ) {
+            postedExternalSelectionDismissForTest = false
             dismissSelection()
         }
     }
@@ -2212,10 +2317,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     /** 图片/图表及可横滑代码块不允许进入正文长按选区。 */
     private fun allowLongPressSelectionAt(x: Float, y: Float): Boolean {
-        if (isTouchOnDiagramSpan(x, y)) return false
-        if (scrollableCodeBlockSpanAt(x, y) != null) return false
-        val offset = touchOffsetToCharOffset(x, y) ?: return false
-        return canSelectAtOffset(offset)
+        return readerHitTargetAt(x, y).canSelect
     }
 
     /**
@@ -2343,7 +2445,12 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             startCodeBlockSelectionAtPressed()
             return@Runnable
         }
-        startSelectionAtPressedChar()
+        val target = readerHitTargetAt(touchDownX, touchDownY)
+        val selected = startSelectionAtPressedChar()
+        readerHitDbg(
+            "longPress kind=${target.kind} range=${target.displayedStart}..${target.displayedEnd} " +
+                "canSelect=${target.canSelect} selected=$selected",
+        )
     }
 
     private fun cancelSelectionLongPress() {
@@ -2359,7 +2466,6 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         cancelSelectionLongPress()
         if (!pointerDown || selectionActive) return
         if (gestureOnDiagram || codeCopyDown) return
-        if (pendingLinkSpan != null) return
         selectionLongPressScheduled = true
         postDelayed(startSelectionLongPressRunnable, SELECTION_LONG_PRESS_TIMEOUT_MS)
     }
@@ -2547,11 +2653,13 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         }
     }
 
-    private fun touchOffsetToCharOffset(x: Float, y: Float): Int? {
+    internal fun charOffsetForHitTest(x: Float, y: Float): Int? {
         val len = text?.length ?: 0
         if (len == 0 || layout == null) return null
         return ReaderTextSelectionTouch.offsetNearestCharOnTextView(this, x, y)
     }
+
+    private fun touchOffsetToCharOffset(x: Float, y: Float): Int? = charOffsetForHitTest(x, y)
 
     private fun applySelectionOffsets(start: Int, end: Int): Boolean {
         val spannable = ensureReaderSpannable(this) ?: return false
@@ -2721,6 +2829,53 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         canvas.restore()
     }
 
+    /**
+     * 行内公式底色由 ReplacementSpan 在文字绘制阶段盖住选区。
+     * 公式画完后，只把选区再画到公式跨度上，普通文字仍保持选区在字形下方。
+     */
+    private fun drawInlineFormulaSelectionOverlay(canvas: Canvas) {
+        if (codeSelectionSpan != null) return
+        if (!customSelectionSessionActive || !selectionActive || !hasSelectionRange()) return
+        val layout = layout ?: return
+        val spannable = text as? Spanned ?: return
+        var start = Selection.getSelectionStart(spannable)
+        var end = Selection.getSelectionEnd(spannable)
+        if (start < 0 || end < 0 || start == end) return
+        if (start > end) {
+            val swap = start
+            start = end
+            end = swap
+        }
+        val formulas = spannable.getSpans(start, end, ReplacementSpan::class.java)
+            .filter { isInlineFormulaSpan(it) }
+        if (formulas.isEmpty()) return
+        selectionBackgroundPaint.color = readerSelectionColor
+        canvas.save()
+        canvas.clipRect(
+            scrollX + compoundPaddingLeft,
+            scrollY + extendedPaddingTop,
+            scrollX + width - compoundPaddingRight,
+            scrollY + height - extendedPaddingBottom,
+        )
+        canvas.translate(compoundPaddingLeft.toFloat(), extendedPaddingTop.toFloat())
+        for (span in formulas) {
+            val spanStart = spannable.getSpanStart(span)
+            val spanEnd = spannable.getSpanEnd(span)
+            val drawStart = maxOf(start, spanStart)
+            val drawEnd = minOf(end, spanEnd)
+            if (drawStart >= drawEnd) continue
+            formulaSelectionPath.reset()
+            layout.getSelectionPath(drawStart, drawEnd, formulaSelectionPath)
+            canvas.drawPath(formulaSelectionPath, selectionBackgroundPaint)
+        }
+        canvas.restore()
+    }
+
+    private fun isInlineFormulaSpan(span: ReplacementSpan): Boolean =
+        span is ReaderCompoundInlineLatexSpan ||
+            span is ReaderInlineLatexSpan ||
+            span is ReaderMathSymbolSpan
+
     private fun drawReaderSelectionHandles(canvas: Canvas) {
         if (!customSelectionSessionActive || !selectionActive || !hasSelectionRange()) return
         val startPoint: Pair<Float, Float>
@@ -2790,7 +2945,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             (layoutPoint.second + totalPaddingTop - scrollY)
     }
 
-    private fun selectionHandleAtIncludingCode(x: Float, y: Float): ReaderTextSelectionTouch.SelectionHandle? {
+    internal fun selectionHandleAtForHitTest(x: Float, y: Float): ReaderTextSelectionTouch.SelectionHandle? {
         val codeSpan = codeSelectionSpan
         if (codeSpan != null && codeSpan.hasSelection()) {
             val startPoint = codeHandleViewPosition(isEnd = false) ?: return null
@@ -2822,25 +2977,75 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         return ReaderTextSelectionTouch.selectionHandleAtOnTextView(this, x, y)
     }
 
+    private fun selectionHandleAtIncludingCode(x: Float, y: Float): ReaderTextSelectionTouch.SelectionHandle? =
+        selectionHandleAtForHitTest(x, y)
+
+    /**
+     * 轻点已划线区域：选中整段划线并拉起菜单，按钮为「取消划线」。
+     */
+    internal fun selectCoveringHighlightAt(x: Float, y: Float): Boolean {
+        if (selectionActive) return false
+        val target = readerHitTargetAt(x, y)
+        if (target.kind != ReaderHitKind.EXISTING_HIGHLIGHT) return false
+        val start = target.displayedStart
+        val end = target.displayedEnd
+        if (start < 0 || end <= start) return false
+        if (!applySelectionOffsets(start, end)) return false
+        onSelectionChanged(start, end)
+        customSelectionSessionActive = true
+        setHighlightColor(android.graphics.Color.TRANSPARENT)
+        selectionAnchorOffset = start
+        lockedSelectionStart = start
+        lockedSelectionEnd = end
+        freezeSelectionExtendUntilUp = false
+        cancelSelectionLongPress()
+        parent?.requestDisallowInterceptTouchEvent(true)
+        restoreSelectionActionMode()
+        pendingOutsideTapDismiss = false
+        invalidate()
+        return true
+    }
+
     /**
      * 自定义长按划词：不走 Editor.performLongClick（会开启 drag accelerator，
      * TXT 软换行段落松手时把选区拽到行末/下一行行首，甚至拆掉菜单）。
      */
     private fun startSelectionAtPressedChar(): Boolean {
-        if (!allowLongPressSelectionAt(touchDownX, touchDownY)) return false
+        val target = readerHitTargetAt(touchDownX, touchDownY)
+        if (!target.canSelect) return false
         val anchor = ReaderTextSelectionTouch.offsetNearestCharOnTextView(this, touchDownX, touchDownY)
             ?: return false
-        if (!applyPressedSelectionRange(touchDownX, touchDownY)) return false
         val spannable = text as? Spannable ?: return false
+        val covering = readerHighlightRangeCovering(spannable, anchor)
+        val fixedRange = when {
+            covering != null -> covering
+            target.kind == ReaderHitKind.HEADING && target.displayedEnd > target.displayedStart ->
+                target.displayedStart until target.displayedEnd
+            target.kind == ReaderHitKind.INLINE_FORMULA && target.displayedEnd > target.displayedStart ->
+                target.displayedStart until target.displayedEnd
+            else -> null
+        }
+        val selected = if (fixedRange != null) {
+            applySelectionOffsets(fixedRange.first, fixedRange.last + 1)
+        } else {
+            applyPressedSelectionRange(touchDownX, touchDownY)
+        }
+        if (!selected) return false
         val start = Selection.getSelectionStart(spannable)
         val end = Selection.getSelectionEnd(spannable)
         if (start < 0 || end <= start) return false
+        if (fixedRange != null) {
+            onSelectionChanged(start, end)
+        }
+        // A link may still be pending from ACTION_DOWN. Once the custom long-press
+        // creates a selection, the eventual ACTION_UP must not dispatch the link.
+        pendingLinkTarget = null
         customSelectionSessionActive = true
         setHighlightColor(android.graphics.Color.TRANSPARENT)
-        selectionAnchorOffset = anchor
+        selectionAnchorOffset = fixedRange?.first ?: anchor
         lockedSelectionStart = start
         lockedSelectionEnd = end
-        freezeSelectionExtendUntilUp = true
+        freezeSelectionExtendUntilUp = fixedRange == null
         cancelLongPress()
         parent?.requestDisallowInterceptTouchEvent(true)
         restoreSelectionActionMode()
@@ -2878,20 +3083,31 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         lockedSelectionEnd = -1
     }
 
-    private fun canSelectAtOffset(offset: Int): Boolean {
+    internal fun canSelectAtOffsetForHitTest(offset: Int): Boolean {
         val spannable = text as? Spanned ?: return true
         if (spannable.isEmpty()) return false
         val check = offset.coerceIn(0, spannable.length - 1)
         return spannable.getSpans(check, check + 1, Any::class.java).none {
-            it is AsyncDrawableSpan || it is ImageSpan
+            when (it) {
+                // Inline LaTeX is represented by an AsyncDrawableSpan too, but its
+                // source text is recoverable by ReaderSelectionText and should be
+                // selectable/highlightable like normal text.
+                is AsyncDrawableSpan -> !isLatexImageSpan(it)
+                is ImageSpan -> true
+                else -> false
+            }
         }
     }
 
+    internal fun canSelectAtOffsetForTest(offset: Int): Boolean = canSelectAtOffsetForHitTest(offset)
+
+    private fun canSelectAtOffset(offset: Int): Boolean = canSelectAtOffsetForHitTest(offset)
+
     private fun isTouchOnDiagramSpan(x: Float, y: Float): Boolean {
-        return diagramDestinationAt(x, y) != null
+        return readerHitTargetAt(x, y).kind == ReaderHitKind.DIAGRAM
     }
 
-    private fun isLatexImageSpan(span: AsyncDrawableSpan): Boolean {
+    internal fun isLatexImageSpanForHitTest(span: AsyncDrawableSpan): Boolean {
         val result = span.drawable.result
         if (result is JLatexMathDrawable) return true
         var cls: Class<*>? = span.javaClass
@@ -2906,6 +3122,13 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         }
         return false
     }
+
+    private fun isLatexImageSpan(span: AsyncDrawableSpan): Boolean = isLatexImageSpanForHitTest(span)
+
+    internal fun isInlineFormulaSpanForHitTest(span: ReplacementSpan): Boolean =
+        span is ReaderCompoundInlineLatexSpan ||
+            span is ReaderInlineLatexSpan ||
+            span is ReaderMathSymbolSpan
 
     private fun diagramDestinationAt(x: Float, y: Float): String? {
         val layout = layout ?: return null
@@ -2929,9 +3152,11 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         return null
     }
 
-    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                // Code-block overflow gestures need the concrete span even when a
+                // normal text selection handle is also near the touch point.
                 val span = scrollableCodeBlockSpanAt(event.x, event.y)
                 span?.prepareForTouch(paint, codeBlockViewportWidth())
                 val contentX = event.x - totalPaddingLeft
@@ -3070,23 +3295,26 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 removeCallbacks(settleViewportAfterScrollRunnable)
                 cancelSelectionLongPress()
                 clearLockedSelectionGesture()
+                pointerDown = true
                 // 精确命中确认在正文选区和首尾句柄之外时立即结束旧会话。
                 // 这样本次手势可以继续滚动、打开链接或长按新位置，且不会被 Editor
                 // 先折叠 range、随后又由 restoreSavedSelectionRange 拉回孤儿高亮。
-                val touchedSelectionHandle = if (selectionActive && customSelectionSessionActive) {
+                val hasSelectionChrome = selectionActive ||
+                    readerSelectionActionMode != null ||
+                    hasSelectionRange()
+                val touchedSelectionHandle = if (hasSelectionChrome && customSelectionSessionActive) {
                     selectionHandleAtIncludingCode(event.x, event.y)
                 } else {
                     null
                 }
                 if (touchedSelectionHandle != null) {
                     beginSelectionHandleDrag(touchedSelectionHandle)
-                } else if (selectionActive &&
+                } else if (hasSelectionChrome &&
                     codeSelectionSpan == null &&
                     !isTouchNearSelection(event.x, event.y)
                 ) {
                     dismissSelection()
                 }
-                pointerDown = true
                 touchDownX = event.x
                 touchDownY = event.y
                 lastTouchX = event.x
@@ -3095,16 +3323,23 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 windowExpandConsumedThisGesture = false
                 gestureOnDiagram = isTouchOnDiagramSpan(event.x, event.y)
                 handleCodeBlockTouch(event)
-                pendingLinkSpan = if (!selectionActive && !gestureOnDiagram &&
-                    !gestureOnCodeBlock &&
-                    previewableBitmapAt(event.x, event.y) == null
-                ) {
-                    ReaderTextLinkTouch.findClickableSpanAt(this, event.x, event.y)
+                pendingLinkTarget = if (!selectionActive) {
+                    readerHitTargetAt(event.x, event.y).takeIf { it.kind == ReaderHitKind.LINK }
                 } else {
                     null
                 }
-                if (pendingLinkSpan != null) {
+                readerHitTargetAt(event.x, event.y).let { target ->
+                    readerHitDbg(
+                        "down x=${event.x} y=${event.y} kind=${target.kind} " +
+                            "range=${target.displayedStart}..${target.displayedEnd} " +
+                            "canSelect=${target.canSelect} canClick=${target.canClick}",
+                    )
+                }
+                if (pendingLinkTarget != null) {
                     parent?.requestDisallowInterceptTouchEvent(true)
+                    // Keep short-tap link dispatch, but also allow the same pointer
+                    // down to become a long-press text selection.
+                    maybeScheduleSelectionLongPress()
                     return true
                 }
                 // 超宽代码块：按下即接管，避免 Editor / 正文滚动把横滑吃掉
@@ -3117,7 +3352,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                     parent?.requestDisallowInterceptTouchEvent(true)
                     return true
                 }
-                if (selectionActive) {
+                if (selectionActive || readerSelectionActionMode != null || hasSelectionRange()) {
                     pendingOutsideTapDismiss = !isTouchNearSelection(event.x, event.y)
                 } else {
                     pendingOutsideTapDismiss = false
@@ -3193,17 +3428,17 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 postDelayed(settleViewportAfterScrollRunnable, 180L)
                 val codeConsumed = handleCodeBlockTouch(event)
                 if (codeConsumed) {
-                    pendingLinkSpan = null
+                    pendingLinkTarget = null
                 } else if (event.actionMasked == MotionEvent.ACTION_UP) {
-                    val link = pendingLinkSpan
-                    pendingLinkSpan = null
-                    if (link != null && isTapGesture(event.x, event.y)) {
-                        ReaderTextLinkTouch.dispatchClickableSpan(this, link)
+                    val link = pendingLinkTarget
+                    pendingLinkTarget = null
+                    if (link?.span is ClickableSpan && isTapGesture(event.x, event.y)) {
+                        ReaderTextLinkTouch.dispatchClickableSpan(this, link.span as ClickableSpan)
                         (text as? Spannable)?.let { Selection.removeSelection(it) }
                         return true
                     }
                 } else {
-                    pendingLinkSpan = null
+                    pendingLinkTarget = null
                 }
                 if (codeConsumed) {
                     isVerticalScrollDrag = false
@@ -3382,13 +3617,14 @@ internal fun createPdfMarkwon(context: Context): Markwon = ReaderMarkwonFactory.
 
 /**
  * 在渲染后的文本上为划线上色。优先使用页/窗内相对 [HighlightEntity.startPosition]/[endPosition]；
- * 源码与 Spanned 长度不一致时，在估算位置附近只匹配一次，避免同文全局全标。
+ * 源码与 Spanned 长度不一致时，只在估算位置附近匹配，避免同文的另一处被标上。
  */
 internal fun applyHighlightsToRenderedText(
     textView: TextView,
     highlights: List<space.liushenme.markdownreader.data.local.entity.HighlightEntity>,
     highlightColorArgb: Int,
     sourceContentLength: Int = -1,
+    sourceText: String? = null,
 ) {
     val text = ensureReaderSpannable(textView) ?: return
     val full = text.toString()
@@ -3406,38 +3642,98 @@ internal fun applyHighlightsToRenderedText(
         }
         val style = space.liushenme.markdownreader.model.HighlightStyle.fromStorageKey(highlight.style)
         val snippet = highlight.highlightedText
-        var appliedToCode = false
+        val sourceCodeSpan = codeSpanForSourceHighlight(
+            codeSpans = codeSpans,
+            sourceText = sourceText,
+            sourceOffset = highlight.startPosition,
+            snippet = snippet,
+        )
+        val headingRange = displayedRangeForSourceHeading(
+            displayed = text,
+            source = sourceText.orEmpty(),
+            sourceStart = highlight.startPosition,
+            snippet = snippet,
+        )
+        // 源码区间在标题行上时，找不到对应标题 span 就先不画，避免落到正文同句。
+        val range = when {
+            // 代码块在外层 TextView 中只是一个占位符。源码坐标已明确落在围栏块时，
+            // 只在该 ReaderScrollableCodeBlockSpan 内恢复，避免画到正文里的同文。
+            sourceCodeSpan != null -> null
+            headingRange != null -> headingRange
+            sourceOffsetLockedToHeading(sourceText.orEmpty(), highlight.startPosition, snippet) -> null
+            else -> resolveHighlightDisplayedRange(
+                displayed = full,
+                highlight = highlight,
+                sourceContentLength = sourceContentLength,
+                sourceText = sourceText,
+            )
+        }
+        val overlappingCode = when {
+            sourceCodeSpan != null -> listOf(sourceCodeSpan)
+            range != null -> codeSpans.filter { codeSpan ->
+                val spanStart = text.getSpanStart(codeSpan)
+                val spanEnd = text.getSpanEnd(codeSpan)
+                spanStart >= 0 && range.first < spanEnd && range.last + 1 > spanStart
+            }
+            // 代码块在正文里只是一个占位符，片段不在展示字符串中。只标估算位置落在的那一块。
+            snippet.isNotEmpty() && full.isNotEmpty() -> {
+                val length = sourceContentLength.coerceAtLeast(1)
+                val estimate = ((highlight.startPosition.toLong() * full.length) / length)
+                    .toInt()
+                    .coerceIn(0, full.length - 1)
+                codeSpans.mapNotNull { codeSpan ->
+                    val spanStart = text.getSpanStart(codeSpan)
+                    val spanEnd = text.getSpanEnd(codeSpan)
+                    if (spanStart < 0 || spanEnd <= spanStart) return@mapNotNull null
+                    if (codeSpan.rangeOfSnippet(snippet) == null) return@mapNotNull null
+                    val dist = if (estimate in spanStart until spanEnd) {
+                        0
+                    } else {
+                        minOf(
+                            kotlin.math.abs(estimate - spanStart),
+                            kotlin.math.abs(estimate - (spanEnd - 1)),
+                        )
+                    }
+                    // 占位符前后常有换行，允许几个字符的偏差，但不串到另一块代码。
+                    if (dist > 8) return@mapNotNull null
+                    dist to codeSpan
+                }.minByOrNull { it.first }?.let { listOf(it.second) }.orEmpty()
+            }
+            else -> emptyList()
+        }
+        var paintedCode = false
         if (snippet.isNotEmpty()) {
-            for (codeSpan in codeSpans) {
-                val idx = codeSpan.indexOfSnippet(snippet)
-                if (idx < 0) continue
+            for (codeSpan in overlappingCode) {
+                val codeRange = codeSpan.rangeOfSnippet(snippet) ?: continue
                 codeSpan.addHighlightRange(
                     CodeBlockHighlightRange(
-                        start = idx,
-                        end = idx + snippet.length,
+                        start = codeRange.first,
+                        end = codeRange.last + 1,
                         color = spanColor,
                         underline = style != space.liushenme.markdownreader.model.HighlightStyle.Background,
                         wavy = style == space.liushenme.markdownreader.model.HighlightStyle.Wavy,
+                        highlightId = highlight.id,
                     ),
                 )
-                appliedToCode = true
+                paintedCode = true
             }
         }
-        if (appliedToCode) return@forEach
-        val range = resolveHighlightDisplayedRange(
-            displayed = full,
-            highlight = highlight,
-            sourceContentLength = sourceContentLength,
-        ) ?: return@forEach
+        if (range == null) return@forEach
+        val coveredByCode = paintedCode && overlappingCode.any { codeSpan ->
+            val spanStart = text.getSpanStart(codeSpan)
+            val spanEnd = text.getSpanEnd(codeSpan)
+            range.first >= spanStart && range.last + 1 <= spanEnd
+        }
+        if (coveredByCode) return@forEach
         val spanStart = range.first
         val spanEnd = range.last + 1
         val span: Any = when (style) {
             space.liushenme.markdownreader.model.HighlightStyle.Background ->
-                HighlightBackgroundSpan(spanColor)
+                HighlightBackgroundSpan(spanColor, highlight.id)
             space.liushenme.markdownreader.model.HighlightStyle.Underline ->
-                HighlightUnderlineSpan(spanColor, wavy = false)
+                HighlightUnderlineSpan(spanColor, wavy = false, highlightId = highlight.id)
             space.liushenme.markdownreader.model.HighlightStyle.Wavy ->
-                HighlightUnderlineSpan(spanColor, wavy = true)
+                HighlightUnderlineSpan(spanColor, wavy = true, highlightId = highlight.id)
         }
         text.setSpan(
             span,
@@ -3449,6 +3745,96 @@ internal fun applyHighlightsToRenderedText(
     textView.invalidate()
 }
 
+private data class SourceFencedCodeBlock(
+    val body: String,
+)
+
+/**
+ * 用源码围栏块的完整内容反查渲染后的 ReplacementSpan。
+ *
+ * 不使用「源码下标 / 源码长度」比例：HTML、公式和 Markdown 标记被压缩后，
+ * 代码块占位符与比例估算可能相差数百个字符。
+ */
+private fun codeSpanForSourceHighlight(
+    codeSpans: Array<ReaderScrollableCodeBlockSpan>,
+    sourceText: String?,
+    sourceOffset: Int,
+    snippet: String,
+): ReaderScrollableCodeBlockSpan? {
+    if (codeSpans.isEmpty() || sourceText.isNullOrEmpty() || snippet.isEmpty()) return null
+    val sourceBlock = sourceFencedCodeBlockCovering(sourceText, sourceOffset)
+    if (sourceBlock == null) {
+        // 横向分页或惰加载窗可能从围栏中间开始，当前 sourceText 看不到开栏。
+        // 只在代码块内是唯一候选时回退，避免把重复正文文本误认为代码块。
+        return codeSpans.filter { it.rangeOfSnippet(snippet) != null }.singleOrNull()
+    }
+    val sourceBody = normalizeCodeBlockForMatch(sourceBlock.body)
+    val exact = codeSpans.filter { span ->
+        normalizeCodeBlockForMatch(span.rawCode) == sourceBody
+    }
+    if (exact.size == 1) return exact.single()
+    if (exact.size > 1) {
+        return exact.singleOrNull { it.rangeOfSnippet(snippet) != null }
+    }
+    // 缩进围栏会被 CommonMark 去掉公共缩进；完整文本不等时，仅允许唯一候选。
+    return codeSpans.filter { it.rangeOfSnippet(snippet) != null }.singleOrNull()
+}
+
+private fun normalizeCodeBlockForMatch(value: String): String =
+    value.replace("\r\n", "\n").replace('\r', '\n').trimEnd('\n')
+
+/** 返回 [sourceOffset] 所在的 Markdown ``` / ~~~ 围栏代码块正文。 */
+private fun sourceFencedCodeBlockCovering(
+    source: String,
+    sourceOffset: Int,
+): SourceFencedCodeBlock? {
+    if (sourceOffset !in source.indices) return null
+    var openChar: Char? = null
+    var openLength = 0
+    var bodyStart = -1
+    var lineStart = 0
+    while (lineStart <= source.length) {
+        val newline = source.indexOf('\n', lineStart)
+        val lineEnd = if (newline >= 0) newline else source.length
+        val line = source.substring(lineStart, lineEnd).trimEnd('\r')
+        val leadingSpaces = line.indexOfFirst { it != ' ' }.let { if (it < 0) line.length else it }
+        val markerStart = leadingSpaces.takeIf { it <= 3 }
+        val markerChar = markerStart?.let { line.getOrNull(it) }
+            ?.takeIf { it == '`' || it == '~' }
+        val markerLength = if (markerChar == null || markerStart == null) {
+            0
+        } else {
+            var count = 0
+            while (markerStart + count < line.length && line[markerStart + count] == markerChar) count++
+            count
+        }
+        if (openChar == null) {
+            if (markerChar != null && markerLength >= 3) {
+                openChar = markerChar
+                openLength = markerLength
+                bodyStart = if (newline >= 0) newline + 1 else lineEnd
+            }
+        } else if (
+            markerChar == openChar &&
+            markerLength >= openLength &&
+            line.substring((markerStart ?: 0) + markerLength).isBlank()
+        ) {
+            if (sourceOffset in bodyStart until lineStart) {
+                return SourceFencedCodeBlock(source.substring(bodyStart, lineStart))
+            }
+            openChar = null
+            openLength = 0
+            bodyStart = -1
+        }
+        if (newline < 0) break
+        lineStart = newline + 1
+    }
+    if (openChar != null && bodyStart >= 0 && sourceOffset in bodyStart until source.length) {
+        return SourceFencedCodeBlock(source.substring(bodyStart))
+    }
+    return null
+}
+
 /**
  * 在展示层选区上立即打上划线样式（不依赖源码坐标映射），用于点「划线」瞬间出默认效果。
  */
@@ -3458,6 +3844,7 @@ internal fun applyHighlightDecorationAtRange(
     end: Int,
     colorArgb: Int,
     style: space.liushenme.markdownreader.model.HighlightStyle,
+    highlightId: Long = 0L,
 ) {
     val text = ensureReaderSpannable(textView) ?: return
     if (start < 0 || end > text.length || start >= end) return
@@ -3475,23 +3862,111 @@ internal fun applyHighlightDecorationAtRange(
                 color = colorArgb,
                 underline = style != space.liushenme.markdownreader.model.HighlightStyle.Background,
                 wavy = style == space.liushenme.markdownreader.model.HighlightStyle.Wavy,
+                highlightId = highlightId,
             ),
         )
         textView.invalidate()
         return
     }
-    text.getSpans(start, end, HighlightBackgroundSpan::class.java).forEach { text.removeSpan(it) }
-    text.getSpans(start, end, HighlightUnderlineSpan::class.java).forEach { text.removeSpan(it) }
+    text.getSpans(start, end, HighlightBackgroundSpan::class.java).forEach {
+        if (it.highlightId == highlightId) text.removeSpan(it)
+    }
+    text.getSpans(start, end, HighlightUnderlineSpan::class.java).forEach {
+        if (it.highlightId == highlightId) text.removeSpan(it)
+    }
     val span: Any = when (style) {
         space.liushenme.markdownreader.model.HighlightStyle.Background ->
-            HighlightBackgroundSpan(colorArgb)
+            HighlightBackgroundSpan(colorArgb, highlightId)
         space.liushenme.markdownreader.model.HighlightStyle.Underline ->
-            HighlightUnderlineSpan(colorArgb, wavy = false)
+            HighlightUnderlineSpan(colorArgb, wavy = false, highlightId = highlightId)
         space.liushenme.markdownreader.model.HighlightStyle.Wavy ->
-            HighlightUnderlineSpan(colorArgb, wavy = true)
+            HighlightUnderlineSpan(colorArgb, wavy = true, highlightId = highlightId)
     }
     text.setSpan(span, start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
     textView.invalidate()
+}
+
+/** 将草稿划线原位绑定到 Room 返回的真实 id。 */
+internal fun rebindReaderHighlightDecorationId(
+    textView: TextView,
+    oldId: Long,
+    newId: Long,
+) {
+    if (oldId == newId || newId <= 0L) return
+    val text = ensureReaderSpannable(textView) ?: return
+    var changed = false
+    text.getSpans(0, text.length, HighlightBackgroundSpan::class.java).forEach { span ->
+        if (span.highlightId != oldId) return@forEach
+        val start = text.getSpanStart(span)
+        val end = text.getSpanEnd(span)
+        if (start < 0 || end <= start) return@forEach
+        text.removeSpan(span)
+        text.setSpan(
+            HighlightBackgroundSpan(span.backgroundColor, newId),
+            start,
+            end,
+            Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
+        )
+        changed = true
+    }
+    text.getSpans(0, text.length, HighlightUnderlineSpan::class.java).forEach { span ->
+        if (span.highlightId != oldId) return@forEach
+        val start = text.getSpanStart(span)
+        val end = text.getSpanEnd(span)
+        if (start < 0 || end <= start) return@forEach
+        text.removeSpan(span)
+        text.setSpan(
+            HighlightUnderlineSpan(span.color, span.wavy, newId),
+            start,
+            end,
+            Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
+        )
+        changed = true
+    }
+    text.getSpans(0, text.length, ReaderScrollableCodeBlockSpan::class.java).forEach { span ->
+        if (span.replaceHighlightId(oldId, newId)) changed = true
+    }
+    if (changed) textView.invalidate()
+}
+
+/** 删除指定真实或草稿 id 的装饰，不影响重叠的其它划线。 */
+internal fun removeReaderHighlightDecorationById(textView: TextView, highlightId: Long) {
+    val text = ensureReaderSpannable(textView) ?: return
+    var changed = false
+    text.getSpans(0, text.length, HighlightBackgroundSpan::class.java).forEach { span ->
+        if (span.highlightId == highlightId) {
+            text.removeSpan(span)
+            changed = true
+        }
+    }
+    text.getSpans(0, text.length, HighlightUnderlineSpan::class.java).forEach { span ->
+        if (span.highlightId == highlightId) {
+            text.removeSpan(span)
+            changed = true
+        }
+    }
+    text.getSpans(0, text.length, ReaderScrollableCodeBlockSpan::class.java).forEach { span ->
+        if (span.removeHighlightRangesById(highlightId)) changed = true
+    }
+    if (changed) textView.invalidate()
+}
+
+/** 已绘制划线在 TextView 中的占位偏移；代码块返回 ReplacementSpan 起点。 */
+internal fun displayedOffsetForHighlightId(textView: TextView, highlightId: Long): Int? {
+    if (highlightId <= 0L) return null
+    val text = textView.text as? Spanned ?: return null
+    text.getSpans(0, text.length, HighlightBackgroundSpan::class.java)
+        .firstOrNull { it.highlightId == highlightId }
+        ?.let { return text.getSpanStart(it).takeIf { start -> start >= 0 } }
+    text.getSpans(0, text.length, HighlightUnderlineSpan::class.java)
+        .firstOrNull { it.highlightId == highlightId }
+        ?.let { return text.getSpanStart(it).takeIf { start -> start >= 0 } }
+    text.getSpans(0, text.length, ReaderScrollableCodeBlockSpan::class.java).forEach { span ->
+        if (span.hasHighlightId(highlightId)) {
+            return text.getSpanStart(span).takeIf { start -> start >= 0 }
+        }
+    }
+    return null
 }
 
 /** 清除由阅读划线写入的 span，保留 Markdown 自身背景色等。 */
@@ -3529,30 +4004,188 @@ internal fun ensureReaderSpannable(textView: TextView): Spannable? {
     return textView.text as? Spannable
 }
 
+private data class PreservedHighlightDecoration(
+    val highlightId: Long,
+    val start: Int,
+    val end: Int,
+    val color: Int,
+    val underline: Boolean,
+    val wavy: Boolean,
+    val quote: String,
+    val codeSpan: ReaderScrollableCodeBlockSpan? = null,
+)
+
+/** 重刷前记下已经画在展示层上的划线，源码投影失败时再放回去。 */
+private fun snapshotReaderHighlightDecorations(textView: TextView): List<PreservedHighlightDecoration> {
+    val text = textView.text as? Spanned ?: return emptyList()
+    if (text.isEmpty()) return emptyList()
+    val context = textView.context
+    val out = ArrayList<PreservedHighlightDecoration>()
+    text.getSpans(0, text.length, HighlightBackgroundSpan::class.java).forEach { span ->
+        val start = text.getSpanStart(span)
+        val end = text.getSpanEnd(span)
+        if (start < 0 || end <= start) return@forEach
+        out += PreservedHighlightDecoration(
+            highlightId = span.highlightId,
+            start = start,
+            end = end,
+            color = span.backgroundColor,
+            underline = false,
+            wavy = false,
+            quote = extractReaderSelectionText(text, start, end, context),
+        )
+    }
+    text.getSpans(0, text.length, HighlightUnderlineSpan::class.java).forEach { span ->
+        val start = text.getSpanStart(span)
+        val end = text.getSpanEnd(span)
+        if (start < 0 || end <= start) return@forEach
+        out += PreservedHighlightDecoration(
+            highlightId = span.highlightId,
+            start = start,
+            end = end,
+            color = span.color,
+            underline = true,
+            wavy = span.wavy,
+            quote = extractReaderSelectionText(text, start, end, context),
+        )
+    }
+    text.getSpans(0, text.length, ReaderScrollableCodeBlockSpan::class.java).forEach { codeSpan ->
+        codeSpan.highlightRangesForTest().forEach { range ->
+            val quote = codeSpan.rawCode.substring(
+                range.start.coerceIn(0, codeSpan.rawCode.length),
+                range.end.coerceIn(0, codeSpan.rawCode.length),
+            )
+            out += PreservedHighlightDecoration(
+                highlightId = range.highlightId,
+                start = range.start,
+                end = range.end,
+                color = range.color,
+                underline = range.underline,
+                wavy = range.wavy,
+                quote = quote,
+                codeSpan = codeSpan,
+            )
+        }
+    }
+    return out
+}
+
+/**
+ * 源码坐标暂时对不上展示层时，保留取消选区前已经画出的划线。
+ * 只恢复仍在库里的记录；删掉的划线不会被放回。
+ */
+private fun restoreReaderHighlightDecorations(
+    textView: TextView,
+    preserved: List<PreservedHighlightDecoration>,
+) {
+    if (preserved.isEmpty()) return
+    val safeTextView = textView as? SafeReaderTextView
+    val live = safeTextView?.retainedHighlights.orEmpty()
+    if (live.isEmpty() && preserved.none { safeTextView?.isDraftHighlightActive(it.highlightId) == true }) return
+    val text = ensureReaderSpannable(textView) ?: return
+    val painted = HashSet<Long>()
+    text.getSpans(0, text.length, HighlightBackgroundSpan::class.java).forEach { span ->
+        if (span.highlightId > 0L) painted += span.highlightId
+    }
+    text.getSpans(0, text.length, HighlightUnderlineSpan::class.java).forEach { span ->
+        if (span.highlightId > 0L) painted += span.highlightId
+    }
+    text.getSpans(0, text.length, ReaderScrollableCodeBlockSpan::class.java).forEach { codeSpan ->
+        codeSpan.highlightRangesForTest().forEach { range ->
+            if (range.highlightId > 0L) painted += range.highlightId
+        }
+    }
+    var restored = false
+    for (item in preserved) {
+        if (!preservedDecorationStillMatches(textView, text, item)) continue
+        val owner = item.highlightId.takeIf { it > 0L }?.let { id -> live.firstOrNull { it.id == id } }
+        val draftActive = safeTextView?.isDraftHighlightActive(item.highlightId) == true
+        if (owner == null && !draftActive) continue
+        val restoredId = owner?.id ?: item.highlightId
+        if (restoredId in painted) continue
+        val style = owner?.let {
+            space.liushenme.markdownreader.model.HighlightStyle.fromStorageKey(it.style)
+        }
+        val color = owner?.let {
+            if (android.graphics.Color.alpha(it.color) < 16) item.color else it.color
+        } ?: item.color
+        if (item.codeSpan != null) {
+            item.codeSpan.addHighlightRange(
+                CodeBlockHighlightRange(
+                    start = item.start,
+                    end = item.end,
+                    color = color,
+                    underline = style?.let { it != space.liushenme.markdownreader.model.HighlightStyle.Background }
+                        ?: item.underline,
+                    wavy = style?.let { it == space.liushenme.markdownreader.model.HighlightStyle.Wavy }
+                        ?: item.wavy,
+                    highlightId = restoredId,
+                ),
+            )
+        } else {
+            val span: Any = when {
+                style == space.liushenme.markdownreader.model.HighlightStyle.Background ||
+                    (style == null && !item.underline) -> HighlightBackgroundSpan(color, restoredId)
+                style == space.liushenme.markdownreader.model.HighlightStyle.Wavy ||
+                    (style == null && item.wavy) -> HighlightUnderlineSpan(color, wavy = true, highlightId = restoredId)
+                else -> HighlightUnderlineSpan(color, wavy = false, highlightId = restoredId)
+            }
+            text.setSpan(span, item.start, item.end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        painted += restoredId
+        restored = true
+    }
+    if (restored) textView.invalidate()
+}
+
+private fun preservedDecorationStillMatches(
+    textView: TextView,
+    text: Spanned,
+    item: PreservedHighlightDecoration,
+): Boolean {
+    if (item.quote.isEmpty()) return false
+    val codeSpan = item.codeSpan
+    if (codeSpan != null) {
+        val raw = codeSpan.rawCode
+        if (item.start < 0 || item.end > raw.length || item.end <= item.start) return false
+        return raw.substring(item.start, item.end) == item.quote
+    }
+    if (item.start < 0 || item.end > text.length || item.end <= item.start) return false
+    if (text.substring(item.start, item.end) == item.quote) return true
+    return extractReaderSelectionText(text, item.start, item.end, textView.context) == item.quote
+}
+
 internal fun refreshReaderHighlightSpans(
     textView: TextView,
     highlights: List<HighlightEntity>,
     highlightColorArgb: Int,
     sourceContentLength: Int,
     highlightSig: String,
+    sourceText: String? = null,
 ) {
+    val preserved = snapshotReaderHighlightDecorations(textView)
     clearReaderHighlightSpans(textView)
     applyHighlightsToRenderedText(
         textView = textView,
         highlights = highlights,
         highlightColorArgb = highlightColorArgb,
         sourceContentLength = sourceContentLength,
+        sourceText = sourceText,
     )
+    restoreReaderHighlightDecorations(textView, preserved)
     textView.setTag(TAG_READER_HIGHLIGHT_SIG, highlightSig)
 }
 
 /**
- * 将划线映射到展示层 [start, end) 区间；每条划线至多一处。
+ * 将已经确定的源码区间投影到展示层 [start, end)。
+ * 只在该区间对应的渲染邻域里找引文；源码对得上且展示层只有一处时，允许渲染伸缩把比例映射拉得很远。
+ * 同一段引文出现多次时，不在全文里挑最近的一处。
  */
 internal fun resolveHighlightDisplayedRange(
     displayed: String,
     highlight: space.liushenme.markdownreader.data.local.entity.HighlightEntity,
     sourceContentLength: Int,
+    sourceText: String? = null,
 ): IntRange? {
     val snippet = highlight.highlightedText
     if (snippet.isEmpty() || displayed.isEmpty()) return null
@@ -3576,19 +4209,146 @@ internal fun resolveHighlightDisplayedRange(
                 .coerceIn(0, displayed.length)
         else -> s.coerceIn(0, displayed.length)
     }
-    var bestIdx = -1
+    if (estimate + snippet.length <= displayed.length &&
+        displayed.regionMatches(estimate, snippet, 0, snippet.length)
+    ) {
+        return estimate until (estimate + snippet.length)
+    }
+    val nearRadius = maxOf(snippet.length * 8, 160)
+    val sourceAnchored = sourceContainsSnippetNear(sourceText, s, snippet)
+    val anchor = renderedContextAnchorForSourceOffset(
+        displayed = displayed,
+        sourceText = sourceText,
+        sourceOffset = s,
+        estimate = estimate,
+    )
+    val pivot = anchor ?: estimate
+    fun accept(idx: Int): IntRange? {
+        if (idx < 0 || idx + snippet.length > displayed.length) return null
+        return idx until (idx + snippet.length)
+    }
+    closestSnippetIndexNear(displayed, snippet, pivot, nearRadius)?.let { idx ->
+        accept(idx)?.let { return it }
+    }
+    if (anchor != null) accept(anchor)?.let { return it }
+    if (sourceAnchored) {
+        val only = displayed.indexOf(snippet)
+        if (only >= 0 && displayed.indexOf(snippet, only + 1) < 0) {
+            return only until (only + snippet.length)
+        }
+    }
+    return null
+}
+
+/**
+ * 用划线后的源码上下文反查展示层位置。源码里大段 HTML、链接地址、代码标记被渲染吞掉时，
+ * 全局长度比例会严重漂移；向后指纹仍能把同文的具体一次出现锁定下来。
+ */
+private fun renderedContextAnchorForSourceOffset(
+    displayed: String,
+    sourceText: String?,
+    sourceOffset: Int,
+    estimate: Int,
+): Int? {
+    if (sourceText.isNullOrEmpty() || sourceOffset !in sourceText.indices || displayed.isEmpty()) return null
+    val beforeFrom = (sourceOffset - 40).coerceAtLeast(0)
+    locateLooseSnippetNear(
+        haystack = displayed,
+        snippet = looseSnippetFrom(sourceText, beforeFrom, rawChars = 220, keepChars = 72),
+        expectedIndex = estimate,
+    )?.let { return it }
+
+    val forwardFingerprint = looseSnippetFrom(
+        text = sourceText,
+        from = sourceOffset,
+        rawChars = 260,
+        keepChars = 96,
+    )
+    return locateLooseSnippetNear(
+        haystack = displayed,
+        snippet = forwardFingerprint,
+        expectedIndex = estimate,
+    )
+}
+
+/** 保存的源码坐标附近确实有这段划线文字。 */
+internal fun sourceContainsSnippetNear(sourceText: String?, start: Int, snippet: String): Boolean {
+    if (sourceText.isNullOrEmpty() || snippet.isEmpty() || start !in sourceText.indices) return false
+    if (start + snippet.length <= sourceText.length &&
+        sourceText.regionMatches(start, snippet, 0, snippet.length)
+    ) {
+        return true
+    }
+    return closestSnippetIndexNear(
+        sourceText,
+        snippet,
+        start,
+        maxOf(snippet.length * 4, 80),
+    ) != null
+}
+
+/** 在 [anchor] 前后 [radius] 个字符内找离锚点最近的 [snippet]，远处的同文不参与。 */
+internal fun closestSnippetIndexNear(
+    haystack: String,
+    snippet: String,
+    anchor: Int,
+    radius: Int,
+): Int? {
+    if (snippet.isEmpty() || haystack.isEmpty() || radius < 0) return null
+    if (snippet.length > haystack.length) return null
+    val safeAnchor = anchor.coerceIn(0, haystack.length)
+    val fromLimit = (safeAnchor - radius).coerceAtLeast(0)
+    val toLimit = (safeAnchor + radius).coerceAtMost(haystack.length - snippet.length)
+    if (fromLimit > toLimit) return null
+    var best = -1
     var bestDist = Int.MAX_VALUE
-    var from = 0
-    while (from <= displayed.length - snippet.length) {
-        val idx = displayed.indexOf(snippet, from)
-        if (idx < 0) break
-        val dist = kotlin.math.abs(idx - estimate)
+    var from = fromLimit
+    while (from <= toLimit) {
+        val idx = haystack.indexOf(snippet, from)
+        if (idx < 0 || idx > toLimit) break
+        val dist = kotlin.math.abs(idx - safeAnchor)
         if (dist < bestDist) {
             bestDist = dist
-            bestIdx = idx
+            best = idx
         }
         from = idx + 1
     }
-    if (bestIdx < 0) return null
-    return bestIdx until (bestIdx + snippet.length)
+    return best.takeIf { it >= 0 }
+}
+
+/** 落点所在的划线展示区间；没有划线时返回 null。 */
+internal fun readerHighlightRangeCovering(text: Spanned, offset: Int): IntRange? {
+    if (offset < 0 || offset >= text.length) return null
+    val spans = text.getSpans(offset, offset + 1, HighlightBackgroundSpan::class.java).toList() +
+        text.getSpans(offset, offset + 1, HighlightUnderlineSpan::class.java).toList()
+    val mark = spans.minByOrNull { span ->
+        val length = text.getSpanEnd(span) - text.getSpanStart(span)
+        if (length > 0) length else Int.MAX_VALUE
+    } ?: return null
+    val start = text.getSpanStart(mark)
+    val end = text.getSpanEnd(mark)
+    if (start < 0 || end <= start) return null
+    return start until end
+}
+
+/** 选区与某条已绘制划线重叠时返回其 id。 */
+internal fun readerHighlightIdCovering(text: Spanned, start: Int, end: Int): Long? {
+    if (end <= start) return null
+    val spans = text.getSpans(start, end, HighlightBackgroundSpan::class.java).toList() +
+        text.getSpans(start, end, HighlightUnderlineSpan::class.java).toList()
+    return spans.mapNotNull { span ->
+        val spanStart = text.getSpanStart(span)
+        val spanEnd = text.getSpanEnd(span)
+        if (spanStart < 0 || spanEnd <= spanStart || start >= spanEnd || end <= spanStart) {
+            return@mapNotNull null
+        }
+        val id = when (span) {
+            is HighlightBackgroundSpan -> span.highlightId
+            is HighlightUnderlineSpan -> span.highlightId
+            else -> 0L
+        }
+        if (id <= 0L) return@mapNotNull null
+        val overlap = minOf(end, spanEnd) - maxOf(start, spanStart)
+        overlap to id
+    }.maxByOrNull { it.first }?.second
 }

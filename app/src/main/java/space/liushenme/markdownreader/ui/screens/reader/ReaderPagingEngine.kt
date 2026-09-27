@@ -85,6 +85,7 @@ import space.liushenme.markdownreader.ui.theme.MarkdownReaderTheme
 import io.noties.markwon.Markwon
 import io.noties.markwon.core.CorePlugin
 import io.noties.markwon.core.spans.HeadingSpan
+import space.liushenme.markdownreader.ui.screens.reader.anchor.sourceSpanForRenderedQuote
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.ext.tables.TablePlugin
 import io.noties.markwon.ext.latex.JLatexMathPlugin
@@ -109,6 +110,44 @@ internal fun estimateTargetCharsPerPage(fontSize: Int, screenHeightDp: Int, scre
     val lines = (screenHeightDp / lineHeight).toInt().coerceAtLeast(4)
     val charsPerLine = (screenWidthDp / (fontSize * 0.48f)).toInt().coerceAtLeast(8)
     return (lines * charsPerLine).coerceIn(900, 14_000)
+}
+
+internal enum class AnnotationJumpKind { Bookmark, Highlight }
+
+internal data class AnnotationJumpTarget(
+    val sourceOffset: Int,
+    val previewText: String?,
+    val kind: AnnotationJumpKind,
+    val highlightId: Long? = null,
+)
+
+/** 注解解析结果已经使用当前正文源码坐标；这里只做边界裁剪，不参与历史进度比例换算。 */
+internal fun annotationSourceOffset(target: AnnotationJumpTarget, contentLength: Int): Int =
+    target.sourceOffset.coerceIn(0, (contentLength - 1).coerceAtLeast(0))
+
+internal data class NormalizedDisplayedSelection(
+    val text: String,
+    val start: Int,
+    val end: Int,
+)
+
+internal fun normalizeDisplayedSelection(
+    selectedText: String,
+    displayedStart: Int,
+    displayedEnd: Int,
+): NormalizedDisplayedSelection? {
+    if (displayedStart < 0 || displayedEnd <= displayedStart || selectedText.isEmpty()) return null
+    val leading = selectedText.indexOfFirst { !it.isWhitespace() }
+    if (leading < 0) return null
+    val trailing = selectedText.indexOfLast { !it.isWhitespace() }
+    val normalizedStart = (displayedStart + leading).coerceAtMost(displayedEnd)
+    val normalizedEnd = (displayedStart + trailing + 1).coerceAtMost(displayedEnd)
+    if (normalizedEnd <= normalizedStart) return null
+    return NormalizedDisplayedSelection(
+        text = selectedText.substring(leading, trailing + 1),
+        start = normalizedStart,
+        end = normalizedEnd,
+    )
 }
 
 /** 将正文切成多段用于横向分页；只存区间，渲染时再 substring。 */
@@ -292,6 +331,133 @@ internal fun computeTocJumpReadingWindow(
     lookbehindChars = 0,
 )
 
+/** 划线/书签跳转时，目标前保留的源码，够看到上一小段，又不把整章代码墙拉进窗口。 */
+private const val ANNOTATION_JUMP_LOOKBEHIND_CHARS = 1_200
+
+internal data class SourceFence(val start: Int, val endExclusive: Int)
+
+/** 围栏代码与 `$$` 公式块。窗口从块中间切开时，后文会被当成未闭合代码，整段变成一块超高空白。 */
+internal fun sourceFenceRegions(content: String): List<SourceFence> {
+    if (content.isEmpty()) return emptyList()
+    val out = mutableListOf<SourceFence>()
+    var i = 0
+    var fenceMarker: String? = null
+    var fenceStart = 0
+    var inMath = false
+    var mathStart = 0
+    while (i <= content.length) {
+        val lineEnd = content.indexOf('\n', i).let { if (it < 0) content.length else it }
+        val trimmed = content.substring(i, lineEnd).trim()
+        when {
+            fenceMarker != null -> {
+                if (trimmed.startsWith(fenceMarker)) {
+                    out += SourceFence(fenceStart, exclusiveLineEnd(lineEnd, content.length))
+                    fenceMarker = null
+                }
+            }
+            inMath -> {
+                if (trimmed == "$$") {
+                    out += SourceFence(mathStart, exclusiveLineEnd(lineEnd, content.length))
+                    inMath = false
+                }
+            }
+            else -> {
+                val marker = openingFenceMarker(trimmed)
+                if (marker != null) {
+                    fenceMarker = marker
+                    fenceStart = i
+                } else if (trimmed == "$$") {
+                    inMath = true
+                    mathStart = i
+                }
+            }
+        }
+        if (lineEnd >= content.length) break
+        i = lineEnd + 1
+    }
+    if (fenceMarker != null) out += SourceFence(fenceStart, content.length)
+    if (inMath) out += SourceFence(mathStart, content.length)
+    return out
+}
+
+private fun exclusiveLineEnd(lineEnd: Int, contentLen: Int): Int =
+    if (lineEnd < contentLen) lineEnd + 1 else lineEnd
+
+private fun openingFenceMarker(trimmed: String): String? {
+    if (trimmed.length < 3) return null
+    val ch = trimmed[0]
+    if (ch != '`' && ch != '~') return null
+    var n = 0
+    while (n < trimmed.length && trimmed[n] == ch) n++
+    if (n < 3) return null
+    return trimmed.substring(0, n)
+}
+
+/**
+ * 把 [start, end) 拉出围栏/公式块，并保证 [anchor] 仍在窗口内。
+ * 锚点在块内时必须整块纳入，否则渲染会吞掉后面的正文。
+ */
+internal fun snapBoundsOutsideFences(
+    content: String,
+    start: Int,
+    end: Int,
+    anchor: Int,
+): Pair<Int, Int> {
+    if (content.isEmpty()) return 0 to 0
+    val safeAnchor = anchor.coerceIn(0, content.length - 1)
+    var windowStart = start.coerceIn(0, content.length)
+    var windowEnd = end.coerceIn(windowStart, content.length)
+    if (windowEnd <= windowStart) windowEnd = (windowStart + 1).coerceAtMost(content.length)
+    for (fence in sourceFenceRegions(content)) {
+        val anchorInside = safeAnchor in fence.start until fence.endExclusive
+        if (anchorInside) {
+            windowStart = minOf(windowStart, fence.start)
+            windowEnd = maxOf(windowEnd, fence.endExclusive)
+            continue
+        }
+        if (windowStart in (fence.start + 1) until fence.endExclusive) {
+            windowStart = if (fence.endExclusive <= safeAnchor) fence.endExclusive else fence.start
+        }
+        if (windowEnd in (fence.start + 1) until fence.endExclusive) {
+            windowEnd = if (fence.start >= safeAnchor) fence.start else fence.endExclusive
+        }
+    }
+    windowStart = windowStart.coerceIn(0, safeAnchor)
+    windowEnd = windowEnd.coerceIn(safeAnchor + 1, content.length)
+    return windowStart to windowEnd
+}
+
+/**
+ * 划线/书签跳转窗口：贴着目标开窗，而不是从章节标题一直渲染到目标。
+ * 章节前若有大段代码或公式，那些块会变成超高的一行，滚动既卡又停在块顶，看起来像空白页。
+ */
+internal fun computeAnnotationJumpReadingWindow(
+    content: String,
+    charPos: Int,
+): Pair<Int, Int> {
+    val len = content.length
+    if (len <= 0) return 0 to 0
+    val safe = charPos.coerceIn(0, len - 1)
+    val roughStart = lineStartAt(content, (safe - ANNOTATION_JUMP_LOOKBEHIND_CHARS).coerceAtLeast(0))
+    val roughEnd = (safe + READER_INITIAL_LOOKAHEAD_CHARS).coerceAtMost(len)
+    var (start, end) = snapBoundsOutsideFences(content, roughStart, roughEnd, safe)
+    if (end - start > READER_MAX_WINDOW_CHARS) {
+        val fence = sourceFenceRegions(content).firstOrNull { safe in it.start until it.endExclusive }
+        if (fence != null) {
+            start = fence.start
+            end = fence.endExclusive.coerceAtLeast(safe + 1)
+        } else {
+            start = lineStartAt(content, (safe - READER_MAX_WINDOW_CHARS / 5).coerceAtLeast(0))
+            end = (start + READER_MAX_WINDOW_CHARS).coerceAtMost(len)
+            val snapped = snapBoundsOutsideFences(content, start, end, safe)
+            start = snapped.first
+            end = snapped.second
+        }
+    }
+    if (end <= start) end = (start + 1).coerceAtMost(len)
+    return start to end
+}
+
 internal fun extractSourceLineAt(source: String, sourceOffset: Int): String {
     if (source.isEmpty()) return ""
     val safe = sourceOffset.coerceIn(0, source.lastIndex.coerceAtLeast(0))
@@ -331,6 +497,354 @@ internal fun lineAt(text: String, start: Int): String {
     if (start < 0 || start >= text.length) return ""
     val end = text.indexOf('\n', start).let { if (it < 0) text.length else it }
     return text.substring(start, end).trim()
+}
+
+/** 源码里某一行 ATX 标题。 [titleStart] 起是去掉井号后的标题文字。 */
+internal data class AtxHeadingSlice(
+    val lineStart: Int,
+    val titleStart: Int,
+    val titleEnd: Int,
+    val title: String,
+)
+
+internal data class ResolvedSourceSelectionSpan(
+    val start: Int,
+    val end: Int,
+    val hint: Int,
+    val fromHeading: Boolean,
+)
+
+private val atxHeadingLine = Regex("""^\s{0,3}(#{1,6})\s+(.+?)(?:\s+#+)?\s*$""")
+
+/** [offset] 落在 ATX 标题行内时返回这一行，正文里的同句返回 null。 */
+internal fun atxHeadingCovering(source: String, offset: Int): AtxHeadingSlice? {
+    if (source.isEmpty() || offset !in 0..source.length) return null
+    val probe = if (offset >= source.length) source.lastIndex else offset
+    if (probe < 0) return null
+    val lineStart = source.lastIndexOf('\n', (probe - 1).coerceAtLeast(0)).let { if (it < 0 || probe == 0) 0 else it + 1 }
+    val lineEnd = source.indexOf('\n', lineStart).let { if (it < 0) source.length else it }
+    if (offset > lineEnd) return null
+    val line = source.substring(lineStart, lineEnd)
+    val match = atxHeadingLine.matchEntire(line) ?: return null
+    val rawTitle = match.groupValues[2].trim()
+    if (rawTitle.isEmpty()) return null
+    val titleStartInLine = line.indexOf(rawTitle)
+    if (titleStartInLine < 0) return null
+    return AtxHeadingSlice(
+        lineStart = lineStart,
+        titleStart = lineStart + titleStartInLine,
+        titleEnd = lineStart + titleStartInLine + rawTitle.length,
+        title = rawTitle,
+    )
+}
+
+/** 目录项对应的标题行盖住 [offset] 时返回该项。停在正文里则返回 null。 */
+internal fun headingEntryContaining(
+    source: String,
+    toc: List<MarkdownTocEntry>,
+    offset: Int,
+): MarkdownTocEntry? {
+    if (toc.isEmpty() || atxHeadingCovering(source, offset) == null) return null
+    val entry = toc.lastOrNull { it.sourceOffset <= offset } ?: return null
+    val lineEnd = source.indexOf('\n', entry.sourceOffset).let { if (it < 0) source.length else it }
+    if (offset >= lineEnd) return null
+    return entry
+}
+
+/**
+ * 选区落在渲染后的标题上时，回到这一行标题的源码区间。
+ * 标题文字在正文里再出现一次时，不再按就近纯文本落到正文。
+ */
+internal fun sourceSpanForDisplayedHeading(
+    displayed: CharSequence?,
+    displayedStart: Int,
+    displayedEnd: Int,
+    selectedText: String,
+    source: String,
+    windowStart: Int,
+    windowEnd: Int,
+    toc: List<MarkdownTocEntry>,
+): Pair<Int, Int>? {
+    return resolveDisplayedHeadingSourceSpan(
+        displayed = displayed,
+        displayedStart = displayedStart,
+        displayedEnd = displayedEnd,
+        selectedText = selectedText,
+        source = source,
+        windowStart = windowStart,
+        windowEnd = windowEnd,
+        toc = toc,
+    )?.let { it.start to it.end }
+}
+
+internal fun resolveSourceSpanForDisplayedSelection(
+    displayed: CharSequence?,
+    displayedStart: Int,
+    displayedEnd: Int,
+    selectedText: String,
+    source: String,
+    renderPlainText: Boolean,
+    windowStart: Int,
+    windowEnd: Int,
+    toc: List<MarkdownTocEntry>,
+): ResolvedSourceSelectionSpan? {
+    val needle = selectedText.trim()
+    if (needle.isEmpty() || source.isEmpty() || displayedEnd <= displayedStart) return null
+    val safeWindowStart = windowStart.coerceIn(0, source.length)
+    val safeWindowEnd = windowEnd.coerceIn(safeWindowStart, source.length)
+    if (safeWindowEnd <= safeWindowStart) return null
+    if (renderPlainText) {
+        val start = (safeWindowStart + displayedStart).coerceIn(safeWindowStart, safeWindowEnd)
+        val end = (start + needle.length).coerceAtMost(safeWindowEnd)
+        if (end <= start) return null
+        return ResolvedSourceSelectionSpan(start, end, start, fromHeading = false)
+    }
+    resolveDisplayedHeadingSourceSpan(
+        displayed = displayed,
+        displayedStart = displayedStart,
+        displayedEnd = displayedEnd,
+        selectedText = needle,
+        source = source,
+        windowStart = safeWindowStart,
+        windowEnd = safeWindowEnd,
+        toc = toc,
+    )?.let { return it }
+    val hint = resolveSourceCharOffset(
+        sourceContent = source,
+        windowStart = safeWindowStart,
+        windowEnd = safeWindowEnd,
+        displayedText = displayed,
+        renderedOffset = displayedStart,
+        renderPlainText = false,
+        tocEntries = toc,
+    )
+    val span = sourceSpanForRenderedQuote(
+        source = source,
+        rendered = needle,
+        hint = hint,
+        searchStart = safeWindowStart,
+        searchEnd = safeWindowEnd,
+    ) ?: return null
+    return ResolvedSourceSelectionSpan(span.first, span.second, hint, fromHeading = false)
+}
+
+private fun resolveDisplayedHeadingSourceSpan(
+    displayed: CharSequence?,
+    displayedStart: Int,
+    displayedEnd: Int,
+    selectedText: String,
+    source: String,
+    windowStart: Int,
+    windowEnd: Int,
+    toc: List<MarkdownTocEntry>,
+): ResolvedSourceSelectionSpan? {
+    val spanned = displayed as? Spanned ?: return null
+    val needle = selectedText.trim()
+    if (needle.isEmpty() || displayedEnd <= displayedStart || source.isEmpty()) return null
+    val probeEnd = (displayedStart + 1).coerceAtMost(spanned.length)
+    if (probeEnd <= displayedStart) return null
+    val headingSpans = spanned.getSpans(displayedStart, probeEnd, HeadingSpan::class.java)
+    if (headingSpans.isEmpty()) return null
+    val spanStart = headingSpans.maxOf { spanned.getSpanStart(it) }
+    if (spanStart < 0) return null
+    val starts = markdownHeadingSpanStarts(spanned)
+    val rank = starts.indexOf(spanStart)
+    if (rank < 0) return null
+    val renderedLine = lineAt(spanned.toString(), spanStart)
+    val windowHeadings = toc.filter { it.sourceOffset in windowStart until windowEnd }
+    val matchingEntries = windowHeadings.filter { titleMatchesRenderedLine(renderedLine, it.title) }
+    val titleRank = starts.subList(0, rank + 1).count { start ->
+        titleMatchesRenderedLine(lineAt(spanned.toString(), start), renderedLine)
+    } - 1
+    val entry = matchingEntries.getOrNull(titleRank.coerceAtLeast(0))
+        ?: windowHeadings.getOrNull(rank)
+    val heading = entry?.let { atxHeadingCovering(source, it.sourceOffset) }
+        ?: findRenderedHeadingSourceSlice(
+            source = source,
+            renderedLine = renderedLine,
+            windowStart = windowStart,
+            windowEnd = windowEnd,
+            ordinal = titleRank.coerceAtLeast(0),
+        )
+        ?: return null
+    val lineEnd = source.indexOf('\n', heading.lineStart).let { if (it < 0) source.length else it }
+    val line = source.substring(heading.lineStart, lineEnd)
+    val displayedLocal = (displayedStart - spanStart).coerceAtLeast(0)
+    val hintInLine = (heading.titleStart - heading.lineStart + displayedLocal).coerceIn(0, line.length)
+    val local = sourceSpanForRenderedQuote(line, needle, hintInLine) ?: return null
+    val start = heading.lineStart + local.first
+    val end = heading.lineStart + local.second
+    if (start < heading.lineStart || end > lineEnd || end <= start) return null
+    return ResolvedSourceSelectionSpan(start, end, start, fromHeading = true)
+}
+
+/**
+ * 目录还未加载或某些较深级别小标题未进入 TOC 时，仍可按渲染后的 HeadingSpan
+ * 反查源码标题行。只在当前窗口内匹配，避免同名标题串位。
+ */
+private fun findRenderedHeadingSourceSlice(
+    source: String,
+    renderedLine: String,
+    windowStart: Int,
+    windowEnd: Int,
+    ordinal: Int,
+): AtxHeadingSlice? {
+    if (source.isEmpty() || renderedLine.isBlank()) return null
+    val matches = mutableListOf<AtxHeadingSlice>()
+    var cursor = windowStart.coerceIn(0, source.length)
+    val limit = windowEnd.coerceIn(cursor, source.length)
+    while (cursor <= limit) {
+        val lineEnd = source.indexOf('\n', cursor).let { if (it < 0 || it > limit) limit else it }
+        val line = source.substring(cursor, lineEnd)
+        val match = atxHeadingLine.matchEntire(line)
+        if (match != null) {
+            val title = match.groupValues[2].trim()
+            if (titleMatchesRenderedLine(renderedLine, title)) {
+                val titleStart = line.indexOf(title)
+                if (titleStart >= 0) {
+                    matches += AtxHeadingSlice(
+                        lineStart = cursor,
+                        titleStart = cursor + titleStart,
+                        titleEnd = cursor + titleStart + title.length,
+                        title = title,
+                    )
+                }
+            }
+        }
+        if (lineEnd >= limit || lineEnd >= source.length) break
+        cursor = lineEnd + 1
+    }
+    return matches.getOrNull(ordinal) ?: matches.firstOrNull()
+}
+
+/**
+ * 源码位置在标题行上时，画到对应的标题 span，而不是正文里更近的同一句。
+ */
+internal fun displayedRangeForSourceHeading(
+    displayed: CharSequence,
+    source: String,
+    sourceStart: Int,
+    snippet: String,
+    sourceWindowStart: Int = 0,
+): IntRange? {
+    if (displayed !is Spanned || snippet.isBlank() || source.isEmpty()) return null
+    val heading = atxHeadingCovering(source, sourceStart) ?: return null
+    val needle = snippet.trim()
+    val titleKey = normalizeAnchorKey(heading.title)
+    val needleKey = normalizeAnchorKey(needle)
+    if (titleKey.isEmpty() || needleKey.isEmpty() || !titleKey.contains(needleKey)) return null
+    val rank = sameTitleRankBefore(source, heading, sourceWindowStart)
+    val text = displayed.toString()
+    val allHeadingStarts = markdownHeadingSpanStarts(displayed)
+    val matches = allHeadingStarts.filter { start ->
+        titleMatchesRenderedLine(lineAt(text, start), heading.title)
+    }
+    // Markwon can omit inline Markdown tokens or attach HeadingSpan to a slightly different
+    // visual line. The source anchor has already proven this is a heading, so keep the ordinal
+    // constrained to HeadingSpan ranges instead of falling back to a duplicate body occurrence.
+    val candidateStarts = if (matches.isNotEmpty()) {
+        matches
+    } else if (allHeadingStarts.isNotEmpty()) {
+        allHeadingStarts
+    } else {
+        // A window can begin on the visible title text (the leading `##` was outside the
+        // slice), so Markwon legitimately emits no HeadingSpan. Search only whole rendered
+        // lines matching this source heading; never use an arbitrary body occurrence.
+        renderedLineStarts(text).filter { start ->
+            normalizeAnchorKey(lineAt(text, start)) == normalizeAnchorKey(heading.title)
+        }
+    }
+    if (candidateStarts.isEmpty()) return null
+    // 只数当前窗口里的同名标题。窗口不是从书首开始时，书首之前的同名标题不参与序号。
+    val spanStart = candidateStarts.getOrNull(rank) ?: run {
+        val windowOrigin = sourceWindowStart.coerceIn(0, source.length)
+        val windowSpan = (source.length - windowOrigin).coerceAtLeast(1)
+        val estimate = (((heading.lineStart - windowOrigin).coerceAtLeast(0).toLong() * text.length) / windowSpan).toInt()
+        candidateStarts.minByOrNull { kotlin.math.abs(it - estimate) }
+    } ?: return null
+    val lineEnd = text.indexOf('\n', spanStart).let { if (it < 0) text.length else it }
+    if (spanStart >= lineEnd) return null
+    val line = text.substring(spanStart, lineEnd)
+    val from = (sourceStart - heading.titleStart).coerceIn(0, line.length)
+    val looseRange = findLooseHeadingRange(line, needle, from)
+    val local = line.indexOf(needle, from).takeIf { it >= 0 }
+        ?: line.indexOf(needle).takeIf { it >= 0 }
+        ?: looseRange?.first
+    if (local == null || local < 0) {
+        // Last-resort bounded fallback: keep the decoration on this HeadingSpan only. This is
+        // preferable to dropping it or painting an identical phrase in the body.
+        return spanStart until lineEnd
+    }
+    val length = if (looseRange != null && local == looseRange.first) {
+        looseRange.last - looseRange.first + 1
+    } else {
+        needle.length
+    }
+    return (spanStart + local) until (spanStart + local + length).coerceAtMost(lineEnd)
+}
+
+private fun findLooseHeadingRange(line: String, needle: String, preferred: Int): IntRange? {
+    val key = normalizeAnchorKey(needle)
+    if (key.isEmpty()) return null
+    val normalized = normalizeAnchorKey(line)
+    if (normalized.isEmpty() || !normalized.contains(key)) return null
+    // For headings, inline markers are usually the only difference. Use the first contiguous
+    // non-whitespace run as a conservative visual range when an exact offset cannot be mapped.
+    val plainNeedle = needle.trim()
+    line.indexOf(plainNeedle, preferred).takeIf { it >= 0 }?.let {
+        return it until it + plainNeedle.length
+    }
+    line.indexOf(plainNeedle).takeIf { it >= 0 }?.let {
+        return it until it + plainNeedle.length
+    }
+    val first = line.indexOfFirst { !it.isWhitespace() }
+    val last = line.indexOfLast { !it.isWhitespace() }
+    return if (first >= 0 && last >= first) first..last else null
+}
+
+private fun renderedLineStarts(text: String): List<Int> = buildList {
+    if (text.isEmpty()) return@buildList
+    add(0)
+    var cursor = text.indexOf('\n')
+    while (cursor >= 0 && cursor + 1 < text.length) {
+        add(cursor + 1)
+        cursor = text.indexOf('\n', cursor + 1)
+    }
+}
+
+/** 源码位置落在标题行上，且划线文字属于这行标题。此时不能再去正文里找同句。 */
+internal fun sourceOffsetLockedToHeading(source: String, sourceStart: Int, snippet: String): Boolean {
+    if (source.isEmpty() || snippet.isBlank()) return false
+    val heading = atxHeadingCovering(source, sourceStart) ?: return false
+    val titleKey = normalizeAnchorKey(heading.title)
+    val needleKey = normalizeAnchorKey(snippet.trim())
+    return titleKey.isNotEmpty() && needleKey.isNotEmpty() && titleKey.contains(needleKey)
+}
+
+/** [source] 里、当前窗口内、位于该标题之前且标题文字相同的 ATX 标题个数。 */
+private fun sameTitleRankBefore(source: String, heading: AtxHeadingSlice, fromOffset: Int = 0): Int {
+    val target = normalizeAnchorKey(heading.title)
+    if (target.isEmpty()) return 0
+    var rank = 0
+    var cursor = lineStartAt(source, fromOffset.coerceIn(0, heading.lineStart))
+    while (cursor < heading.lineStart) {
+        val lineEnd = source.indexOf('\n', cursor).let { if (it < 0) source.length else it }
+        val line = source.substring(cursor, lineEnd)
+        val match = atxHeadingLine.matchEntire(line)
+        if (match != null && normalizeAnchorKey(match.groupValues[2].trim()) == target) {
+            rank++
+        }
+        cursor = if (lineEnd < source.length) lineEnd + 1 else source.length
+        if (cursor >= source.length) break
+    }
+    return rank
+}
+
+private fun lineStartAt(source: String, offset: Int): Int {
+    if (source.isEmpty() || offset <= 0) return 0
+    val probe = offset.coerceAtMost(source.length)
+    val newline = source.lastIndexOf('\n', probe - 1)
+    return if (newline < 0) 0 else newline + 1
 }
 
 /** Markwon 为 ATX 标题打的 span；顺序与正文中的标题出现顺序一致。 */
@@ -530,8 +1044,11 @@ internal fun resolveDisplayedCharOffset(
     val displayed = displayedText?.toString().orEmpty()
     val len = displayed.length
     if (len == 0) return 0
-    findBookmarkPreviewOffset(displayedText, preferredText)?.let {
-        return it.coerceIn(0, (len - 1).coerceAtLeast(0))
+    // 目录项已经确定时，预览文本里的同句不能抢走标题位置。
+    if (preferredEntry == null) {
+        findBookmarkPreviewOffset(displayedText, preferredText)?.let {
+            return it.coerceIn(0, (len - 1).coerceAtLeast(0))
+        }
     }
     if (renderPlainText) {
         val hint = (sourceOffset - windowStart).coerceIn(0, len)
@@ -622,23 +1139,64 @@ internal fun resolveDisplayedCharOffsetForSavedPosition(
     if (renderPlainText) {
         return (sourceOffset - windowStart).coerceIn(0, (len - 1).coerceAtLeast(0))
     }
+    val headingSlice = atxHeadingCovering(sourceContent, sourceOffset)
+    if (headingSlice != null) {
+        val quote = preferredText?.trim()?.takeIf { it.isNotEmpty() } ?: headingSlice.title
+        displayedRangeForSourceHeading(
+            displayed = displayedText ?: displayed,
+            source = sourceContent,
+            sourceStart = sourceOffset,
+            snippet = quote,
+            sourceWindowStart = windowStart,
+        )?.first?.let { return it.coerceIn(0, (len - 1).coerceAtLeast(0)) }
+        headingEntryContaining(sourceContent, tocEntries, sourceOffset)?.let { entry ->
+            return resolveDisplayedCharOffset(
+                sourceContent = sourceContent,
+                sourceOffset = entry.sourceOffset,
+                displayedText = displayedText,
+                renderPlainText = false,
+                windowStart = windowStart,
+                windowEnd = windowEnd,
+                tocEntries = tocEntries,
+                preferredEntry = entry,
+            )
+        }
+        return proportionalDisplayedOffset(
+            sourceOffset = sourceOffset,
+            windowStart = windowStart,
+            windowEnd = windowEnd,
+            displayedLen = len,
+        ).coerceIn(0, (len - 1).coerceAtLeast(0))
+    }
     val hint = proportionalDisplayedOffset(
         sourceOffset = sourceOffset,
         windowStart = windowStart,
         windowEnd = windowEnd,
         displayedLen = len,
     )
-    // 书签/进度预览：优先宽容匹配到视口顶字符（不强制行首）。
+    // 正文预览只在比例位置附近找，并且跳过渲染标题，避免同句被标题或更远处的正文抢走。
     if (!preferredText.isNullOrBlank()) {
         val fingerprint = preferredText.replace(Regex("""\s+"""), " ").trim().take(48)
-        locateLooseSnippetNear(displayed, fingerprint, hint)?.let {
-            return it.coerceIn(0, (len - 1).coerceAtLeast(0))
-        }
-        findBookmarkPreviewOffset(displayedText, preferredText)?.let {
-            return it.coerceIn(0, (len - 1).coerceAtLeast(0))
-        }
+        val radius = maxOf(fingerprint.length * 12, 320)
+        closestDisplayedSnippetSkippingHeadings(
+            displayed = displayed,
+            displayedSpans = displayedText,
+            snippet = fingerprint,
+            anchor = hint,
+            radius = radius,
+        )?.let { return it.coerceIn(0, (len - 1).coerceAtLeast(0)) }
+        locateLooseSnippetNear(
+            haystack = displayed,
+            snippet = fingerprint,
+            expectedIndex = hint,
+            maxDistance = radius,
+            rejectOffset = { isOnRenderedHeading(displayedText, it) },
+        )?.let { return it.coerceIn(0, (len - 1).coerceAtLeast(0)) }
+        // 代码块在正文里只剩一个占位符，源码片段对不上展示字符串。落到该占位符，再按块内行滚动。
+        displayedOffsetForCodeSnippet(displayedText, fingerprint, hint)
+            ?.let { return it.coerceIn(0, (len - 1).coerceAtLeast(0)) }
     }
-    return resolveDisplayedCharOffsetForBookOpenRestore(
+    val restored = resolveDisplayedCharOffsetForBookOpenRestore(
         sourceContent = sourceContent,
         sourceOffset = sourceOffset,
         displayedText = displayedText,
@@ -647,6 +1205,40 @@ internal fun resolveDisplayedCharOffsetForSavedPosition(
         windowEnd = windowEnd,
         tocEntries = tocEntries,
     )
+    if (!isOnRenderedHeading(displayedText, restored)) {
+        return restored
+    }
+    return hint.coerceIn(0, (len - 1).coerceAtLeast(0))
+}
+
+/** 在锚点附近找 [snippet]，渲染标题上的同句不算。 */
+private fun closestDisplayedSnippetSkippingHeadings(
+    displayed: String,
+    displayedSpans: CharSequence?,
+    snippet: String,
+    anchor: Int,
+    radius: Int,
+): Int? {
+    if (snippet.length < 2 || displayed.isEmpty() || snippet.length > displayed.length) return null
+    val safeAnchor = anchor.coerceIn(0, displayed.length)
+    val toLimit = (safeAnchor + radius).coerceAtMost(displayed.length - snippet.length)
+    var from = (safeAnchor - radius).coerceAtLeast(0)
+    if (from > toLimit) return null
+    var best = -1
+    var bestDist = Int.MAX_VALUE
+    while (from <= toLimit) {
+        val idx = displayed.indexOf(snippet, from)
+        if (idx < 0 || idx > toLimit) break
+        if (!isOnRenderedHeading(displayedSpans, idx)) {
+            val dist = abs(idx - safeAnchor)
+            if (dist < bestDist) {
+                bestDist = dist
+                best = idx
+            }
+        }
+        from = idx + 1
+    }
+    return best.takeIf { it >= 0 }
 }
 
 /**
@@ -791,6 +1383,8 @@ internal fun locateLooseSnippetNear(
     haystack: String,
     snippet: String?,
     expectedIndex: Int,
+    maxDistance: Int = Int.MAX_VALUE,
+    rejectOffset: ((Int) -> Boolean)? = null,
 ): Int? {
     if (snippet.isNullOrBlank() || haystack.isEmpty()) return null
     val tokens = snippet.split(LOOSE_SNIPPET_SEPARATOR).filter { it.isNotEmpty() }
@@ -803,14 +1397,57 @@ internal fun locateLooseSnippetNear(
     var from = 0
     while (from < haystack.length) {
         val match = regex.find(haystack, from) ?: break
-        val dist = abs(match.range.first - expectedIndex)
-        if (dist < bestDist) {
+        val start = match.range.first
+        val dist = abs(start - expectedIndex)
+        if (dist <= maxDistance && dist < bestDist && rejectOffset?.invoke(start) != true) {
             bestDist = dist
-            best = match.range.first
+            best = start
         }
-        from = match.range.first + 1
+        from = start + 1
     }
     return best
+}
+
+internal fun isOnRenderedHeading(displayed: CharSequence?, offset: Int): Boolean {
+    val spanned = displayed as? Spanned ?: return false
+    if (offset < 0 || offset >= spanned.length) return false
+    val end = (offset + 1).coerceAtMost(spanned.length)
+    return spanned.getSpans(offset, end, HeadingSpan::class.java).isNotEmpty()
+}
+
+/**
+ * 代码块渲染后正文只剩 `\uFFFC`。划线原文在块内时，返回该占位符下标，供外层滚到这一块。
+ */
+internal fun displayedOffsetForCodeSnippet(
+    displayed: CharSequence?,
+    snippet: String,
+    hint: Int,
+): Int? {
+    val spanned = displayed as? Spanned ?: return null
+    if (snippet.length < 2 || spanned.isEmpty()) return null
+    val spans = spanned.getSpans(0, spanned.length, space.liushenme.markdownreader.markdown.ReaderScrollableCodeBlockSpan::class.java)
+    if (spans.isEmpty()) return null
+    val safeHint = hint.coerceIn(0, spanned.length)
+    var best = -1
+    var bestDist = Int.MAX_VALUE
+    for (span in spans) {
+        if (span.indexOfSnippet(snippet) < 0) continue
+        val start = spanned.getSpanStart(span)
+        if (start < 0) continue
+        val dist = abs(start - safeHint)
+        if (dist < bestDist) {
+            bestDist = dist
+            best = start
+        }
+    }
+    return best.takeIf { it >= 0 }
+}
+
+/** 横向分页某一页的源码窗口结束位置（不含）。用下一页起点，不用渲染后的 TextView 长度。 */
+internal fun pagerSourceWindowEnd(pageSpecs: List<IntRange>, page: Int, contentLen: Int): Int {
+    if (pageSpecs.isEmpty()) return contentLen.coerceAtLeast(0)
+    val safePage = page.coerceIn(0, pageSpecs.lastIndex)
+    return pageSpecs.getOrNull(safePage + 1)?.first ?: contentLen
 }
 
 /** 截取 [from] 起的前向片段并折叠空白，作为宽容匹配的指纹。 */
@@ -1155,15 +1792,22 @@ internal suspend fun awaitPagerPageTextView(
     page: Int,
     maxAttempts: Int = 150,
     expectedTextLength: Int? = null,
+    expectedRenderSig: String? = null,
 ): TextView? {
     repeat(maxAttempts) {
         val tv = pageTextViews[page]
-        if (tv != null && isReaderTextViewLayoutReady(tv, expectedTextLength)) {
+        if (tv != null &&
+            isReaderTextViewLayoutReady(tv, expectedTextLength) &&
+            (expectedRenderSig == null || tv.getTag(R.id.reader_markdown_render_complete) == expectedRenderSig)
+        ) {
             return tv
         }
         kotlinx.coroutines.delay(32)
     }
-    return pageTextViews[page]?.takeIf { isReaderTextViewLayoutReady(it, expectedTextLength) }
+    return pageTextViews[page]?.takeIf {
+        isReaderTextViewLayoutReady(it, expectedTextLength) &&
+            (expectedRenderSig == null || it.getTag(R.id.reader_markdown_render_complete) == expectedRenderSig)
+    }
 }
 
 /** 当前视口顶部对应的正文字符下标（相对 TextView 内文本）。 */
@@ -1254,8 +1898,13 @@ internal fun isReaderTextViewAtScrollBottom(tv: TextView): Boolean {
     return tv.scrollY >= maxScroll - 1
 }
 
-/** 按 layout 行顶滚动到字符偏移，比「字符比例 ≈ scrollY」更贴近目录/书签目标。 */
-internal fun scrollTextViewToCharOffset(tv: TextView, charOffsetInText: Int) {
+/** 按 layout 行顶滚动到字符偏移。代码块整段是一行时，用 [quote] 或已算好的 [intraPx] 再滚到块内那一行。 */
+internal fun scrollTextViewToCharOffset(
+    tv: TextView,
+    charOffsetInText: Int,
+    quote: String? = null,
+    intraPx: Int? = null,
+) {
     val layout = tv.layout ?: return
     val len = tv.text?.length ?: 0
     if (len == 0) return
@@ -1264,21 +1913,52 @@ internal fun scrollTextViewToCharOffset(tv: TextView, charOffsetInText: Int) {
     val innerH = tv.height - tv.paddingTop - tv.paddingBottom
     if (innerH <= 0) return
     val lineTop = layout.getLineTop(line)
+    val lineBottom = layout.getLineBottom(line)
     val maxScroll = (layout.height - innerH).coerceAtLeast(0)
-    tv.scrollTo(0, lineTop.coerceIn(0, maxScroll))
+    val intra = intraPx ?: codeBlockIntraLinePx(tv, offset, quote)
+    val target = if (intra > 0 && lineBottom - lineTop > innerH) {
+        val maxIntra = (lineBottom - lineTop - innerH).coerceAtLeast(0)
+        lineTop + intra.coerceIn(0, maxIntra)
+    } else {
+        lineTop
+    }
+    tv.scrollTo(0, target.coerceIn(0, maxScroll))
 }
 
-/** 目录/书签跳转：锁定渲染文本下标，Mermaid/大图异步改行高后仍回到同一标题行。 */
-internal fun applyPendingScrollToCharOffset(tv: TextView, charOffsetInText: Int) {
+/** 目录/书签/划线跳转：锁定渲染文本下标。 [quote] 在代码块内时用来滚到块内对应行。 */
+internal fun applyPendingScrollToCharOffset(
+    tv: TextView,
+    charOffsetInText: Int,
+    quote: String? = null,
+) {
     val len = tv.text?.length ?: 0
     if (len <= 0) return
     val offset = charOffsetInText.coerceIn(0, (len - 1).coerceAtLeast(0))
     tv.setTag(R.id.reader_pending_scroll_char_offset, offset)
-    scrollTextViewToCharOffset(tv, offset)
+    val intra = codeBlockIntraLinePx(tv, offset, quote)
+    tv.setTag(R.id.reader_pending_scroll_intra_px, intra)
+    scrollTextViewToCharOffset(tv, offset, quote)
+}
+
+private fun codeBlockIntraLinePx(tv: TextView, displayedOffset: Int, quote: String?): Int {
+    val snippet = quote?.replace(Regex("""\s+"""), " ")?.trim()?.take(48).orEmpty()
+    if (snippet.length < 2) return 0
+    val spanned = tv.text as? Spanned ?: return 0
+    if (displayedOffset !in 0 until spanned.length) return 0
+    val probeEnd = (displayedOffset + 1).coerceAtMost(spanned.length)
+    val span = spanned.getSpans(
+        displayedOffset,
+        probeEnd,
+        space.liushenme.markdownreader.markdown.ReaderScrollableCodeBlockSpan::class.java,
+    ).firstOrNull() ?: return 0
+    val idx = span.indexOfSnippet(snippet)
+    if (idx < 0) return 0
+    return span.offsetTopInLine(idx, tv.paint)
 }
 
 internal fun clearPendingScrollCharOffset(tv: TextView?) {
     tv?.setTag(R.id.reader_pending_scroll_char_offset, null)
+    tv?.setTag(R.id.reader_pending_scroll_intra_px, null)
     cancelPendingScrollReapply(tv)
 }
 
@@ -1320,6 +2000,7 @@ internal data class PendingSavedPositionSnap(
     val preview: String?,
     val renderPlainText: Boolean,
     val tocEntries: List<MarkdownTocEntry>,
+    val highlightId: Long? = null,
 )
 
 internal fun stashPendingSavedPositionSnap(tv: TextView?, snap: PendingSavedPositionSnap?) {
@@ -1336,17 +2017,18 @@ internal fun hasPendingSavedPositionSnap(tv: TextView?): Boolean =
 internal fun applyStashedSavedPositionSnapIfAny(tv: TextView): Boolean {
     val snap = tv.getTag(R.id.reader_pending_snap_restore) as? PendingSavedPositionSnap ?: return false
     if (!isReaderTextViewLayoutReady(tv)) return false
-    val offset = resolveDisplayedCharOffsetForSavedPosition(
-        sourceContent = snap.sourceContent,
-        sourceOffset = snap.sourceOffset,
-        displayedText = tv.text,
-        renderPlainText = snap.renderPlainText,
-        windowStart = snap.windowStart,
-        windowEnd = snap.windowEnd,
-        tocEntries = snap.tocEntries,
-        preferredText = snap.preview,
-    )
-    applyPendingScrollToCharOffset(tv, offset)
+    val offset = snap.highlightId?.let { displayedOffsetForHighlightId(tv, it) }
+        ?: resolveDisplayedCharOffsetForSavedPosition(
+            sourceContent = snap.sourceContent,
+            sourceOffset = snap.sourceOffset,
+            displayedText = tv.text,
+            renderPlainText = snap.renderPlainText,
+            windowStart = snap.windowStart,
+            windowEnd = snap.windowEnd,
+            tocEntries = snap.tocEntries,
+            preferredText = snap.preview,
+        )
+    applyPendingScrollToCharOffset(tv, offset, snap.preview)
     clearPendingSavedPositionSnap(tv)
     return true
 }
@@ -1622,7 +2304,8 @@ internal fun cancelPendingScrollReapply(tv: TextView?) {
 
 internal fun reapplyPendingScrollCharOffsetIfAny(tv: TextView) {
     val offset = tv.getTag(R.id.reader_pending_scroll_char_offset) as? Int ?: return
-    scrollTextViewToCharOffset(tv, offset)
+    val intra = tv.getTag(R.id.reader_pending_scroll_intra_px) as? Int ?: 0
+    scrollTextViewToCharOffset(tv, offset, intraPx = intra)
 }
 
 /**
@@ -1756,19 +2439,19 @@ internal fun scrollTextViewToSourceProgressAnchor(
 }
 
 /**
- * 章节窗口模式的目录/书签跳转：切换窗口片段后由 [onAnchorGlobalChar] 触发锚点恢复滚动
- *（避免大 TXT 异步 PrecomputedText 尚未写入时提前 scroll 到错误位置）。
+ * 划线/书签跳转：窗口贴着目标，避开整章前的代码墙。
+ * 目录跳转不要走这里，目录仍从章节标题起算。
  */
 internal fun jumpToCharInChunkWindow(
+    sourceContent: String,
     contentLen: Int,
-    chapterBoundaries: IntArray,
     charPos: Int,
     setReadingWindow: (start: Int, end: Int) -> Unit,
     onAnchorGlobalChar: (Int) -> Unit,
     onProgress: () -> Unit,
 ) {
     val safeCharPos = charPos.coerceIn(0, (contentLen - 1).coerceAtLeast(0))
-    val (winStart, winEnd) = computeTocJumpReadingWindow(chapterBoundaries, safeCharPos, contentLen)
+    val (winStart, winEnd) = computeAnnotationJumpReadingWindow(sourceContent, safeCharPos)
     setReadingWindow(winStart, winEnd)
     onAnchorGlobalChar(safeCharPos)
     onProgress()
@@ -1791,6 +2474,10 @@ internal fun jumpToGlobalCharInPager(
     onProgress: () -> Unit,
     pdfJumpByPageIndex: Boolean = false,
     pdfPageIndex: Int? = null,
+    highlightId: Long? = null,
+    themeSignature: String,
+    fontSize: Int,
+    codeBlockWrap: Boolean,
 ) {
     if (pageSpecs.isEmpty()) {
         onProgress()
@@ -1803,16 +2490,29 @@ internal fun jumpToGlobalCharInPager(
             .coerceIn(0, pageSpecs.lastIndex)
     }
     val globalStart = pageSpecs[page].first
+    val globalEnd = pagerSourceWindowEnd(pageSpecs, page, contentLen)
     val safeCharPos = charPos.coerceIn(0, (contentLen - 1).coerceAtLeast(0))
 
-    // PDF 经 Markwon 渲染后 TextView 长度与 HTML 片段长度无关，不能按源码长度校验。
-    val expectedLen = if (pdfJumpByPageIndex) null else pageSpecs[page].count()
+    // 只有纯文本渲染后长度与源码严格一致；Markdown/PDF 必须按渲染完成签名等待。
+    val expectedLen = if (renderPlainText && !pdfJumpByPageIndex) pageSpecs[page].count() else null
+    val expectedRenderSig = if (!renderPlainText && !pdfJumpByPageIndex) {
+        readerContentSignature(
+            content = pageSlice(sourceContent, pageSpecs[page]),
+            renderPlainText = false,
+            themeName = themeSignature,
+            fontSize = fontSize,
+            codeBlockWrap = codeBlockWrap,
+        )
+    } else {
+        null
+    }
     scope.launch {
         pagerState.scrollToPage(page)
         val tv = awaitPagerPageTextView(
             pageTextViews = pageTextViews,
             page = page,
             expectedTextLength = expectedLen,
+            expectedRenderSig = expectedRenderSig,
         )
         if (tv != null) {
             assignActiveTextView(tv)
@@ -1820,13 +2520,14 @@ internal fun jumpToGlobalCharInPager(
                 if (pdfJumpByPageIndex) {
                     tv.scrollTo(0, 0)
                 } else {
-                    val displayedOffset = if (preferredTocEntry != null) {
+                    val displayedOffset = highlightId?.let { displayedOffsetForHighlightId(tv, it) } ?: if (preferredTocEntry != null) {
                         resolveDisplayedCharOffset(
                             sourceContent = sourceContent,
                             sourceOffset = safeCharPos,
                             displayedText = tv.text,
                             renderPlainText = renderPlainText,
                             windowStart = globalStart,
+                            windowEnd = globalEnd,
                             tocEntries = tocEntries,
                             preferredEntry = preferredTocEntry,
                             preferredText = bookmarkPreviewText,
@@ -1839,12 +2540,12 @@ internal fun jumpToGlobalCharInPager(
                             displayedText = tv.text,
                             renderPlainText = renderPlainText,
                             windowStart = globalStart,
-                            windowEnd = globalStart + (tv.text?.length ?: 0),
+                            windowEnd = globalEnd,
                             tocEntries = tocEntries,
                             preferredText = bookmarkPreviewText,
                         )
                     }
-                    scrollTextViewToCharOffset(tv, displayedOffset)
+                    scrollTextViewToCharOffset(tv, displayedOffset, bookmarkPreviewText)
                 }
                 onProgress()
             }

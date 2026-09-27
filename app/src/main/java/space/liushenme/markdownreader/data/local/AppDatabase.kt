@@ -35,7 +35,7 @@ import space.liushenme.markdownreader.data.local.entity.ShelfGroupEntity
         DeletedBookEntity::class,
         DeletedGitProjectEntity::class,
     ],
-    version = 18,
+    version = 19,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -286,6 +286,30 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addAnnotationAnchorColumns(db, "highlights")
+                addAnnotationAnchorColumns(db, "bookmarks")
+            }
+        }
+
+        private fun addAnnotationAnchorColumns(db: SupportSQLiteDatabase, table: String) {
+            listOf(
+                "quotePrefix TEXT",
+                "quoteSuffix TEXT",
+                "blockIndex INTEGER",
+                "blockOffsetStart INTEGER",
+                "blockOffsetEnd INTEGER",
+                "endBlockIndex INTEGER",
+                "endBlockHash TEXT",
+                "blockHash TEXT",
+                "docHash TEXT",
+                "headingPath TEXT",
+            ).forEach { column ->
+                db.execSQL("ALTER TABLE $table ADD COLUMN $column")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -311,6 +335,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_15_16,
                         MIGRATION_16_17,
                         MIGRATION_17_18,
+                        MIGRATION_18_19,
                     )
                     .build()
                 INSTANCE = instance

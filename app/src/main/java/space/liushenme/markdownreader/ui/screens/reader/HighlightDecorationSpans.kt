@@ -20,6 +20,7 @@ import kotlin.math.min
  */
 internal class HighlightBackgroundSpan(
     val backgroundColor: Int,
+    val highlightId: Long = 0L,
 ) : CharacterStyle(), UpdateAppearance {
     override fun updateDrawState(tp: TextPaint) {
         // 不走系统 bgColor；由 TextView.onDraw 自定义上下边距
@@ -32,6 +33,7 @@ internal class HighlightBackgroundSpan(
 internal class HighlightUnderlineSpan(
     val color: Int,
     val wavy: Boolean,
+    val highlightId: Long = 0L,
 ) : CharacterStyle(), UpdateAppearance {
     override fun updateDrawState(tp: TextPaint) = Unit
 }

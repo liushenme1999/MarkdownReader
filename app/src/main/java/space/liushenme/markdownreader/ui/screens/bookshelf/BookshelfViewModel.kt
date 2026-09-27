@@ -424,25 +424,20 @@ class BookshelfViewModel @Inject constructor(
             }
             val format = BookImportSupport.detectFormat(fileName, mime)
             val title = BookImportSupport.stripKnownExtension(fileName)
-            if (format.isPdf) {
-                jobId = UUID.randomUUID().toString()
-                upsertImportJob(
-                    LocalImportJob(
-                        jobId = jobId,
-                        title = title.ifBlank { appContext.getString(R.string.book_untitled) },
-                    ),
-                )
-            }
+            jobId = UUID.randomUUID().toString()
+            val jobTitle = title.ifBlank { appContext.getString(R.string.book_untitled) }
+            upsertImportJob(LocalImportJob(jobId = jobId, title = jobTitle))
             val load = withContext(Dispatchers.IO) {
                 BookContentLoader.loadForImport(context, uri, format) { done, total, cover ->
                     val id = jobId ?: return@loadForImport
                     upsertImportJob(
                         LocalImportJob(
                             jobId = id,
-                            title = title.ifBlank { appContext.getString(R.string.book_untitled) },
+                            title = jobTitle,
                             current = done,
                             total = total,
-                            coverJpeg = cover,
+                            coverJpeg = cover
+                                ?: _localImportJobs.value.firstOrNull { it.jobId == id }?.coverJpeg,
                         ),
                     )
                 }
@@ -452,8 +447,6 @@ class BookshelfViewModel @Inject constructor(
             if (notify && extracted.body.isBlank() && format.hasBuiltInTextExtract) {
                 toastChannel.trySend(appContext.getString(R.string.toast_import_parse_failed))
             }
-            jobId?.let(::removeImportJob)
-            jobId = null
             val bookId = persistImportedBook(
                 importContext = context,
                 title = title,
@@ -522,15 +515,9 @@ class BookshelfViewModel @Inject constructor(
                 val title = BookImportSupport.stripKnownExtension(
                     name.ifBlank { appContext.getString(R.string.book_from_network) }
                 )
-                if (format.isPdf) {
-                    jobId = UUID.randomUUID().toString()
-                    upsertImportJob(
-                        LocalImportJob(
-                            jobId = jobId,
-                            title = title.ifBlank { appContext.getString(R.string.book_untitled) },
-                        ),
-                    )
-                }
+                jobId = UUID.randomUUID().toString()
+                val jobTitle = title.ifBlank { appContext.getString(R.string.book_untitled) }
+                upsertImportJob(LocalImportJob(jobId = jobId, title = jobTitle))
                 val load = withContext(Dispatchers.IO) {
                     BookContentLoader.loadUrlBytesForImport(
                         appContext,
@@ -542,10 +529,11 @@ class BookshelfViewModel @Inject constructor(
                         upsertImportJob(
                             LocalImportJob(
                                 jobId = id,
-                                title = title.ifBlank { appContext.getString(R.string.book_untitled) },
+                                title = jobTitle,
                                 current = done,
                                 total = total,
-                                coverJpeg = cover,
+                                coverJpeg = cover
+                                    ?: _localImportJobs.value.firstOrNull { it.jobId == id }?.coverJpeg,
                             ),
                         )
                     }
@@ -555,8 +543,6 @@ class BookshelfViewModel @Inject constructor(
                 if (extracted.body.isBlank() && format.hasBuiltInTextExtract) {
                     toastChannel.trySend(appContext.getString(R.string.toast_import_download_empty))
                 }
-                jobId?.let(::removeImportJob)
-                jobId = null
                 persistImportedBook(
                     importContext = appContext,
                     title = title,
@@ -595,7 +581,11 @@ class BookshelfViewModel @Inject constructor(
             shelfGroupRepository.ensureGroup(shelfGroup)
         }
         val enriched = BookTocEnricher.enrichIfEmpty(format, extracted)
-        val enrichedForStore = prepareImportedContent(importContext, format, enriched)
+        // prepare / 缓存改写会改字符下标，目录必须在最终正文上重算。
+        val enrichedForStore = BookTocEnricher.alignToBody(
+            format,
+            prepareImportedContent(importContext, format, enriched),
+        )
         val content = enrichedForStore.body
         val resolvedTitle = title.ifBlank { appContext.getString(R.string.book_untitled) }
         if (format.isPdf &&

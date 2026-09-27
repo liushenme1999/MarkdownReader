@@ -43,9 +43,12 @@ class GitDocumentOpener @Inject constructor(
         } else {
             rawBody
         }
-        val extracted = BookTocEnricher.enrichIfEmpty(
+        val extracted = BookTocEnricher.alignToBody(
             format,
-            ExtractedBookText(body = rewritten, toc = emptyList()),
+            BookTocEnricher.enrichIfEmpty(
+                format,
+                ExtractedBookText(body = rewritten, toc = emptyList()),
+            ),
         )
 
         val filePath = gitFilePath(project.id, relativePath)
