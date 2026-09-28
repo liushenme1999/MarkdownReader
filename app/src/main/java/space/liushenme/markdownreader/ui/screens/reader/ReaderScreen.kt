@@ -332,17 +332,27 @@ fun ReaderScreen(
         preview: String?,
         highlightId: Long? = null,
     ) {
+        val safeStart = windowStart.coerceIn(0, readerContent.length)
+        val safeEnd = windowEnd.coerceIn(safeStart, readerContent.length)
+        val expectedRenderSig = readerContentSignature(
+            content = readerContent.substring(safeStart, safeEnd),
+            renderPlainText = renderPlainText,
+            themeName = currentTheme.contentSignature(),
+            fontSize = fontSize,
+            codeBlockWrap = codeBlockWrap,
+        )
         stashPendingSavedPositionSnap(
             readerTextView.value,
             PendingSavedPositionSnap(
                 sourceContent = readerContent,
                 sourceOffset = sourceOffset,
-                windowStart = windowStart,
-                windowEnd = windowEnd,
+                windowStart = safeStart,
+                windowEnd = safeEnd,
                 preview = preview,
                 renderPlainText = renderPlainText,
                 tocEntries = tocEntries,
                 highlightId = highlightId,
+                expectedRenderSig = expectedRenderSig,
             ),
         )
     }
@@ -547,7 +557,26 @@ fun ReaderScreen(
 
                 // 落库同样在点击回调中启动，不将其生命周期绑到可能马上关闭的样式浮窗。
                 val sourceWindow = currentSourceWindow()
-                val sourceSpan = resolveSourceSpanForDisplayedSelection(
+                val sourceHint = estimateHighlightSourceStart(normalized.start)
+                // 代码块在 TextView 外层只占一个 \uFFFC；优先使用 ReplacementSpan
+                // 内部选区映射源码，避免通用展示层 offset 找不到代码正文而导致只画草稿、不落库。
+                val sourceSpan = ownerTextView?.let { tv ->
+                    sourceSpanForCodeBlockSelection(
+                        textView = tv,
+                        source = readerContent,
+                        selectedText = normalized.text,
+                        sourceHint = sourceHint,
+                        searchStart = sourceWindow.first,
+                        searchEnd = sourceWindow.second,
+                    )
+                }?.let { span ->
+                    ResolvedSourceSelectionSpan(
+                        start = span.first,
+                        end = span.second,
+                        hint = span.first,
+                        fromHeading = false,
+                    )
+                } ?: resolveSourceSpanForDisplayedSelection(
                     displayed = ownerTextView?.text,
                     displayedStart = normalized.start,
                     displayedEnd = normalized.end,
@@ -562,7 +591,7 @@ fun ReaderScreen(
                     selectedText = normalized.text,
                     color = initialColor,
                     style = lastHighlightStyle,
-                    sourceStartHint = sourceSpan?.hint ?: estimateHighlightSourceStart(normalized.start),
+                    sourceStartHint = sourceSpan?.hint ?: sourceHint,
                     forcedSourceSpan = sourceSpan?.let { it.start to it.end },
                     sourceSearchRange = sourceWindow.first until sourceWindow.second,
                 ) { id ->

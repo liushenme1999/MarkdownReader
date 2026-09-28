@@ -1177,7 +1177,11 @@ internal fun resolveDisplayedCharOffsetForSavedPosition(
     // 正文预览只在比例位置附近找，并且跳过渲染标题，避免同句被标题或更远处的正文抢走。
     if (!preferredText.isNullOrBlank()) {
         val fingerprint = preferredText.replace(Regex("""\s+"""), " ").trim().take(48)
-        val radius = maxOf(fingerprint.length * 12, 320)
+        // Markdown 源码与展示文本的长度差异可能非常大（长链接、代码块、公式、
+        // 行内标记都会压缩/扩展前缀）。固定 320 的邻域会让比例估算误差直接落到
+        // 目标附近的另一段重复文本；扩大搜索半径后仍按 expectedIndex 取最近候选，
+        // 不会退化为全文首个匹配。
+        val radius = maxOf(fingerprint.length * 24, 4_000)
         closestDisplayedSnippetSkippingHeadings(
             displayed = displayed,
             displayedSpans = displayedText,
@@ -1192,6 +1196,17 @@ internal fun resolveDisplayedCharOffsetForSavedPosition(
             maxDistance = radius,
             rejectOffset = { isOnRenderedHeading(displayedText, it) },
         )?.let { return it.coerceIn(0, (len - 1).coerceAtLeast(0)) }
+        // 比例位置可能因前后两段的渲染压缩比例完全不同而偏离数万字符；
+        // 局部邻域没有命中时再扩大到整窗，并始终选择离估算点最近的候选。
+        if (radius < len) {
+            locateLooseSnippetNear(
+                haystack = displayed,
+                snippet = fingerprint,
+                expectedIndex = hint,
+                maxDistance = len,
+                rejectOffset = { isOnRenderedHeading(displayedText, it) },
+            )?.let { return it.coerceIn(0, (len - 1).coerceAtLeast(0)) }
+        }
         // 代码块在正文里只剩一个占位符，源码片段对不上展示字符串。落到该占位符，再按块内行滚动。
         displayedOffsetForCodeSnippet(displayedText, fingerprint, hint)
             ?.let { return it.coerceIn(0, (len - 1).coerceAtLeast(0)) }
@@ -2001,6 +2016,8 @@ internal data class PendingSavedPositionSnap(
     val renderPlainText: Boolean,
     val tocEntries: List<MarkdownTocEntry>,
     val highlightId: Long? = null,
+    /** 目标窗口的内容渲染签名；为空时兼容旧调用，仍按原逻辑处理。 */
+    val expectedRenderSig: String? = null,
 )
 
 internal fun stashPendingSavedPositionSnap(tv: TextView?, snap: PendingSavedPositionSnap?) {
@@ -2016,6 +2033,16 @@ internal fun hasPendingSavedPositionSnap(tv: TextView?): Boolean =
 
 internal fun applyStashedSavedPositionSnapIfAny(tv: TextView): Boolean {
     val snap = tv.getTag(R.id.reader_pending_snap_restore) as? PendingSavedPositionSnap ?: return false
+    // onLayout 可能发生在新窗口写入前。没有完成签名校验时，旧文本会提前消费快照，
+    // 清掉 stash 后新 Markdown 渲染完成就只剩 scrollY=0，表现为列表跳转出现大片空白。
+    snap.expectedRenderSig?.let { expected ->
+        val actual = if (snap.renderPlainText) {
+            tv.getTag(TAG_READER_RENDER_SIG)
+        } else {
+            tv.getTag(R.id.reader_markdown_render_complete)
+        }
+        if (actual != expected) return false
+    }
     if (!isReaderTextViewLayoutReady(tv)) return false
     val offset = snap.highlightId?.let { displayedOffsetForHighlightId(tv, it) }
         ?: resolveDisplayedCharOffsetForSavedPosition(

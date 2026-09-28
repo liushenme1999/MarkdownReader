@@ -236,6 +236,51 @@ class ReaderCodeBlockGestureTest {
     }
 
     @Test
+    fun codeSelection_mapsToSourceRangeEvenWhenRenderedWindowExcludesFence() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = true
+        ReaderCodeBlockSettings.viewportWidthPx = 400
+        val markwon: Markwon = ReaderMarkwonFactory.create(context)
+        val source = "前文\n\n```kotlin\nval hello = 1\n```\n\n后文"
+        val rendered = markwon.toMarkdown(source)
+        val textView = layoutReader(context, markwon, rendered)
+        val code = rendered
+            .getSpans(0, rendered.length, ReaderScrollableCodeBlockSpan::class.java)
+            .single()
+        val body = code.rawCode
+        val selectedStart = body.indexOf("hello")
+        assertTrue(selectedStart >= 0)
+
+        val spanned = textView.text as android.text.Spanned
+        val spanOffset = spanned.getSpanStart(code)
+        val spanLine = textView.layout.getLineForOffset(spanOffset)
+        val codeY = textView.totalPaddingTop +
+            textView.layout.getLineTop(spanLine) + code.headerHeightPx(textView.paint) + 16f
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 40f, codeY, 0)
+        try {
+            textView.onTouchEvent(down)
+            assertTrue(textView.fireScheduledSelectionLongPressForTest())
+            textView.setCodeInnerSelectionForTest(selectedStart, selectedStart + "hello".length)
+            assertEquals("hello", textView.currentSelectedTextForTest())
+
+            val sourceStart = source.indexOf("hello")
+            val resolved = sourceSpanForCodeBlockSelection(
+                textView = textView,
+                source = source,
+                selectedText = "hello",
+                sourceHint = sourceStart,
+                // 模拟横向窗口只覆盖正文前文，围栏本身不在窗口内。
+                searchStart = 0,
+                searchEnd = source.indexOf("```kotlin"),
+            )
+            val expected = sourceStart to sourceStart + "hello".length
+            assertEquals("expected=$expected actual=$resolved", expected, resolved)
+        } finally {
+            down.recycle()
+        }
+    }
+
+    @Test
     fun codeHandleDrag_keepsOppositeEndWhenExtendingStartThenEnd() {
         val context = RuntimeEnvironment.getApplication()
         ReaderCodeBlockSettings.wrapEnabled = true

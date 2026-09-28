@@ -69,6 +69,34 @@ class PendingScrollReapplyTest {
     }
 
     @Test
+    fun savedPositionSnap_waitsForTargetWindowRenderBeforeConsuming() {
+        val context = RuntimeEnvironment.getApplication()
+        val tv = TextView(context).apply {
+            text = "旧窗口内容"
+            measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(400, android.view.View.MeasureSpec.EXACTLY),
+                android.view.View.MeasureSpec.makeMeasureSpec(200, android.view.View.MeasureSpec.EXACTLY),
+            )
+            layout(0, 0, 400, 200)
+            setTag(TAG_READER_RENDER_SIG, "old-window")
+        }
+        val snap = PendingSavedPositionSnap(
+            sourceContent = "目标正文",
+            sourceOffset = 0,
+            windowStart = 0,
+            windowEnd = 4,
+            preview = "目标正文",
+            renderPlainText = true,
+            tocEntries = emptyList(),
+            expectedRenderSig = "target-window",
+        )
+        stashPendingSavedPositionSnap(tv, snap)
+
+        assertFalse(applyStashedSavedPositionSnapIfAny(tv))
+        assertTrue(hasPendingSavedPositionSnap(tv))
+    }
+
+    @Test
     fun shouldTriggerReaderExpandUp_whenScrollYIsZero() {
         val context = RuntimeEnvironment.getApplication()
         val tv = TextView(context).apply {
@@ -535,6 +563,29 @@ class ReaderPagingEngineTest {
         )
         assertEquals(openBook, bookmark)
         assertEquals(renderedTop, openBook)
+    }
+
+    @Test
+    fun savedPosition_previewFallsBackToWholeWindowWhenRenderCompressionMovesHint() {
+        val target = "这是需要精确跳转的书签预览内容。"
+        val sourcePrefix = "[链接](https://example.com/a-very-long-url-path)\n".repeat(2_000)
+        val displayedPrefix = "链接\n".repeat(2_000)
+        val source = sourcePrefix + target + "\n" + "尾".repeat(20_000)
+        val displayed = displayedPrefix + target + "\n" + "尾".repeat(20_000)
+        val sourceOffset = source.indexOf(target) + 4
+
+        val resolved = resolveDisplayedCharOffsetForSavedPosition(
+            sourceContent = source,
+            sourceOffset = sourceOffset,
+            displayedText = displayed,
+            renderPlainText = false,
+            windowStart = 0,
+            windowEnd = source.length,
+            tocEntries = emptyList(),
+            preferredText = target,
+        )
+
+        assertEquals(displayed.indexOf(target), resolved)
     }
 
     @Test

@@ -322,6 +322,51 @@ class ApplyHighlightsToRenderedTextTest {
     }
 
     @Test
+    fun persistedHighlight_insideDuplicateCodeBlocksRestoresNearestBlockWhenFenceIsOutsideWindow() {
+        val context = RuntimeEnvironment.getApplication()
+        space.liushenme.markdownreader.markdown.ReaderCodeBlockSettings.wrapEnabled = true
+        space.liushenme.markdownreader.markdown.ReaderCodeBlockSettings.viewportWidthPx = 400
+        val code = "print(\"准确率奖励\", result)"
+        val rendered = ReaderMarkwonFactory.create(context).toMarkdown(
+            "```python\n$code\n```\n\n```python\n$code\n```",
+        )
+        val textView = TextView(context).apply {
+            setText(rendered, TextView.BufferType.SPANNABLE)
+        }
+        // 模拟横向分页/惰加载窗口只剩代码正文，且窗口内有两个相同代码块。
+        val sourceWindow = "$code\n\n$code\n"
+        val secondStart = sourceWindow.lastIndexOf("准确率奖励")
+        applyHighlightsToRenderedText(
+            textView = textView,
+            highlights = listOf(
+                HighlightEntity(
+                    id = 93L,
+                    bookId = 1L,
+                    startPosition = secondStart,
+                    endPosition = secondStart + "准确率奖励".length,
+                    highlightedText = "准确率奖励",
+                    color = 0xFFFFFF00.toInt(),
+                    createTime = Date(),
+                ),
+            ),
+            highlightColorArgb = 0xFFFFFF00.toInt(),
+            sourceContentLength = sourceWindow.length,
+            sourceText = sourceWindow,
+        )
+        val codeSpans = (textView.text as Spanned).getSpans(
+            0,
+            textView.text.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        )
+        assertEquals(2, codeSpans.size)
+        assertEquals(
+            listOf(emptyList<Long>(), listOf(93L)),
+            codeSpans.map { it.highlightRangesForTest().map { range -> range.highlightId } }
+                .sortedBy { it.firstOrNull() ?: 0L },
+        )
+    }
+
+    @Test
     fun resolveHighlightDisplayedRange_doesNotJumpToDistantDuplicate() {
         val displayed = "选中" + "甲".repeat(500)
         val highlight = HighlightEntity(

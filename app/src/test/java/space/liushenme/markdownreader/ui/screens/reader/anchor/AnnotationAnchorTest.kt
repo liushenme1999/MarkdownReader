@@ -29,6 +29,38 @@ class AnnotationAnchorTest {
     }
 
     @Test
+    fun codeBlockHighlightAnchor_remainsPaintableAfterReopen() {
+        val document = "前文\n\n```kotlin\nval value = 1\n```\n\n后文"
+        val start = document.indexOf("val value")
+        val exact = "val value = 1"
+        val anchor = captureTextAnchor(
+            document = document,
+            plainText = false,
+            start = start,
+            end = start + exact.length,
+            toc = emptyList(),
+            docHash = "same",
+        )
+        val highlight = HighlightEntity(
+            id = 94L,
+            bookId = 1L,
+            startPosition = start,
+            endPosition = start + exact.length,
+            highlightedText = exact,
+        ).withCapturedAnchor(anchor)
+        val plan = planAnnotationAnchors(
+            document = document,
+            plainText = false,
+            docHash = "same",
+            toc = emptyList(),
+            highlights = listOf(highlight),
+            bookmarks = emptyList(),
+        )
+        assertEquals(listOf(94L), plan.paintHighlights.map { it.id })
+        assertEquals(start, plan.paintHighlights.single().startPosition)
+    }
+
+    @Test
     fun plainText_splitsOnBlankLines_andSubdividesLongBlocks() {
         val paragraphs = TextBlockIndex.build("甲段。\n\n乙段。\n", plainText = true)
         assertEquals(listOf("甲段。", "乙段。"), paragraphs.blocks.map { it.text })
