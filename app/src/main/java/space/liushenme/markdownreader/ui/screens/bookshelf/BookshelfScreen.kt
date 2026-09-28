@@ -75,7 +75,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
@@ -147,8 +146,7 @@ fun BookshelfScreen(
     viewModel: BookshelfViewModel = hiltViewModel(),
 ) {
     val windowSize = LocalWindowInfo.current.containerSize
-    val windowDensity = LocalDensity.current
-    val compactWindow = with(windowDensity) { windowSize.width.toDp() < 600.dp }
+    val portraitWindow = windowSize.height >= windowSize.width
     val books by viewModel.books.collectAsState()
     val gitProjects by viewModel.gitProjects.collectAsState()
     val shelfGroups by viewModel.shelfGroups.collectAsState()
@@ -700,7 +698,7 @@ fun BookshelfScreen(
                         }
                         BookshelfLayoutMode.Grid -> {
                             LazyVerticalGrid(
-                                columns = if (compactWindow) {
+                                columns = if (portraitWindow) {
                                     GridCells.Fixed(gridColumns)
                                 } else {
                                     GridCells.Adaptive(

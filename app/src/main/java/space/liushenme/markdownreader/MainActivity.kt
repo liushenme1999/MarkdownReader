@@ -42,7 +42,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
@@ -65,9 +64,6 @@ import space.liushenme.markdownreader.ui.theme.BookshelfPageBackgroundDark
 import space.liushenme.markdownreader.data.backup.BackupManager
 import space.liushenme.markdownreader.ui.theme.MarkdownReaderTheme
 import space.liushenme.markdownreader.ui.theme.resolveDarkTheme
-import space.liushenme.markdownreader.ui.layout.AppWindowWidthClass
-import space.liushenme.markdownreader.ui.layout.appWindowWidthClass
-import space.liushenme.markdownreader.ui.layout.usesNavigationRail
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
@@ -198,9 +194,8 @@ private fun MainAppContent(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val shelfPageBg = shelfStylePageBackground()
-    val density = LocalDensity.current
-    val windowWidth = with(density) { LocalWindowInfo.current.containerSize.width.toDp() }
-    val widthClass = appWindowWidthClass(windowWidth)
+    val windowSize = LocalWindowInfo.current.containerSize
+    val isLandscape = windowSize.width > windowSize.height
     val usesShelfStyleChrome = currentRoute in AppRoutes.shelfStyleRoutes
     if (usesShelfStyleChrome) {
         ShelfStyleStatusBarEffect(shelfPageBg)
@@ -217,10 +212,10 @@ private fun MainAppContent(
             var bookshelfHideBottomNav by remember { mutableStateOf(false) }
             val showBottomBar =
                 (currentRoute == AppRoutes.BOOKSHELF || currentRoute == AppRoutes.PROFILE) &&
-                    !bookshelfHideBottomNav && widthClass == AppWindowWidthClass.Compact
+                    !bookshelfHideBottomNav && !isLandscape
             val showRail =
                 (currentRoute == AppRoutes.BOOKSHELF || currentRoute == AppRoutes.PROFILE) &&
-                    !bookshelfHideBottomNav && widthClass.usesNavigationRail()
+                    !bookshelfHideBottomNav && isLandscape
 
             Scaffold(
                 modifier = Modifier.fillMaxSize(),
