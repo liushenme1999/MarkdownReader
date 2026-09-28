@@ -98,6 +98,7 @@ import space.liushenme.markdownreader.ui.components.shelfStylePageBackground
 import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.data.local.entity.GitProjectEntity
 import space.liushenme.markdownreader.git.GitHubRepoUrlParser
+import space.liushenme.markdownreader.ui.layout.isLandscapeWindow
 
 /** 书架混合卡片：书籍与 Git 项目按同一套活动时间规则交错排序。 */
 private sealed class ShelfCardItem {
@@ -146,7 +147,7 @@ fun BookshelfScreen(
     viewModel: BookshelfViewModel = hiltViewModel(),
 ) {
     val windowSize = LocalWindowInfo.current.containerSize
-    val portraitWindow = windowSize.height >= windowSize.width
+    val portraitWindow = !isLandscapeWindow(windowSize.width, windowSize.height)
     val books by viewModel.books.collectAsState()
     val gitProjects by viewModel.gitProjects.collectAsState()
     val shelfGroups by viewModel.shelfGroups.collectAsState()

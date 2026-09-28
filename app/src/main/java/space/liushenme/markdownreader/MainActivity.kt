@@ -64,6 +64,7 @@ import space.liushenme.markdownreader.ui.theme.BookshelfPageBackgroundDark
 import space.liushenme.markdownreader.data.backup.BackupManager
 import space.liushenme.markdownreader.ui.theme.MarkdownReaderTheme
 import space.liushenme.markdownreader.ui.theme.resolveDarkTheme
+import space.liushenme.markdownreader.ui.layout.isLandscapeWindow
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
@@ -195,7 +196,7 @@ private fun MainAppContent(
     val currentRoute = navBackStackEntry?.destination?.route
     val shelfPageBg = shelfStylePageBackground()
     val windowSize = LocalWindowInfo.current.containerSize
-    val isLandscape = windowSize.width > windowSize.height
+    val isLandscape = isLandscapeWindow(windowSize.width, windowSize.height)
     val usesShelfStyleChrome = currentRoute in AppRoutes.shelfStyleRoutes
     if (usesShelfStyleChrome) {
         ShelfStyleStatusBarEffect(shelfPageBg)

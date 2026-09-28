@@ -251,7 +251,7 @@
     <string name="reader_hide_system_bars">阅读时隐藏系统栏</string>
     <string name="reader_hide_system_bars_summary">沉浸阅读时隐藏顶部状态栏和底部小白条，点屏幕唤出功能栏时再显示。适用于 Markdown、TXT 与 PDF。</string>
     <string name="reader_show_toc_in_landscape">横屏显示目录栏</string>
-    <string name="reader_show_toc_in_landscape_summary">横屏阅读时在正文左侧显示章节目录</string>
+    <string name="reader_show_toc_in_landscape_summary">仅横屏生效，与手机或平板屏幕大小无关</string>
     <string name="reader_code_block_copy">复制</string>
     <string name="reader_code_block_copied">已复制代码</string>
     <string name="reader_marks_sheet_title">书签与划线</string>

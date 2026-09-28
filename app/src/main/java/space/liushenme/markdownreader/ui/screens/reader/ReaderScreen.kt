@@ -84,6 +84,7 @@ import space.liushenme.markdownreader.ui.components.ShelfStyleSystemBarsEffect
 import space.liushenme.markdownreader.ui.components.iconTintForDeleteStrip
 import space.liushenme.markdownreader.ui.theme.MarkdownReaderTheme
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
+import space.liushenme.markdownreader.ui.layout.isLandscapeWindow
 import io.noties.markwon.Markwon
 import io.noties.markwon.core.CorePlugin
 import io.noties.markwon.core.spans.HeadingSpan
@@ -1559,7 +1560,7 @@ fun ReaderScreen(
         visibleChapterOffset = uiState.visibleChapterOffset,
     )
     val wideReaderNavigation = uiState.showTocInLandscape &&
-        windowSize.width > windowSize.height &&
+        isLandscapeWindow(windowSize.width, windowSize.height) &&
         tocEntries.isNotEmpty()
     ReaderContainer(
         isPdf = isPdfBook,
