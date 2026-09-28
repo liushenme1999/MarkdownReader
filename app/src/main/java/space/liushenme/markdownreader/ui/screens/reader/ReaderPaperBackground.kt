@@ -14,14 +14,13 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
 import space.liushenme.markdownreader.ui.theme.ReaderBackgroundImages
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
 import space.liushenme.markdownreader.ui.theme.ReadingThemeStorage
-import kotlin.math.roundToInt
 
 @Composable
 internal fun rememberPaperBaseColor(theme: ReadingTheme): Color {
@@ -39,10 +38,9 @@ internal fun ReaderPaperBackground(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val density = LocalDensity.current
-    val config = LocalConfiguration.current
-    val widthPx = (config.screenWidthDp * density.density).roundToInt().coerceAtLeast(1)
-    val heightPx = (config.screenHeightDp * density.density).roundToInt().coerceAtLeast(1)
+    val windowSize = LocalWindowInfo.current.containerSize
+    val widthPx = windowSize.width.coerceAtLeast(1)
+    val heightPx = windowSize.height.coerceAtLeast(1)
     val asset = theme.backgroundImageAsset
     val paper = remember(asset, widthPx, heightPx) {
         asset?.let { ReaderBackgroundImages.loadDisplay(context, it, widthPx, heightPx) }
@@ -72,13 +70,15 @@ internal fun ReaderPaperBackgroundTopStrip(
     theme: ReadingTheme,
     modifier: Modifier = Modifier,
 ) {
-    val config = LocalConfiguration.current
+    val windowHeight = with(LocalDensity.current) {
+        LocalWindowInfo.current.containerSize.height.toDp()
+    }
     Box(modifier = modifier.clipToBounds()) {
         ReaderPaperBackground(
             theme = theme,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(config.screenHeightDp.dp)
+                .height(windowHeight)
                 .align(Alignment.TopCenter),
         )
     }

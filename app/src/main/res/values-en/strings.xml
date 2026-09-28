@@ -95,6 +95,11 @@
     <string name="bookshelf_empty_subtitle">Supports Markdown, TXT, PDF, and public GitHub projects</string>
     <string name="bookshelf_import">Import</string>
     <string name="bookshelf_import_cd">Import book</string>
+    <string name="bookshelf_continue_reading">Continue reading</string>
+    <string name="bookshelf_continue_progress">%1$d%% read</string>
+    <string name="book_format_markdown">Markdown</string>
+    <string name="book_format_text">Text</string>
+    <string name="book_format_pdf">PDF</string>
     <string name="bookshelf_importing">Importing</string>
     <string name="bookshelf_importing_progress">Importing %1$d/%2$d (%3$d%%)</string>
     <string name="bookshelf_importing_wait">You can read this book after import finishes</string>
@@ -237,6 +242,8 @@
     <string name="reader_code_block_wrap_summary">When off, long code can be scrolled horizontally inside the block</string>
     <string name="reader_hide_system_bars">Hide system bars while reading</string>
     <string name="reader_hide_system_bars_summary">Hide the status bar and navigation bar during immersive reading. They reappear when you show the toolbar. Applies to Markdown, TXT, and PDF.</string>
+    <string name="reader_show_toc_in_landscape">Show table of contents in landscape</string>
+    <string name="reader_show_toc_in_landscape_summary">Show the chapter list beside the text in landscape</string>
     <string name="reader_code_block_copy">Copy</string>
     <string name="reader_code_block_copied">Code copied</string>
     <string name="reader_marks_sheet_title">Bookmarks &amp; highlights</string>
@@ -260,6 +267,9 @@
     <string name="reader_mark_finished_later">Not now</string>
     <string name="reader_error_book_not_found">Book not found. It may have been deleted.</string>
     <string name="reader_error_cannot_read_body">Cannot read content (permission lost or invalid path). Remove the book from the library and import the file again.</string>
+    <string name="reader_error_permission_denied">File access has expired. Return to the library and import the file again to grant access.</string>
+    <string name="reader_error_network_required">The online document cannot be downloaded right now. Check your connection and retry.</string>
+    <string name="reader_retry">Reload</string>
     <string name="reader_error_pdf_bundle_incomplete">The PDF cache is incomplete. Remove the book from the library and import it again.</string>
     <string name="reader_opening_pdf">Opening PDF…</string>
     <string name="bookmark_note_optional">Bookmark note (optional)</string>
@@ -271,6 +281,14 @@
     <string name="notes_clear_cd">Clear</string>
     <string name="notes_tab_highlights">Highlights (%1$d)</string>
     <string name="notes_tab_bookmarks">Bookmarks (%1$d)</string>
+    <string name="notes_filter_books">Books</string>
+    <string name="notes_filter_all_books">All books</string>
+    <string name="notes_filter_colors">Colors</string>
+    <string name="notes_filter_all_colors">All colors</string>
+    <string name="reader_annotation_locating">Locating annotation…</string>
+    <string name="reader_annotation_located">Annotation located</string>
+    <string name="reader_annotation_nearby">Annotation moved; showing nearby content</string>
+    <string name="reader_toc_title">Contents</string>
     <string name="notes_empty_highlights">No highlights yet</string>
     <string name="notes_empty_bookmarks">No bookmarks yet</string>
     <string name="notes_delete_cd">Delete</string>
@@ -323,7 +341,7 @@
     <string name="profile_menu_backup_restore_subtitle">WebDAV remote backup and restore</string>
 
     <string name="backup_restore_title">Backup &amp; restore</string>
-    <string name="backup_restore_hint">The daily backup zip has library/progress/bookmarks only; missing bodies are also uploaded to books/{content-hash}.zip during backup so multi-device imports do not collide on local ids. Import/delete syncs bodies too. Use Backup / Restore book bodies when switching devices. Auto-backs up daily on exit (account required).</string>
+    <string name="backup_restore_hint">The daily backup zip has library/progress/bookmarks only; missing bodies are also uploaded to books/{content-hash}.zip during backup so multi-device imports do not collide on local ids. Import/delete syncs bodies too. Use Backup / Restore book bodies when switching devices. The system backs up daily when connected (account required).</string>
     <string name="backup_webdav_section">WebDAV settings</string>
     <string name="backup_webdav_url">Server URL</string>
     <string name="backup_webdav_account">Account</string>
@@ -369,7 +387,7 @@
     <string name="backup_help_jianguoyun_title">Nutstore setup</string>
     <string name="backup_help_jianguoyun_body">1. Open https://www.jianguoyun.com/\n2. Sign up or sign in\n3. Open Account info from the top-right menu\n4. Go to Security\n5. Under third-party apps, add an app and create an app password\n6. Enter the server URL, account, and app password in Me → Backup &amp; restore\n7. Keep the default subdirectory (MdReader) unless you need another\n8. Run a manual backup once to verify\n9. To restore, pick the backup file you want</string>
     <string name="backup_help_auto_title">Auto backup</string>
-    <string name="backup_help_auto_body">• After WebDAV is configured, the app auto-backs up once a day when you exit (back-to-exit works; force-stopping from Recents may not)\n• Same-day backups with the same filename overwrite; different dates are kept\n• If “Also upload latest backup” is on, remote backup.zip is also overwritten for quick restore\n• If “Check for new backups on launch” is on, a newer cloud backup prompts for a merge restore</string>
+    <string name="backup_help_auto_body">• After WebDAV is configured, the system schedules a daily backup when connected; failed work retries automatically and does not depend on exiting the app\n• Same-day backups with the same filename overwrite; different dates are kept\n• If “Also upload latest backup” is on, remote backup.zip is also overwritten for quick restore\n• If “Check for new backups on launch” is on, a newer cloud backup prompts for a merge restore</string>
     <string name="backup_help_tips_title">Tips</string>
     <string name="backup_help_tips_body">• First backup fails: create a MdReader folder at the WebDAV root, then retry\n• Auth fails: use the app password, not your login password\n• Switching devices: on the source, Backup then Backup book bodies; on the new device, Restore then Restore book bodies\n• The same book imported on multiple devices merges by content hash and will not overwrite via colliding local ids\n• Metadata restore merges updates and keeps device-only books\n• After restore, restart the app so all settings apply\n• WebDAV credentials stay on this device and are not overwritten by a restore package</string>
     <string name="profile_menu_about">About</string>

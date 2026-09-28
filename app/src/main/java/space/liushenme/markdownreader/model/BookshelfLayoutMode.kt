@@ -17,8 +17,8 @@ enum class BookshelfLayoutMode(
 }
 
 object BookshelfGridColumns {
-    val OPTIONS = listOf(3, 4, 5)
-    const val DEFAULT = 3
+    val OPTIONS = listOf(2, 3, 4, 5)
+    const val DEFAULT = 2
 
     fun coerce(value: Int): Int = when (value) {
         in OPTIONS -> value

@@ -4,6 +4,8 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -19,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.text.font.FontWeight
@@ -30,6 +33,7 @@ import androidx.navigation.compose.rememberNavController
 import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.entity.BookmarkEntity
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
+import space.liushenme.markdownreader.navigation.AppRoutes
 import space.liushenme.markdownreader.ui.components.AppSearchField
 import space.liushenme.markdownreader.ui.components.ShelfStyleTopBarBackground
 import space.liushenme.markdownreader.ui.components.ShelfStyleTopAppBar
@@ -50,23 +54,42 @@ fun NotesScreen(
     var selectedTab by remember { mutableIntStateOf(0) }
     var showExportDialog by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
+    var selectedBookTitle by remember { mutableStateOf<String?>(null) }
+    var selectedHighlightColor by remember { mutableStateOf<Int?>(null) }
 
     val pageBg = shelfStylePageBackground()
 
+    val availableBookTitles = remember(highlights, bookmarks) {
+        (highlights.map { it.bookTitle } + bookmarks.map { it.bookTitle })
+            .distinct()
+            .sorted()
+    }
+    val availableHighlightColors = remember(highlights) {
+        highlights.map { it.highlight.color }.distinct()
+    }
+
     // 根据搜索关键词过滤数据
-    val filteredHighlights = remember(highlights, searchQuery) {
-        if (searchQuery.isBlank()) highlights
-        else highlights.filter {
-            it.highlight.highlightedText.contains(searchQuery, ignoreCase = true) ||
-                    it.bookTitle.contains(searchQuery, ignoreCase = true)
+    val filteredHighlights = remember(
+        highlights,
+        searchQuery,
+        selectedBookTitle,
+        selectedHighlightColor,
+    ) {
+        highlights.filter {
+            (searchQuery.isBlank() ||
+                it.highlight.highlightedText.contains(searchQuery, ignoreCase = true) ||
+                it.bookTitle.contains(searchQuery, ignoreCase = true)) &&
+                (selectedBookTitle == null || it.bookTitle == selectedBookTitle) &&
+                (selectedHighlightColor == null || it.highlight.color == selectedHighlightColor)
         }
     }
 
-    val filteredBookmarks = remember(bookmarks, searchQuery) {
-        if (searchQuery.isBlank()) bookmarks
-        else bookmarks.filter {
-            it.bookmark.previewText.contains(searchQuery, ignoreCase = true) ||
-                    it.bookTitle.contains(searchQuery, ignoreCase = true)
+    val filteredBookmarks = remember(bookmarks, searchQuery, selectedBookTitle) {
+        bookmarks.filter {
+            (searchQuery.isBlank() ||
+                it.bookmark.previewText.contains(searchQuery, ignoreCase = true) ||
+                it.bookTitle.contains(searchQuery, ignoreCase = true)) &&
+                (selectedBookTitle == null || it.bookTitle == selectedBookTitle)
         }
     }
 
@@ -109,6 +132,23 @@ fun NotesScreen(
                     .padding(horizontal = 16.dp, vertical = 8.dp)
             )
 
+            FilterChipRow(
+                title = stringResource(R.string.notes_filter_books),
+                allLabel = stringResource(R.string.notes_filter_all_books),
+                values = availableBookTitles,
+                selectedValue = selectedBookTitle,
+                onSelect = { selectedBookTitle = it },
+            )
+            if (selectedTab == 0 && availableHighlightColors.isNotEmpty()) {
+                ColorFilterChipRow(
+                    title = stringResource(R.string.notes_filter_colors),
+                    allLabel = stringResource(R.string.notes_filter_all_colors),
+                    colors = availableHighlightColors,
+                    selectedColor = selectedHighlightColor,
+                    onSelect = { selectedHighlightColor = it },
+                )
+            }
+
             // 标签页切换
             PrimaryTabRow(selectedTabIndex = selectedTab) {
                 Tab(
@@ -140,7 +180,18 @@ fun NotesScreen(
                 ) {
                     HighlightsList(
                         highlights = filteredHighlights,
-                        onDelete = { viewModel.deleteHighlight(it) }
+                        onDelete = { viewModel.deleteHighlight(it) },
+                        onOpen = { item ->
+                            navController.navigate(
+                                AppRoutes.readerAnnotation(
+                                    bookId = item.highlight.bookId,
+                                    kind = "highlight",
+                                    position = item.highlight.startPosition,
+                                    preview = item.highlight.highlightedText,
+                                    highlightId = item.highlight.id,
+                                ),
+                            )
+                        },
                     )
                 }
                 1 -> Box(
@@ -150,7 +201,18 @@ fun NotesScreen(
                 ) {
                     BookmarksList(
                         bookmarks = filteredBookmarks,
-                        onDelete = { viewModel.deleteBookmark(it) }
+                        onDelete = { viewModel.deleteBookmark(it) },
+                        onOpen = { item ->
+                            navController.navigate(
+                                AppRoutes.readerAnnotation(
+                                    bookId = item.bookmark.bookId,
+                                    kind = "bookmark",
+                                    position = item.bookmark.position,
+                                    preview = item.bookmark.previewText,
+                                    bookmarkId = item.bookmark.id,
+                                ),
+                            )
+                        },
                     )
                 }
             }
@@ -168,9 +230,94 @@ fun NotesScreen(
 }
 
 @Composable
+private fun FilterChipRow(
+    title: String,
+    allLabel: String,
+    values: List<String>,
+    selectedValue: String?,
+    onSelect: (String?) -> Unit,
+) {
+    if (values.isEmpty()) return
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        FilterChip(
+            selected = selectedValue == null,
+            onClick = { onSelect(null) },
+            label = { Text(allLabel) },
+        )
+        values.forEach { value ->
+            FilterChip(
+                selected = selectedValue == value,
+                onClick = { onSelect(value) },
+                label = {
+                    Text(value, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                },
+            )
+        }
+    }
+    Spacer(modifier = Modifier.height(4.dp))
+}
+
+@Composable
+private fun ColorFilterChipRow(
+    title: String,
+    allLabel: String,
+    colors: List<Int>,
+    selectedColor: Int?,
+    onSelect: (Int?) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        FilterChip(
+            selected = selectedColor == null,
+            onClick = { onSelect(null) },
+            label = { Text(allLabel) },
+        )
+        colors.forEach { colorArgb ->
+            FilterChip(
+                selected = selectedColor == colorArgb,
+                onClick = { onSelect(colorArgb) },
+                label = {
+                    Box(
+                        modifier = Modifier
+                            .size(16.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(Color(colorArgb)),
+                    )
+                },
+            )
+        }
+    }
+    Spacer(modifier = Modifier.height(4.dp))
+}
+
+@Composable
 private fun HighlightsList(
     highlights: List<HighlightWithBook>,
-    onDelete: (HighlightEntity) -> Unit
+    onDelete: (HighlightEntity) -> Unit,
+    onOpen: (HighlightWithBook) -> Unit,
 ) {
     var revealedHighlightId by remember { mutableStateOf<Long?>(null) }
 
@@ -199,7 +346,8 @@ private fun HighlightsList(
                         if (revealedHighlightId == item.highlight.id) {
                             revealedHighlightId = null
                         }
-                    }
+                    },
+                    onOpen = { onOpen(item) },
                 )
             }
         }
@@ -209,7 +357,8 @@ private fun HighlightsList(
 @Composable
 private fun BookmarksList(
     bookmarks: List<BookmarkWithBook>,
-    onDelete: (space.liushenme.markdownreader.data.local.entity.BookmarkEntity) -> Unit
+    onDelete: (space.liushenme.markdownreader.data.local.entity.BookmarkEntity) -> Unit,
+    onOpen: (BookmarkWithBook) -> Unit,
 ) {
     var revealedBookmarkId by remember { mutableStateOf<Long?>(null) }
 
@@ -238,7 +387,8 @@ private fun BookmarksList(
                         if (revealedBookmarkId == item.bookmark.id) {
                             revealedBookmarkId = null
                         }
-                    }
+                    },
+                    onOpen = { onOpen(item) },
                 )
             }
         }
@@ -250,9 +400,11 @@ private fun HighlightCard(
     highlight: HighlightWithBook,
     revealedHighlightId: Long?,
     onRevealChange: (Long?) -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onOpen: () -> Unit,
 ) {
-    val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+    val locale = LocalConfiguration.current.locales[0]
+    val dateFormat = remember(locale) { SimpleDateFormat("yyyy-MM-dd HH:mm", locale) }
     val highlightColor = Color(highlight.highlight.color)
     val density = LocalDensity.current
     val deleteWidthPx = with(density) { 72.dp.toPx() }
@@ -310,6 +462,7 @@ private fun HighlightCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .graphicsLayer { translationX = offsetPx }
+                .clickable(onClick = onOpen)
                 .pointerInput(highlight.highlight.id, deleteWidthPx) {
                     detectHorizontalDragGestures(
                         onHorizontalDrag = { change, dragAmount ->
@@ -420,9 +573,11 @@ private fun BookmarkCard(
     bookmark: BookmarkWithBook,
     revealedBookmarkId: Long?,
     onRevealChange: (Long?) -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onOpen: () -> Unit,
 ) {
-    val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+    val locale = LocalConfiguration.current.locales[0]
+    val dateFormat = remember(locale) { SimpleDateFormat("yyyy-MM-dd HH:mm", locale) }
     val density = LocalDensity.current
     val deleteWidthPx = with(density) { 72.dp.toPx() }
     var offsetPx by remember(bookmark.bookmark.id) { mutableFloatStateOf(0f) }
@@ -479,6 +634,7 @@ private fun BookmarkCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .graphicsLayer { translationX = offsetPx }
+                .clickable(onClick = onOpen)
                 .pointerInput(bookmark.bookmark.id, deleteWidthPx) {
                     detectHorizontalDragGestures(
                         onHorizontalDrag = { change, dragAmount ->
@@ -855,7 +1011,8 @@ private fun NotesScreenPreviewImpl(navController: NavController) {
                 ) {
                     HighlightsList(
                         highlights = filteredHighlights,
-                        onDelete = { }
+                        onDelete = { },
+                        onOpen = { },
                     )
                 }
                 1 -> Box(
@@ -865,7 +1022,8 @@ private fun NotesScreenPreviewImpl(navController: NavController) {
                 ) {
                     BookmarksList(
                         bookmarks = filteredBookmarks,
-                        onDelete = { }
+                        onDelete = { },
+                        onOpen = { },
                     )
                 }
             }

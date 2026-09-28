@@ -14,6 +14,7 @@ androidx-navigation = "2.8.7"
 androidx-datastore = "1.1.1"
 androidx-room = "2.8.4"
 androidx-hilt-navigation = "1.2.0"
+androidx-work = "2.10.1"
 
 markwon = "4.6.2"
 android-gif-drawable = "1.2.31"
@@ -29,6 +30,7 @@ kotlinx-coroutines = "1.9.0"
 androidx-arch-core-testing = "2.2.0"
 mockk = "1.13.13"
 robolectric = "4.14.1"
+json = "20260814"
 androidx-test-ext = "1.1.5"
 espresso-core = "3.5.1"
 
@@ -57,6 +59,7 @@ androidx-room-compiler = { group = "androidx.room", name = "room-compiler", vers
 hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
 hilt-compiler = { group = "com.google.dagger", name = "hilt-compiler", version.ref = "hilt" }
 androidx-hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "androidx-hilt-navigation" }
+androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "androidx-work" }
 
 markwon-core = { group = "io.noties.markwon", name = "core", version.ref = "markwon" }
 markwon-ext-strikethrough = { group = "io.noties.markwon", name = "ext-strikethrough", version.ref = "markwon" }
@@ -81,6 +84,7 @@ kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-cor
 androidx-arch-core-testing = { group = "androidx.arch.core", name = "core-testing", version.ref = "androidx-arch-core-testing" }
 mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+json = { group = "org.json", name = "json", version.ref = "json" }
 androidx-test-ext = { group = "androidx.test.ext", name = "junit", version.ref = "androidx-test-ext" }
 espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espresso-core" }
 androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }

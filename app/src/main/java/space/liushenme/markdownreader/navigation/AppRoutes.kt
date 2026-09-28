@@ -17,7 +17,10 @@ object AppRoutes {
     const val USER_AGREEMENT = "user_agreement"
     const val PRIVACY_POLICY = "privacy_policy"
     const val ABOUT = "about"
-    const val READER = "reader/{bookId}"
+    const val READER =
+        "reader/{bookId}?jumpKind={jumpKind}&jumpPosition={jumpPosition}" +
+            "&jumpHighlightId={jumpHighlightId}&jumpBookmarkId={jumpBookmarkId}" +
+            "&jumpPreview={jumpPreview}"
     const val PROJECT = "project/{projectId}"
     const val WEB_LINK = "web_link?url={url}"
 
@@ -40,6 +43,22 @@ object AppRoutes {
     )
 
     fun reader(bookId: Long): String = "reader/$bookId"
+
+    fun readerAnnotation(
+        bookId: Long,
+        kind: String,
+        position: Int,
+        preview: String?,
+        highlightId: Long? = null,
+        bookmarkId: Long? = null,
+    ): String {
+        val encodedPreview = Uri.encode(preview.orEmpty())
+        return "reader/$bookId?jumpKind=${Uri.encode(kind)}" +
+            "&jumpPosition=$position" +
+            "&jumpHighlightId=${highlightId ?: -1L}" +
+            "&jumpBookmarkId=${bookmarkId ?: -1L}" +
+            "&jumpPreview=$encodedPreview"
+    }
 
     fun project(projectId: Long): String = "project/$projectId"
 

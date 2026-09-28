@@ -6,6 +6,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +23,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -30,6 +33,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DashboardCustomize
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -69,12 +73,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.Role
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import kotlinx.coroutines.flow.collectLatest
@@ -138,6 +146,9 @@ fun BookshelfScreen(
     onPendingExternalUriConsumed: () -> Unit = {},
     viewModel: BookshelfViewModel = hiltViewModel(),
 ) {
+    val windowSize = LocalWindowInfo.current.containerSize
+    val windowDensity = LocalDensity.current
+    val compactWindow = with(windowDensity) { windowSize.width.toDp() < 600.dp }
     val books by viewModel.books.collectAsState()
     val gitProjects by viewModel.gitProjects.collectAsState()
     val shelfGroups by viewModel.shelfGroups.collectAsState()
@@ -211,6 +222,12 @@ fun BookshelfScreen(
     }
     val shelfItems = remember(displayedBooks, displayedProjects) {
         mergeShelfItems(displayedBooks, displayedProjects)
+    }
+    val continueReadingBook = remember(books) {
+        books
+            .asSequence()
+            .filter { it.lastReadTime != null && it.readingProgress > 0f }
+            .maxByOrNull { it.lastReadTime?.time ?: 0L }
     }
     val gitUpdateByProjectId = remember(gitProjects) {
         gitProjects.associate { it.id to it.hasRemoteUpdate }
@@ -301,7 +318,7 @@ fun BookshelfScreen(
 
     val barBg = MaterialTheme.colorScheme.surface
     val managementVisible = selectionMode && selectionCount > 0
-    val gridBottomPadding = 16.dp + if (managementVisible) 80.dp else 0.dp
+    val gridBottomPadding = 96.dp + if (managementVisible) 80.dp else 0.dp
 
     LaunchedEffect(selectionMode) {
         onSelectionModeChange(selectionMode)
@@ -310,6 +327,45 @@ fun BookshelfScreen(
     Scaffold(
         containerColor = shelfBg,
         snackbarHost = { SnackbarHost(snackbarHostState) },
+        floatingActionButton = {
+            if (!selectionMode && (books.isNotEmpty() || gitProjects.isNotEmpty())) {
+                val importDescription = stringResource(R.string.bookshelf_import_cd)
+                // Keep the tint visibly translucent so the shelf background can show through.
+                val glassStart = Color(0xFFEDE3FF).copy(alpha = 0.48f)
+                val glassEnd = Color(0xFFB99AEF).copy(alpha = 0.30f)
+                Surface(
+                    modifier = Modifier
+                        .size(60.dp)
+                        .clickable(role = Role.Button, onClick = { openImportChooser() }),
+                    shape = CircleShape,
+                    color = Color.Transparent,
+                    shadowElevation = 10.dp,
+                    border = androidx.compose.foundation.BorderStroke(
+                        width = 1.dp,
+                        color = Color.White.copy(alpha = 0.52f),
+                    ),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                brush = Brush.linearGradient(
+                                    colors = listOf(glassStart, glassEnd),
+                                ),
+                                shape = CircleShape,
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = importDescription,
+                            tint = Color(0xFF5E438C),
+                            modifier = Modifier.size(30.dp),
+                        )
+                    }
+                }
+            }
+        },
         topBar = {
             ShelfStyleTopBarBackground(shelfBg) {
                 if (selectionMode) {
@@ -576,6 +632,18 @@ fun BookshelfScreen(
                                         BookshelfGroupEmptyHint()
                                     }
                                 }
+                                if (!selectionMode && continueReadingBook != null) {
+                                    item(key = "continue_reading") {
+                                        ContinueReadingCard(
+                                            book = continueReadingBook,
+                                            onClick = {
+                                                navController.navigate(
+                                                    AppRoutes.reader(continueReadingBook.id),
+                                                )
+                                            },
+                                        )
+                                    }
+                                }
                                 if (!selectionMode) {
                                     items(
                                         items = localImportJobs,
@@ -628,16 +696,22 @@ fun BookshelfScreen(
                                         }
                                     }
                                 }
-                                if (!selectionMode) {
-                                    item(key = "import_card") {
-                                        ImportListCard(onClick = { openImportChooser() })
-                                    }
-                                }
                             }
                         }
                         BookshelfLayoutMode.Grid -> {
                             LazyVerticalGrid(
-                                columns = GridCells.Fixed(gridColumns),
+                                columns = if (compactWindow) {
+                                    GridCells.Fixed(gridColumns)
+                                } else {
+                                    GridCells.Adaptive(
+                                        minSize = when (gridColumns) {
+                                            2 -> 220.dp
+                                            3 -> 180.dp
+                                            4 -> 144.dp
+                                            else -> 120.dp
+                                        },
+                                    )
+                                },
                                 modifier = Modifier.fillMaxSize(),
                                 contentPadding = PaddingValues(
                                     start = 16.dp,
@@ -654,6 +728,21 @@ fun BookshelfScreen(
                                         span = { GridItemSpan(maxLineSpan) },
                                     ) {
                                         BookshelfGroupEmptyHint()
+                                    }
+                                }
+                                if (!selectionMode && continueReadingBook != null) {
+                                    item(
+                                        key = "continue_reading",
+                                        span = { GridItemSpan(maxLineSpan) },
+                                    ) {
+                                        ContinueReadingCard(
+                                            book = continueReadingBook,
+                                            onClick = {
+                                                navController.navigate(
+                                                    AppRoutes.reader(continueReadingBook.id),
+                                                )
+                                            },
+                                        )
                                     }
                                 }
                                 if (!selectionMode) {
@@ -706,11 +795,6 @@ fun BookshelfScreen(
                                                 onLongClick = { onBookLongClick(book) },
                                             )
                                         }
-                                    }
-                                }
-                                if (!selectionMode) {
-                                    item(key = "import_card") {
-                                        ImportBookCard(onClick = { openImportChooser() })
                                     }
                                 }
                             }

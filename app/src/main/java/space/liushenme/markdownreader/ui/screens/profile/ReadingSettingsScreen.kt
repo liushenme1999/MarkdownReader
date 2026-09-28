@@ -57,6 +57,7 @@ fun ReadingSettingsScreen(
     val lineSpacing by viewModel.readerLineSpacingMultiplier.collectAsState()
     val codeBlockWrap by viewModel.codeBlockWrap.collectAsState()
     val hideSystemBars by viewModel.hideSystemBars.collectAsState()
+    val showTocInLandscape by viewModel.showTocInLandscape.collectAsState()
     val pageTurnMode by viewModel.pageTurnMode.collectAsState()
     val appThemeMode by viewModel.appThemeMode.collectAsState()
     val appLanguage by viewModel.appLanguage.collectAsState()
@@ -212,6 +213,12 @@ fun ReadingSettingsScreen(
                         summary = stringResource(R.string.reader_hide_system_bars_summary),
                         checked = hideSystemBars,
                         onCheckedChange = viewModel::setHideSystemBars,
+                    )
+                    ReaderSettingsSwitchRow(
+                        title = stringResource(R.string.reader_show_toc_in_landscape),
+                        summary = stringResource(R.string.reader_show_toc_in_landscape_summary),
+                        checked = showTocInLandscape,
+                        onCheckedChange = viewModel::setShowTocInLandscape,
                     )
                 }
             }

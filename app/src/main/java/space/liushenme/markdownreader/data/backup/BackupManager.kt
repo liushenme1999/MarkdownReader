@@ -297,9 +297,9 @@ class BackupManager @Inject constructor(
     }
 
     /**
-     * 退出 App 时自动备份：已配置、距上次 ≥1 天、远程尚无当日同名文件。
+     * 后台自动备份：已配置、距上次 ≥1 天、远程尚无当日同名文件。
      */
-    suspend fun autoBackup() {
+    suspend fun autoBackup(): Result<Unit> =
         mutex.withLock {
             withContext(Dispatchers.IO) {
                 runCatching {
@@ -341,7 +341,6 @@ class BackupManager @Inject constructor(
                 }
             }
         }
-    }
 
     /**
      * 启动时检测：远程最新备份是否比本地 lastBackup 更新超过 1 分钟。

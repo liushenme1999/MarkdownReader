@@ -81,6 +81,11 @@ class ReaderSettingsRepository @Inject constructor(
         prefs[KEY_HIDE_SYSTEM_BARS] ?: DEFAULT_HIDE_SYSTEM_BARS
     }
 
+    /** 横屏阅读时是否显示左侧目录栏；默认开启，竖屏布局不会使用该开关。 */
+    val showTocInLandscape: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[KEY_SHOW_TOC_IN_LANDSCAPE] ?: DEFAULT_SHOW_TOC_IN_LANDSCAPE
+    }
+
     /** 上次选用的划线颜色 ARGB；缺省为默认黄。 */
     val lastHighlightColorArgb: Flow<Int> = dataStore.data.map { prefs ->
         prefs.intPref(KEY_LAST_HIGHLIGHT_COLOR) ?: DEFAULT_HIGHLIGHT_COLOR_ARGB
@@ -207,6 +212,12 @@ class ReaderSettingsRepository @Inject constructor(
         }
     }
 
+    suspend fun setShowTocInLandscape(show: Boolean) {
+        dataStore.edit { prefs ->
+            prefs[KEY_SHOW_TOC_IN_LANDSCAPE] = show
+        }
+    }
+
     suspend fun setLastHighlightPreference(colorArgb: Int, style: HighlightStyle) {
         dataStore.edit { prefs ->
             prefs[KEY_LAST_HIGHLIGHT_COLOR] = colorArgb
@@ -252,6 +263,7 @@ class ReaderSettingsRepository @Inject constructor(
         const val DEFAULT_LINE_SPACING_MULT = 1.5f
         const val DEFAULT_CODE_BLOCK_WRAP = true
         const val DEFAULT_HIDE_SYSTEM_BARS = true
+        const val DEFAULT_SHOW_TOC_IN_LANDSCAPE = true
         const val DEFAULT_HIGHLIGHT_COLOR_ARGB = 0xFFFFFF00.toInt()
 
         private val KEY_PAGE_TURN_MODE = stringPreferencesKey("reader_page_turn_mode")
@@ -283,6 +295,7 @@ class ReaderSettingsRepository @Inject constructor(
         private val KEY_LINE_SPACING_MULT = floatPreferencesKey("reader_line_spacing_multiplier")
         private val KEY_CODE_BLOCK_WRAP = booleanPreferencesKey("reader_code_block_wrap")
         private val KEY_HIDE_SYSTEM_BARS = booleanPreferencesKey("reader_hide_system_bars")
+        private val KEY_SHOW_TOC_IN_LANDSCAPE = booleanPreferencesKey("reader_show_toc_in_landscape")
         private val KEY_LAST_HIGHLIGHT_COLOR = intPreferencesKey("reader_last_highlight_color")
         private val KEY_LAST_HIGHLIGHT_STYLE = stringPreferencesKey("reader_last_highlight_style")
 

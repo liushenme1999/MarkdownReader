@@ -1,6 +1,5 @@
 package space.liushenme.markdownreader.ui.screens.reader
 
-import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -24,7 +23,6 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.ViewConfiguration
-import android.view.ViewGroup
 import android.view.textclassifier.TextClassifier
 import android.text.method.ArrowKeyMovementMethod
 import android.text.method.LinkMovementMethod
@@ -106,7 +104,7 @@ import space.liushenme.markdownreader.ui.theme.ReadingTheme
 import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.markdown.DiagramImageLoader
 import space.liushenme.markdownreader.markdown.MarkdownAnchorIndex
-import space.liushenme.markdownreader.markdown.NetworkImageCache
+import space.liushenme.markdownreader.markdown.ReaderMediaCache
 import space.liushenme.markdownreader.markdown.PreparedMarkdown
 import space.liushenme.markdownreader.markdown.ReaderCodeBlockSettings
 import space.liushenme.markdownreader.markdown.ReaderMarkwonFactory
@@ -338,7 +336,7 @@ internal fun applyMarkdownContent(
         val tPrep0 = android.os.SystemClock.uptimeMillis()
         val prepared = runCatching { ReaderMarkwonFactory.prepareMarkdown(content, appContext) }
             .getOrElse { PreparedMarkdown(text = content, anchorIndex = MarkdownAnchorIndex()) }
-        val markdown = NetworkImageCache.rewriteCachedUrls(appContext, prepared.text)
+        val markdown = ReaderMediaCache.rewriteCachedReferences(appContext, prepared.text)
         val tPrep1 = android.os.SystemClock.uptimeMillis()
         val rendered: CharSequence = synchronized(markwonRenderLock) {
             ReaderCodeBlockSettings.wrapEnabled = codeBlockWrap
@@ -1266,10 +1264,6 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     /** 去掉划词菜单里的「搜索」（含 WEB_SEARCH / 标题匹配）。 */
     private fun stripSearchMenuItems(menu: Menu?) {
         menu ?: return
-        val webSearchId = resources.getIdentifier("websearch", "id", "android")
-        if (webSearchId != 0) {
-            menu.removeItem(webSearchId)
-        }
         val removeIds = ArrayList<Int>(4)
         for (i in 0 until menu.size()) {
             val item = menu.getItem(i) ?: continue
@@ -1296,67 +1290,10 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         return action == Intent.ACTION_WEB_SEARCH || action == Intent.ACTION_SEARCH
     }
 
-    /**
-     * HyperOS/MIUI 的「搜索」常作为 TextAction 芯片画在 PopupWindow 里，不在 [Menu] 中；
-     * 通过遍历窗口视图隐藏文案为「搜索」的按钮。
-     */
     private fun scheduleHideSelectionSearchAction() {
-        val hide = Runnable { hideSelectionSearchActionChips() }
-        post(hide)
-        postDelayed(hide, 32L)
-        postDelayed(hide, 120L)
-    }
-
-    private fun hideSelectionSearchActionChips() {
         val menu = readerSelectionActionMode?.menu
         stripSearchMenuItems(menu)
         patchProcessTextMenuItems(menu)
-        for (root in currentWindowDecorRoots()) {
-            hideSearchLabeledViews(root)
-        }
-    }
-
-    private fun currentWindowDecorRoots(): List<View> {
-        val roots = ArrayList<View>(4)
-        // 只扫 PopupWindow（浮动划词条），避免误藏主界面里的「搜索」入口
-        val activityDecor = (context as? Activity)?.window?.decorView
-        try {
-            val wmgClass = Class.forName("android.view.WindowManagerGlobal")
-            val instance = wmgClass.getMethod("getInstance").invoke(null)
-            val viewsField = wmgClass.getDeclaredField("mViews").apply { isAccessible = true }
-            val views = viewsField.get(instance)
-            if (views is List<*>) {
-                for (v in views) {
-                    if (v is View && v !== activityDecor) roots.add(v)
-                }
-            }
-        } catch (_: Throwable) {
-            // 反射失败时不做全树扫描，仅依赖 Menu 剔除
-        }
-        return roots
-    }
-
-    private fun hideSearchLabeledViews(view: View) {
-        if (view is TextView && view !is android.widget.EditText) {
-            val label = view.text?.toString()?.trim().orEmpty()
-            if (label == "搜索" || label.equals("Search", ignoreCase = true)) {
-                // 隐藏芯片容器（上溯几层），避免只藏文字留下空白可点区域
-                var target: View = view
-                repeat(3) {
-                    val parent = target.parent as? ViewGroup ?: return@repeat
-                    if (parent.childCount <= 4) {
-                        target = parent
-                    }
-                }
-                target.visibility = View.GONE
-                return
-            }
-        }
-        if (view is ViewGroup) {
-            for (i in 0 until view.childCount) {
-                hideSearchLabeledViews(view.getChildAt(i))
-            }
-        }
     }
 
     private fun shouldShowCancelHighlightTitle(): Boolean {

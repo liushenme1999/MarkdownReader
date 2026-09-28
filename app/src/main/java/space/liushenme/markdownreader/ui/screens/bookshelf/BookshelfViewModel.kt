@@ -33,9 +33,8 @@ import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.importing.ParsedBookStorage
 import space.liushenme.markdownreader.importing.PdfReaderContent
 import space.liushenme.markdownreader.importing.UrlBookDownloader
-import space.liushenme.markdownreader.markdown.DiagramImageLoader
 import space.liushenme.markdownreader.markdown.MarkdownPreprocessor
-import space.liushenme.markdownreader.markdown.NetworkImageCache
+import space.liushenme.markdownreader.markdown.ReaderMediaCache
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -735,10 +734,9 @@ class BookshelfViewModel @Inject constructor(
         }
         var body = MarkdownPreprocessor.prepare(extracted.body, appContext)
         withContext(Dispatchers.IO) {
-            NetworkImageCache.preloadFromMarkdown(appContext, body)
+            ReaderMediaCache.prepare(importContext, body)
         }
-        body = NetworkImageCache.rewriteCachedUrls(appContext, body)
-        DiagramImageLoader.preloadFromMarkdown(importContext, body)
+        body = ReaderMediaCache.rewriteCachedReferences(appContext, body)
         return extracted.copy(body = body)
     }
 

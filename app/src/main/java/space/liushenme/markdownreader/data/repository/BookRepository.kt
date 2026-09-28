@@ -4,27 +4,21 @@ import java.io.File
 import java.util.Date
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.launch
-import space.liushenme.markdownreader.data.backup.BookContentSync
 import space.liushenme.markdownreader.data.local.BookContentHasher
 import space.liushenme.markdownreader.data.local.dao.BookDao
 import space.liushenme.markdownreader.data.local.dao.DeletedBookDao
 import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.data.local.entity.DeletedBookEntity
 import space.liushenme.markdownreader.importing.ParsedBookStorage
+import space.liushenme.markdownreader.data.work.BackgroundWorkScheduler
 
 @Singleton
 class BookRepository @Inject constructor(
     private val bookDao: BookDao,
     private val deletedBookDao: DeletedBookDao,
-    private val bookContentSync: BookContentSync,
+    private val backgroundWorkScheduler: BackgroundWorkScheduler,
 ) {
-    private val syncScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
     fun getAllBooks(): Flow<List<BookEntity>> = bookDao.getAllBooks()
 
     /** 书架展示用：排除 Git 项目内文档（它们在项目浏览器中打开）。 */
@@ -55,9 +49,7 @@ class BookRepository @Inject constructor(
 
     /** 正文落盘成功后调用，异步上传到 WebDAV books/（Git 文档会被同步层跳过）。 */
     fun scheduleUploadBookContent(bookId: Long) {
-        syncScope.launch {
-            bookContentSync.uploadBookContent(bookId)
-        }
+        backgroundWorkScheduler.enqueueBookContentUpload(bookId)
     }
 
     suspend fun deleteBook(book: BookEntity, deleteCloudBackup: Boolean = false) {
@@ -69,9 +61,7 @@ class BookRepository @Inject constructor(
         deleteStoredAssets(book)
         bookDao.deleteBook(book)
         if (deleteCloudBackup) {
-            syncScope.launch {
-                bookContentSync.deleteRemoteBookContent(hash, fallbackNumericId = id)
-            }
+            backgroundWorkScheduler.enqueueRemoteBookContentDelete(hash, id)
         }
     }
 
@@ -106,14 +96,11 @@ class BookRepository @Inject constructor(
         }
         bookDao.deleteBooksByIds(ids.toList())
         if (deleteCloudBackup) {
-            syncScope.launch {
-                snapshots.forEach { book ->
-                    val hash = tombstoneHash(book)
-                    bookContentSync.deleteRemoteBookContent(
-                        hash,
-                        fallbackNumericId = book.id,
-                    )
-                }
+            snapshots.forEach { book ->
+                backgroundWorkScheduler.enqueueRemoteBookContentDelete(
+                    tombstoneHash(book),
+                    book.id,
+                )
             }
         }
     }

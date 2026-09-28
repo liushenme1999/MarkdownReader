@@ -95,11 +95,41 @@ fun AppNavHost(
             AboutScreen(navController = navController)
         }
 
-        composable(AppRoutes.READER) { backStackEntry ->
+        composable(
+            route = AppRoutes.READER,
+            arguments = listOf(
+                navArgument("bookId") { type = NavType.StringType },
+                navArgument("jumpKind") {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+                navArgument("jumpPosition") {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+                navArgument("jumpHighlightId") {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+                navArgument("jumpBookmarkId") {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+                navArgument("jumpPreview") {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+            ),
+        ) { backStackEntry ->
             val bookId = backStackEntry.arguments?.getString("bookId")?.toLongOrNull() ?: 0L
             ReaderScreen(
                 navController = navController,
                 bookId = bookId,
+                jumpKind = backStackEntry.arguments?.getString("jumpKind"),
+                jumpPosition = backStackEntry.arguments?.getString("jumpPosition")?.toIntOrNull(),
+                jumpHighlightId = backStackEntry.arguments?.getString("jumpHighlightId")?.toLongOrNull(),
+                jumpBookmarkId = backStackEntry.arguments?.getString("jumpBookmarkId")?.toLongOrNull(),
+                jumpPreview = backStackEntry.arguments?.getString("jumpPreview"),
             )
         }
 

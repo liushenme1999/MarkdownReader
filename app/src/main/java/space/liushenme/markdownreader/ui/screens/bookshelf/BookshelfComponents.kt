@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -56,6 +57,7 @@ import androidx.compose.ui.unit.sp
 import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.ui.components.AppSearchField
 import space.liushenme.markdownreader.importing.BookImportSupport
+import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.ui.components.shelfStylePageBackground
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
@@ -87,6 +89,85 @@ internal fun ManagementBarButton(
             Text(label, style = MaterialTheme.typography.labelSmall)
         }
     }
+}
+
+@Composable
+internal fun ContinueReadingCard(
+    book: BookEntity,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val progress = (book.readingProgress.coerceIn(0f, 1f) * 100).toInt()
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.primary,
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.MenuBook,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.padding(12.dp).size(24.dp),
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.bookshelf_continue_reading),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = book.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = stringResource(
+                        R.string.bookshelf_continue_progress,
+                        progress,
+                    ) + " · " + bookFormatLabel(book),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = { book.readingProgress.coerceIn(0f, 1f) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(5.dp)
+                        .clip(RoundedCornerShape(50)),
+                    trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.16f),
+                )
+            }
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun bookFormatLabel(book: BookEntity): String = when (
+    ImportedBookFormat.fromStored(book.importFormat)
+) {
+    ImportedBookFormat.MARKDOWN -> stringResource(R.string.book_format_markdown)
+    ImportedBookFormat.TXT -> stringResource(R.string.book_format_text)
+    ImportedBookFormat.PDF -> stringResource(R.string.book_format_pdf)
 }
 
 @Composable
@@ -735,14 +816,16 @@ internal fun BookCard(
             coverImage = decoded
         }
     }
-    val dateFormat = SimpleDateFormat("MM-dd", Locale.getDefault())
+    val locale = LocalConfiguration.current.locales[0]
+    val dateFormat = remember(locale) { SimpleDateFormat("MM-dd", locale) }
     val unreadLabel = stringResource(R.string.bookshelf_unread)
-    val subtitle = when {
+    val detail = when {
         book.shelfGroup.isNotBlank() -> book.shelfGroup
         book.author != null -> book.author
         book.lastReadTime != null -> dateFormat.format(book.lastReadTime)
         else -> unreadLabel
     }
+    val subtitle = "${bookFormatLabel(book)} · $detail"
     val borderColor = MaterialTheme.colorScheme.primary
     val shape = RoundedCornerShape(10.dp)
 
@@ -1038,14 +1121,16 @@ internal fun BookSearchResultCard(
             coverImage = decoded
         }
     }
-    val dateFormat = SimpleDateFormat("MM-dd", Locale.getDefault())
+    val locale = LocalConfiguration.current.locales[0]
+    val dateFormat = remember(locale) { SimpleDateFormat("MM-dd", locale) }
     val unreadLabel = stringResource(R.string.bookshelf_unread)
-    val subtitle = when {
+    val detail = when {
         book.shelfGroup.isNotBlank() -> book.shelfGroup
         book.author != null -> book.author
         book.lastReadTime != null -> dateFormat.format(book.lastReadTime)
         else -> unreadLabel
     }
+    val subtitle = "${bookFormatLabel(book)} · $detail"
     val shape = RoundedCornerShape(12.dp)
     val borderColor = MaterialTheme.colorScheme.primary
 

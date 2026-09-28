@@ -1,30 +1,24 @@
 package space.liushenme.markdownreader.ui.screens.reader
 
 import android.content.Context
-import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import space.liushenme.markdownreader.R
-import space.liushenme.markdownreader.data.backup.BookContentSync
 import space.liushenme.markdownreader.data.local.entity.BookEntity
-import space.liushenme.markdownreader.data.local.entity.isFinishedReading
 import space.liushenme.markdownreader.data.local.entity.BookmarkEntity
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.data.repository.BookRepository
 import space.liushenme.markdownreader.data.repository.BookmarkRepository
 import space.liushenme.markdownreader.data.repository.HighlightRepository
-import space.liushenme.markdownreader.data.repository.ReadingProgressRepository
-import space.liushenme.markdownreader.data.repository.ReadingSessionStats
+import space.liushenme.markdownreader.data.repository.ReaderPersistenceQueue
 import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
-import space.liushenme.markdownreader.importing.BookContentLoader
-import space.liushenme.markdownreader.importing.BookTocEnricher
-import space.liushenme.markdownreader.importing.ExtractedBookText
+import space.liushenme.markdownreader.document.DocumentOpenFailure
+import space.liushenme.markdownreader.document.DocumentOpenResult
+import space.liushenme.markdownreader.document.DocumentRepository
+import space.liushenme.markdownreader.document.DocumentSnapshot
 import space.liushenme.markdownreader.importing.ImportedBookFormat
-import space.liushenme.markdownreader.importing.ParsedBookStorage
 import space.liushenme.markdownreader.importing.PdfReaderContent
-import space.liushenme.markdownreader.importing.UrlBookDownloader
 import space.liushenme.markdownreader.markdown.MarkdownInlineHtml
-import space.liushenme.markdownreader.markdown.MarkdownPreprocessor
 import space.liushenme.markdownreader.model.HighlightStyle
 import space.liushenme.markdownreader.ui.screens.reader.anchor.captureTextAnchor
 import space.liushenme.markdownreader.ui.screens.reader.anchor.sourceSpanForRenderedQuote
@@ -42,9 +36,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.util.Date
 import javax.inject.Inject
 import kotlin.math.abs
@@ -56,9 +48,9 @@ class ReaderViewModel @Inject constructor(
     private val bookRepository: BookRepository,
     private val bookmarkRepository: BookmarkRepository,
     private val highlightRepository: HighlightRepository,
-    private val readingProgressRepository: ReadingProgressRepository,
+    private val persistenceQueue: ReaderPersistenceQueue,
     private val readerSettingsRepository: ReaderSettingsRepository,
-    private val bookContentSync: BookContentSync,
+    private val documentRepository: DocumentRepository,
 ) : ViewModel() {
 
     private val _book = MutableStateFlow<BookEntity?>(null)
@@ -66,6 +58,9 @@ class ReaderViewModel @Inject constructor(
 
     private val _content = MutableStateFlow("")
     val content: StateFlow<String> = _content.asStateFlow()
+
+    private val _documentSnapshot = MutableStateFlow<DocumentSnapshot?>(null)
+    val documentSnapshot: StateFlow<DocumentSnapshot?> = _documentSnapshot.asStateFlow()
 
     /** 导入时写入的目录；非空时阅读页优先使用，不再从正文猜标题。 */
     private val _structuredToc = MutableStateFlow<List<MarkdownTocEntry>?>(null)
@@ -75,23 +70,21 @@ class ReaderViewModel @Inject constructor(
     private val _readerLoadEpoch = MutableStateFlow(0L)
     val readerLoadEpoch: StateFlow<Long> = _readerLoadEpoch.asStateFlow()
 
-    private val _readingProgress = MutableStateFlow(0f)
-    val readingProgress: StateFlow<Float> = _readingProgress.asStateFlow()
+    private val session = ReaderSessionController()
+    private val _readingProgress = session.readingProgress
+    val readingProgress: StateFlow<Float> = session.readingProgress
 
     /** 视口顶部源码坐标；章节小标题按它（及底部）定位，不经过百分比量化。 */
-    private val _viewportTopChar = MutableStateFlow(0)
-    val viewportTopChar: StateFlow<Int> = _viewportTopChar.asStateFlow()
+    val viewportTopChar: StateFlow<Int> = session.viewportTopChar
 
     /** 视口底部源码坐标；页面上已露出的标题优先于视口顶之上的上一节。 */
-    private val _viewportBottomChar = MutableStateFlow(0)
-    val viewportBottomChar: StateFlow<Int> = _viewportBottomChar.asStateFlow()
+    val viewportBottomChar: StateFlow<Int> = session.viewportBottomChar
 
     /**
      * 当前应对齐小标题栏的目录项 [MarkdownTocEntry.sourceOffset]。
      * 由阅读页按可见 HeadingSpan 写入；未就绪时为 null，标题栏退回视口区间估算。
      */
-    private val _visibleChapterOffset = MutableStateFlow<Int?>(null)
-    val visibleChapterOffset: StateFlow<Int?> = _visibleChapterOffset.asStateFlow()
+    val visibleChapterOffset: StateFlow<Int?> = session.visibleChapterOffset
 
     val readingStyleState: StateFlow<ReadingStyleState> =
         readerSettingsRepository.readingStyleState
@@ -146,6 +139,13 @@ class ReaderViewModel @Inject constructor(
             initialValue = ReaderSettingsRepository.DEFAULT_HIDE_SYSTEM_BARS,
         )
 
+    val showTocInLandscape: StateFlow<Boolean> = readerSettingsRepository.showTocInLandscape
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = ReaderSettingsRepository.DEFAULT_SHOW_TOC_IN_LANDSCAPE,
+        )
+
     val pageTurnMode: StateFlow<ReaderPageTurnMode> = readerSettingsRepository.pageTurnMode
         .stateIn(
             scope = viewModelScope,
@@ -169,51 +169,27 @@ class ReaderViewModel @Inject constructor(
                 initialValue = HighlightStyle.DEFAULT,
             )
 
-    private val _loadError = MutableStateFlow<String?>(null)
-    val loadError: StateFlow<String?> = _loadError.asStateFlow()
+    private val _loadFailure = MutableStateFlow<ReaderLoadState?>(null)
+    private val _effects = MutableSharedFlow<ReaderEffect>(extraBufferCapacity = 8)
+    val effects: SharedFlow<ReaderEffect> = _effects.asSharedFlow()
+
+    private val _isLoading = MutableStateFlow(false)
 
     val bookmarks = MutableStateFlow<List<BookmarkEntity>>(emptyList())
     val highlights = MutableStateFlow<List<HighlightEntity>>(emptyList())
 
-    /** 当前前台计时片段起点；0 表示未在计时（已暂停或未开始）。 */
-    private var sessionSegmentStartMs: Long = 0L
-    /** 当前计时片段开始时的字符位置，用于估算本片段前进字数。 */
-    private var sessionSegmentStartCharPos: Int = 0
-    /** 阅读页是否处于前台（ON_RESUME～ON_PAUSE）。 */
-    private var readingForeground: Boolean = false
-    /** 最近一次按视口顶部更新的全书字符下标，退出时优先落盘，避免 float 反算偏差。 */
-    private var lastKnownReadingCharPos: Int = 0
-
-    private fun setViewportChars(top: Int, bottom: Int = top, contentLen: Int = _content.value.length) {
-        val len = contentLen.coerceAtLeast(0)
-        val t = top.coerceIn(0, len)
-        val b = bottom.coerceIn(t, len)
-        lastKnownReadingCharPos = t
-        if (_viewportTopChar.value != t) _viewportTopChar.value = t
-        if (_viewportBottomChar.value != b) _viewportBottomChar.value = b
-    }
+    /** 最近一次按视口顶部更新的全书字符下标。 */
+    private val lastKnownReadingCharPos: Int
+        get() = session.lastKnownReadingCharPos
+    private val _showMarkFinishedPrompt = session.showMarkFinishedPrompt
+    val showMarkFinishedPrompt: StateFlow<Boolean> = _showMarkFinishedPrompt
+    /** 与书签 previewText 同格式的视口顶预览，打开书时与书签跳转共用定位。 */
+    private val lastKnownProgressPreview: String
+        get() = session.lastKnownProgressPreview
 
     private fun setVisibleChapterOffset(offset: Int?) {
-        val normalized = offset?.coerceAtLeast(0)
-        if (_visibleChapterOffset.value != normalized) {
-            _visibleChapterOffset.value = normalized
-        }
+        session.setVisibleChapterOffset(offset)
     }
-    /** 视口已到最后一页或文末；不单独把进度抬到 100%。 */
-    private var lastKnownReachedEnd: Boolean = false
-    /**
-     * 用户已确认读完，或打开时库里已是已读完。
-     * 仍停在文末时进度保持 100%；离开文末后清除，进度改跟视口。
-     */
-    private var finishedLatch: Boolean = false
-    /** 当次阅读页已问过或已读完打开，不再弹出「标记已读完」。 */
-    private var finishPromptDismissedThisSession: Boolean = false
-    /** 首屏定位完成前不弹窗，避免恢复到文末被当成新触发。 */
-    private var finishPromptEnabled: Boolean = false
-    private val _showMarkFinishedPrompt = MutableStateFlow(false)
-    val showMarkFinishedPrompt: StateFlow<Boolean> = _showMarkFinishedPrompt.asStateFlow()
-    /** 与书签 previewText 同格式的视口顶预览，打开书时与书签跳转共用定位。 */
-    private var lastKnownProgressPreview: String = ""
 
     private var loadBookJob: Job? = null
     private var bookmarkCollectJob: Job? = null
@@ -221,6 +197,187 @@ class ReaderViewModel @Inject constructor(
     private var progressPersistJob: Job? = null
     /** 当前 ViewModel 会话内已成功装载的正文 bookId；WebLink 返回等同书时不重复 load。 */
     private var loadedBookId: Long? = null
+
+    fun dispatch(event: ReaderEvent) {
+        when (event) {
+            is ReaderEvent.LoadBook -> loadBook(appContext, event.bookId)
+            ReaderEvent.ReadingResumed -> onReadingResumed()
+            ReaderEvent.ReadingPaused -> onReadingPaused()
+            is ReaderEvent.VisibleProgress -> updateVisibleReadingProgressInternal(
+                event.globalChar,
+                event.reachedEnd,
+                event.bottomChar,
+                event.chapterOffset,
+            )
+            is ReaderEvent.ProgressAtChar -> if (event.immediate) {
+                updateReadingProgressAtCharNowInternal(event.globalChar, event.previewText, event.reachedEnd)
+            } else {
+                updateReadingProgressAtCharInternal(
+                    event.globalChar,
+                    event.previewText,
+                    event.reachedEnd,
+                    event.bottomChar,
+                    event.chapterOffset,
+                )
+            }
+            is ReaderEvent.PersistVisibleProgress -> enqueueVisibleProgressSave(
+                event.globalChar,
+                event.previewText,
+            )
+            is ReaderEvent.PersistReadingPosition -> enqueueReadingPositionSave(
+                event.globalChar,
+                event.previewText,
+                event.reachedEnd,
+            )
+            is ReaderEvent.FinishPromptEnabled -> setFinishPromptEnabled(event.enabled)
+            is ReaderEvent.DocumentEndChanged -> onDocumentEndChanged(event.atEnd)
+            ReaderEvent.MarkFinished -> markAsFinished()
+            ReaderEvent.DismissFinishPrompt -> dismissFinishPrompt()
+            ReaderEvent.RetryLoad -> _book.value?.id?.let { loadBook(appContext, it) }
+            is ReaderEvent.AddBookmark -> addBookmarkInternal(event.previewText, event.note)
+            is ReaderEvent.DeleteBookmark -> deleteBookmarkInternal(event.bookmark)
+            is ReaderEvent.DeleteHighlight -> deleteHighlightInternal(event.highlight)
+            is ReaderEvent.DeleteHighlightById -> deleteHighlightByIdInternal(event.highlightId)
+            is ReaderEvent.UpdateHighlightAppearance -> updateHighlightAppearanceInternal(
+                event.highlightId,
+                event.colorArgb,
+                event.style,
+            )
+            is ReaderEvent.ToggleBookmarkAtSwipe -> {
+                viewModelScope.launch {
+                    toggleBookmarkAtSwipeInternal(
+                        previewForAdd = event.previewText,
+                        positionForAdd = event.positionForAdd,
+                    )?.let { added ->
+                        _effects.emit(ReaderEffect.BookmarkToggled(added))
+                    }
+                }
+            }
+        }
+    }
+
+    private data class DocumentState(
+        val book: BookEntity?,
+        val content: String,
+        val toc: List<MarkdownTocEntry>?,
+        val snapshot: DocumentSnapshot?,
+        val epoch: Long,
+        val failure: ReaderLoadState?,
+    )
+
+    private data class AppearanceState(
+        val styles: ReadingStyleState,
+        val theme: ReadingTheme,
+        val fontSize: Int,
+        val padding: Int,
+        val lineSpacing: Float,
+    )
+
+    private data class InteractionState(
+        val codeWrap: Boolean,
+        val hideBars: Boolean,
+        val showTocInLandscape: Boolean,
+        val pageMode: ReaderPageTurnMode,
+        val highlightColor: Int,
+        val highlightStyle: HighlightStyle,
+    )
+
+    private data class RuntimeState(
+        val progress: Float,
+        val finishPrompt: Boolean,
+        val bookmarks: List<BookmarkEntity>,
+        val highlights: List<HighlightEntity>,
+        val loading: Boolean,
+    )
+
+    private data class ViewportState(
+        val topChar: Int,
+        val bottomChar: Int,
+        val chapterOffset: Int?,
+    )
+
+    val uiState: StateFlow<ReaderUiState> = combine(
+        combine(_book, _content, _structuredToc, _documentSnapshot, _readerLoadEpoch, _loadFailure) {
+                values ->
+            @Suppress("UNCHECKED_CAST")
+            DocumentState(
+                book = values[0] as BookEntity?,
+                content = values[1] as String,
+                toc = values[2] as List<MarkdownTocEntry>?,
+                snapshot = values[3] as DocumentSnapshot?,
+                epoch = values[4] as Long,
+                failure = values[5] as ReaderLoadState?,
+            )
+        },
+        combine(
+            readingStyleState,
+            currentTheme,
+            fontSize,
+            readerPaddingDp,
+            readerLineSpacingMultiplier,
+        ) { styles, theme, size, padding, spacing ->
+            AppearanceState(styles, theme, size, padding, spacing)
+        },
+        combine(
+            combine(codeBlockWrap, hideSystemBars, showTocInLandscape) { wrap, hideBars, showToc ->
+                Triple(wrap, hideBars, showToc)
+            },
+            pageTurnMode,
+            lastHighlightColorArgb,
+            lastHighlightStyle,
+        ) { base, pageMode, color, style ->
+            InteractionState(base.first, base.second, base.third, pageMode, color, style)
+        },
+        combine(
+            _readingProgress,
+            _showMarkFinishedPrompt,
+            bookmarks,
+            highlights,
+            _isLoading,
+        ) { progress, finishPrompt, bookmarks, highlights, loading ->
+            RuntimeState(progress, finishPrompt, bookmarks, highlights, loading)
+        },
+        combine(viewportTopChar, viewportBottomChar, visibleChapterOffset) { top, bottom, chapter ->
+            ViewportState(top, bottom, chapter)
+        },
+    ) { document, appearance, interaction, runtime, viewport ->
+        val loadState = when {
+            runtime.loading -> ReaderLoadState.Loading
+            document.failure != null -> document.failure
+            document.content.isEmpty() -> ReaderLoadState.Empty
+            else -> ReaderLoadState.Ready
+        }
+        ReaderUiState(
+            loadState = loadState,
+            book = document.book,
+            content = document.content,
+            structuredToc = document.toc,
+            documentSnapshot = document.snapshot,
+            readerLoadEpoch = document.epoch,
+            readingProgress = runtime.progress,
+            viewportTopChar = viewport.topChar,
+            viewportBottomChar = viewport.bottomChar,
+            visibleChapterOffset = viewport.chapterOffset,
+            bookmarks = runtime.bookmarks,
+            highlights = runtime.highlights,
+            readingStyleState = appearance.styles,
+            currentTheme = appearance.theme,
+            fontSize = appearance.fontSize,
+            readerPaddingDp = appearance.padding,
+            readerLineSpacingMultiplier = appearance.lineSpacing,
+            codeBlockWrap = interaction.codeWrap,
+            hideSystemBars = interaction.hideBars,
+            showTocInLandscape = interaction.showTocInLandscape,
+            pageTurnMode = interaction.pageMode,
+            lastHighlightColorArgb = interaction.highlightColor,
+            lastHighlightStyle = interaction.highlightStyle,
+            showMarkFinishedPrompt = runtime.finishPrompt,
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = ReaderUiState(),
+    )
 
     fun loadBook(context: Context, bookId: Long) {
         if (loadedBookId == bookId && _content.value.isNotEmpty() && _book.value?.id == bookId) {
@@ -235,43 +392,53 @@ class ReaderViewModel @Inject constructor(
         bookmarkCollectJob?.cancel()
         highlightCollectJob?.cancel()
 
-        _loadError.value = null
+        _loadFailure.value = null
+        _isLoading.value = true
         bookmarks.value = emptyList()
         highlights.value = emptyList()
         _structuredToc.value = null
-        finishPromptEnabled = false
-        finishPromptDismissedThisSession = false
-        finishedLatch = false
-        _showMarkFinishedPrompt.value = false
+        _documentSnapshot.value = null
+        session.resetForLoad()
 
-        loadBookJob = viewModelScope.launch {
+        val currentLoadJob = viewModelScope.launch {
             val bookEntity = bookRepository.getBookById(bookId)
             _book.value = bookEntity
 
             if (bookEntity == null) {
                 loadedBookId = null
                 _content.value = ""
-                _loadError.value = appContext.getString(R.string.reader_error_book_not_found)
+                _loadFailure.value = ReaderLoadState.MissingSource(
+                    appContext.getString(R.string.reader_error_book_not_found),
+                )
                 _readerLoadEpoch.value = _readerLoadEpoch.value + 1L
+                _effects.tryEmit(
+                    ReaderEffect.LoadFailed(
+                        ReaderLoadState.MissingSource(appContext.getString(R.string.reader_error_book_not_found)),
+                    ),
+                )
                 readerOpenDbg("loadBook missing bookId=$bookId +${android.os.SystemClock.uptimeMillis() - t0}ms")
                 return@launch
             }
 
-            val extracted = withContext(Dispatchers.IO) {
-                loadFileExtracted(context, bookEntity)
+            val openResult = withContext(Dispatchers.IO) { documentRepository.open(bookId) }
+            if (openResult is DocumentOpenResult.Failed) {
+                val state = openResult.toReaderLoadState(appContext)
+                _book.value = openResult.book ?: bookEntity
+                _content.value = ""
+                _documentSnapshot.value = null
+                _loadFailure.value = state
+                _readerLoadEpoch.value = _readerLoadEpoch.value + 1L
+                _effects.tryEmit(ReaderEffect.LoadFailed(state))
+                return@launch
             }
-            // 打开时可能已从 WebDAV 补齐正文并改写路径，重新取最新书籍记录
-            val latestBook = bookRepository.getBookById(bookId) ?: bookEntity
+            openResult as DocumentOpenResult.Ready
+            val latestBook = openResult.book
+            val snapshot = openResult.snapshot
             _book.value = latestBook
-            val text = MarkdownPreprocessor.stripLocalRelativeImages(extracted.body)
+            _documentSnapshot.value = snapshot
+            val text = snapshot.content
             _content.value = text
-            val format = ImportedBookFormat.fromStored(latestBook.importFormat)
-            // 再次对齐：strip / materialize 后旧 toc 偏移可能已失效；在 IO 线程重解析，避免跳错章。
-            val alignedToc = BookTocEnricher.alignToBody(
-                format,
-                extracted.copy(body = text),
-            ).toc
-            _structuredToc.value = alignedToc
+            _structuredToc.value = snapshot.toc
                 .map {
                     MarkdownTocEntry(
                         level = it.level,
@@ -281,38 +448,17 @@ class ReaderViewModel @Inject constructor(
                     )
                 }
                 .takeIf { it.isNotEmpty() }
-            _readingProgress.value = latestBook.readingProgress
-            val alreadyFinished = latestBook.readingProgress.isFinishedReading()
-            lastKnownReachedEnd = alreadyFinished
-            finishedLatch = alreadyFinished
-            finishPromptDismissedThisSession = alreadyFinished
-            finishPromptEnabled = false
-            _showMarkFinishedPrompt.value = false
-            setViewportChars(
-                top = resolveStoredCharPos(
+            session.restoreBookState(
+                progress = latestBook.readingProgress,
+                position = resolveStoredCharPos(
                     currentPosition = latestBook.currentPosition,
                     readingProgress = latestBook.readingProgress,
                     contentLength = text.length,
                     totalChars = latestBook.totalChars.coerceAtLeast(text.length.coerceAtLeast(1)),
                 ),
-                contentLen = text.length,
+                contentLength = text.length,
+                previewText = latestBook.progressPreviewText,
             )
-            setVisibleChapterOffset(null)
-            lastKnownProgressPreview = latestBook.progressPreviewText.trim()
-            if (text.isNotEmpty() && text.length != latestBook.totalChars) {
-                val synced = latestBook.copy(totalChars = text.length)
-                bookRepository.updateBook(synced)
-                _book.value = synced
-            }
-            val currentBook = _book.value ?: latestBook
-            if (
-                ImportedBookFormat.fromStored(currentBook.importFormat) != ImportedBookFormat.PDF &&
-                PdfReaderContent.looksLikePdfBody(text)
-            ) {
-                val synced = currentBook.copy(importFormat = ImportedBookFormat.PDF.storedKey)
-                bookRepository.updateBook(synced)
-                _book.value = synced
-            }
             _readerLoadEpoch.value = _readerLoadEpoch.value + 1L
             readerOpenDbg(
                 "loadBook contentReady len=${text.length} pos=$lastKnownReadingCharPos " +
@@ -322,13 +468,20 @@ class ReaderViewModel @Inject constructor(
 
             if (text.isEmpty()) {
                 val isPdf = ImportedBookFormat.fromStored(latestBook.importFormat).isPdf
-                _loadError.value = appContext.getString(
-                    if (isPdf) {
-                        R.string.reader_error_pdf_bundle_incomplete
-                    } else {
-                        R.string.reader_error_cannot_read_body
-                    },
-                )
+                _loadFailure.value = if (isPdf) {
+                    ReaderLoadState.BrokenBundle(
+                        appContext.getString(R.string.reader_error_pdf_bundle_incomplete),
+                    )
+                } else {
+                    ReaderLoadState.MissingSource(
+                        appContext.getString(R.string.reader_error_cannot_read_body),
+                    )
+                }
+                _effects.tryEmit(_loadFailure.value?.let(ReaderEffect::LoadFailed) ?: return@launch)
+            }
+
+            if (text.isNotEmpty()) {
+                _effects.tryEmit(ReaderEffect.BookLoaded(bookId))
             }
 
             beginSessionSegmentIfNeeded()
@@ -342,12 +495,20 @@ class ReaderViewModel @Inject constructor(
                     .collect { highlights.value = it }
             }
         }
+        loadBookJob = currentLoadJob
+        currentLoadJob.invokeOnCompletion {
+            if (loadBookJob === currentLoadJob) {
+                _isLoading.value = false
+            }
+        }
     }
 
     /** 阅读页进入前台：开始（或继续）本段阅读计时。 */
     fun onReadingResumed() {
-        readingForeground = true
-        beginSessionSegmentIfNeeded()
+        session.onReadingResumed(
+            hasBook = _book.value != null,
+            hasContent = _content.value.isNotEmpty(),
+        )
     }
 
     /**
@@ -355,40 +516,46 @@ class ReaderViewModel @Inject constructor(
      * 与进度落盘一并在 ON_PAUSE 调用，进程被杀前尽量保住统计。
      */
     fun onReadingPaused() {
-        readingForeground = false
-        flushSessionSegmentBlocking()
+        val book = _book.value ?: return
+        val delta = session.onReadingPaused(_content.value.length) ?: return
+        persistenceQueue.recordSession(book.id, delta.charsRead, delta.minutesRead)
     }
 
     private fun beginSessionSegmentIfNeeded() {
-        if (!readingForeground) return
-        if (_book.value == null || _content.value.isEmpty()) return
-        if (sessionSegmentStartMs > 0L) return
-        sessionSegmentStartMs = System.currentTimeMillis()
-        sessionSegmentStartCharPos = lastKnownReadingCharPos
+        session.onReadingResumed(
+            hasBook = _book.value != null,
+            hasContent = _content.value.isNotEmpty(),
+        )
     }
 
-    private fun flushSessionSegmentBlocking() {
+    private fun enqueueSessionSegmentSave() {
         val book = _book.value ?: return
-        val segmentStart = sessionSegmentStartMs
-        if (segmentStart <= 0L) return
-        sessionSegmentStartMs = 0L
-
-        val elapsed = (System.currentTimeMillis() - segmentStart).coerceAtLeast(0L)
-        val minutesRead = ReadingSessionStats.elapsedMillisToMinutes(elapsed)
-        val contentLen = _content.value.length.coerceAtLeast(1)
-        val endPosition = lastKnownReadingCharPos.coerceIn(0, contentLen)
-        val charsRead = (endPosition - sessionSegmentStartCharPos).coerceAtLeast(0)
-        sessionSegmentStartCharPos = endPosition
-
-        if (minutesRead > 0 || charsRead > 0) {
-            runBlocking {
-                readingProgressRepository.recordReading(book.id, charsRead, minutesRead)
-            }
-        }
+        val delta = session.onReadingPaused(_content.value.length) ?: return
+        persistenceQueue.recordSession(book.id, delta.charsRead, delta.minutesRead)
     }
 
-    /** 仅刷新界面进度，不立刻落盘（滚动时实时更新标题栏百分比与章节名）。 */
+    /**
+     * Compatibility entry point for viewport updates. All viewport changes are
+     * now normalized through [ReaderEvent.VisibleProgress].
+     */
     fun updateVisibleReadingProgress(
+        globalChar: Int,
+        reachedEnd: Boolean = false,
+        bottomChar: Int? = null,
+        chapterOffset: Int? = null,
+    ) {
+        dispatch(
+            ReaderEvent.VisibleProgress(
+                globalChar = globalChar,
+                reachedEnd = reachedEnd,
+                bottomChar = bottomChar,
+                chapterOffset = chapterOffset,
+            )
+        )
+    }
+
+    /** Only updates in-memory viewport state; persistence is handled separately. */
+    private fun updateVisibleReadingProgressInternal(
         globalChar: Int,
         reachedEnd: Boolean = false,
         bottomChar: Int? = null,
@@ -396,19 +563,16 @@ class ReaderViewModel @Inject constructor(
     ) {
         val contentLen = _content.value.length
         if (contentLen <= 0) return
-        val pos = globalChar.coerceIn(0, contentLen)
-        setViewportChars(pos, bottomChar ?: pos, contentLen)
         setVisibleChapterOffset(chapterOffset)
-        val progress = applyViewportProgress(pos, contentLen, reachedEnd)
-        if ((_readingProgress.value * 100).toInt() == (progress * 100).toInt()) {
-            maybeShowMarkFinishedPrompt()
-            return
-        }
-        _readingProgress.value = progress
-        maybeShowMarkFinishedPrompt()
+        session.updateVisibleProgress(globalChar, reachedEnd, bottomChar, contentLen)
     }
 
     /** 按全书源码字符下标更新进度（与书签记录字段一致：position + preview）。 */
+    /**
+     * Compatibility entry point for the incremental event migration.
+     * UI callers can keep their existing signature while all progress changes
+     * now pass through the single ReaderEvent channel.
+     */
     fun updateReadingProgressAtChar(
         globalChar: Int,
         previewText: String? = null,
@@ -416,106 +580,114 @@ class ReaderViewModel @Inject constructor(
         bottomChar: Int? = null,
         chapterOffset: Int? = null,
     ) {
-        val contentLen = _content.value.length
-        if (contentLen <= 0) return
-        val pos = globalChar.coerceIn(0, contentLen)
-        setViewportChars(
-            pos,
-            bottomChar ?: _viewportBottomChar.value.coerceAtLeast(pos),
-            contentLen,
+        dispatch(
+            ReaderEvent.ProgressAtChar(
+                globalChar = globalChar,
+                previewText = previewText,
+                reachedEnd = reachedEnd,
+                bottomChar = bottomChar,
+                chapterOffset = chapterOffset,
+            )
         )
-        if (chapterOffset != null) setVisibleChapterOffset(chapterOffset)
-        previewText?.let { lastKnownProgressPreview = normalizeReadingPreviewText(it) }
-        val progress = applyViewportProgress(pos, contentLen, reachedEnd)
-        _readingProgress.value = progress
-        if (finishPromptEnabled) {
-            scheduleProgressPersist(progress, pos, lastKnownProgressPreview)
-        }
-        maybeShowMarkFinishedPrompt()
     }
 
+    private fun updateReadingProgressAtCharInternal(
+        globalChar: Int,
+        previewText: String? = null,
+        reachedEnd: Boolean = false,
+        bottomChar: Int? = null,
+        chapterOffset: Int? = null,
+    ) {
+        val contentLen = _content.value.length
+        if (contentLen <= 0) return
+        val snapshot = session.updateProgressAtChar(
+            globalChar = globalChar,
+            previewText = previewText?.let(::normalizeReadingPreviewText),
+            reachedEnd = reachedEnd,
+            bottomChar = bottomChar,
+            chapterOffset = chapterOffset,
+            contentLength = contentLen,
+        )
+        if (session.canPersistProgress) {
+            scheduleProgressPersist(snapshot.progress, snapshot.position, snapshot.previewText)
+        }
+    }
+
+    /** Immediate compatibility entry point; persistence still uses the event channel. */
     fun updateReadingProgressAtCharNow(
+        globalChar: Int,
+        previewText: String? = null,
+        reachedEnd: Boolean = false,
+    ) {
+        dispatch(
+            ReaderEvent.ProgressAtChar(
+                globalChar = globalChar,
+                previewText = previewText,
+                reachedEnd = reachedEnd,
+                immediate = true,
+            )
+        )
+    }
+
+    private fun updateReadingProgressAtCharNowInternal(
         globalChar: Int,
         previewText: String? = null,
         reachedEnd: Boolean = false,
     ) {
         val contentLen = _content.value.length
         if (contentLen <= 0) return
-        val pos = globalChar.coerceIn(0, contentLen)
-        setViewportChars(pos, _viewportBottomChar.value.coerceAtLeast(pos), contentLen)
-        previewText?.let { lastKnownProgressPreview = normalizeReadingPreviewText(it) }
-        val progress = applyViewportProgress(pos, contentLen, reachedEnd)
-        _readingProgress.value = progress
+        val snapshot = session.updateProgressAtChar(
+            globalChar = globalChar,
+            previewText = previewText?.let(::normalizeReadingPreviewText),
+            reachedEnd = reachedEnd,
+            bottomChar = null,
+            chapterOffset = null,
+            contentLength = contentLen,
+        )
         progressPersistJob?.cancel()
         progressPersistJob = null
-        viewModelScope.launch {
-            persistReadingProgress(progress, pos, lastKnownProgressPreview)
-        }
-        maybeShowMarkFinishedPrompt()
+        persistReadingProgress(snapshot.progress, snapshot.position, snapshot.previewText)
     }
 
     /** 首屏定位完成后再允许「标记已读完」弹窗。 */
     fun setFinishPromptEnabled(enabled: Boolean) {
-        finishPromptEnabled = enabled
-        if (enabled) {
-            maybeShowMarkFinishedPrompt()
-        } else {
-            _showMarkFinishedPrompt.value = false
-        }
+        session.setFinishPromptEnabled(enabled)
     }
 
     fun onDocumentEndChanged(atEnd: Boolean) {
-        lastKnownReachedEnd = atEnd
-        if (finishPromptEnabled && !atEnd) {
-            finishedLatch = false
-            _showMarkFinishedPrompt.value = false
-            return
-        }
-        maybeShowMarkFinishedPrompt()
+        session.onDocumentEndChanged(atEnd)
     }
 
     fun markAsFinished() {
         val contentLen = _content.value.length
         if (contentLen <= 0) return
-        finishedLatch = true
-        finishPromptDismissedThisSession = true
-        lastKnownReachedEnd = true
-        _showMarkFinishedPrompt.value = false
-        val pos = lastKnownReadingCharPos.coerceIn(0, contentLen)
-        _readingProgress.value = 1f
+        val snapshot = session.markAsFinished(contentLen)
         progressPersistJob?.cancel()
         progressPersistJob = null
-        viewModelScope.launch {
-            persistReadingProgress(1f, pos, lastKnownProgressPreview)
-        }
+        persistReadingProgress(snapshot.progress, snapshot.position, snapshot.previewText)
     }
 
     fun dismissFinishPrompt() {
-        finishPromptDismissedThisSession = true
-        _showMarkFinishedPrompt.value = false
+        session.dismissFinishPrompt()
     }
 
     /**
-     * 退出时把当前内存进度同步写入。已确认的 100% 不再用视口顶重算。
+     * 退出时把当前内存进度提交到串行写入队列。已确认的 100% 不再用视口顶重算。
      */
-    fun flushVisibleProgressBlocking(
+    fun enqueueVisibleProgressSave(
         globalChar: Int? = null,
         previewText: String? = null,
     ) {
         val contentLen = _content.value.length
         if (contentLen <= 0) return
-        if (globalChar != null) {
-            lastKnownReadingCharPos = globalChar.coerceIn(0, contentLen)
-        }
-        previewText?.let { lastKnownProgressPreview = normalizeReadingPreviewText(it) }
-        val pos = lastKnownReadingCharPos.coerceIn(0, contentLen)
-        val progress = progressToPersist()
-        _readingProgress.value = progress
+        val snapshot = session.captureProgress(
+            contentLength = contentLen,
+            globalChar = globalChar,
+            previewText = previewText?.let(::normalizeReadingPreviewText),
+        )
         progressPersistJob?.cancel()
         progressPersistJob = null
-        runBlocking {
-            persistReadingProgress(progress, pos, lastKnownProgressPreview)
-        }
+        persistReadingProgress(snapshot.progress, snapshot.position, snapshot.previewText)
     }
 
     /** 窗口/翻页恢复时优先用会话内视口锚点，避免 [_book.currentPosition] 滞后于内存进度。 */
@@ -529,30 +701,23 @@ class ReaderViewModel @Inject constructor(
     fun readingPreviewForRestore(): String? =
         lastKnownProgressPreview.takeIf { it.isNotBlank() }
 
-    /** 退出阅读页时同步落盘，避免 ON_PAUSE 异步写入未完成。 */
-    fun persistReadingPositionBlocking(
+    /** 退出阅读页时立即提交到串行写入队列，避免等待滚动防抖任务。 */
+    fun enqueueReadingPositionSave(
         globalChar: Int,
         previewText: String? = null,
         reachedEnd: Boolean? = null,
     ) {
         val contentLen = _content.value.length
         if (contentLen <= 0) return
-        val pos = globalChar.coerceIn(0, contentLen)
-        lastKnownReadingCharPos = pos
-        if (reachedEnd != null) {
-            lastKnownReachedEnd = reachedEnd
-            if (finishPromptEnabled && !reachedEnd) {
-                finishedLatch = false
-            }
-        }
-        previewText?.let { lastKnownProgressPreview = normalizeReadingPreviewText(it) }
-        val progress = progressToPersist()
-        _readingProgress.value = progress
+        val snapshot = session.capturePosition(
+            contentLength = contentLen,
+            globalChar = globalChar,
+            previewText = previewText?.let(::normalizeReadingPreviewText),
+            reachedEnd = reachedEnd,
+        )
         progressPersistJob?.cancel()
         progressPersistJob = null
-        runBlocking {
-            persistReadingProgress(progress, pos, lastKnownProgressPreview)
-        }
+        persistReadingProgress(snapshot.progress, snapshot.position, snapshot.previewText)
     }
 
     fun updateReadingProgress(progress: Float) {
@@ -568,57 +733,29 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    private suspend fun persistReadingProgress(
+    private fun persistReadingProgress(
         progress: Float,
         position: Int,
         previewText: String,
     ) {
         val book = _book.value ?: return
-        bookRepository.updateReadingProgress(book.id, progress, position, previewText)
+        persistenceQueue.saveProgress(book.id, progress, position, previewText)
         // 勿同步更新 _book.currentPosition：ReaderScreen 监听该字段会重算窗口并触发滚动恢复，导致阅读中跳动。
     }
 
-    private suspend fun flushReadingProgressNow() {
+    private fun enqueueReadingProgressSave() {
         progressPersistJob?.cancel()
         progressPersistJob = null
         val contentLen = _content.value.length.coerceAtLeast(1)
-        val pos = lastKnownReadingCharPos.coerceIn(0, contentLen)
-        val progress = progressToPersist()
-        _readingProgress.value = progress
-        persistReadingProgress(progress, pos, lastKnownProgressPreview)
-    }
-
-    private fun applyViewportProgress(
-        pos: Int,
-        contentLen: Int,
-        reachedEnd: Boolean,
-    ): Float {
-        lastKnownReachedEnd = reachedEnd
-        if (finishPromptEnabled && !reachedEnd) {
-            finishedLatch = false
-            _showMarkFinishedPrompt.value = false
-        }
-        return displayedReadingProgress(pos, contentLen, finishedLatch)
-    }
-
-    private fun progressToPersist(): Float {
-        val current = _readingProgress.value
-        return when {
-            finishedLatch -> 1f
-            current.isFinishedReading() -> 1f
-            else -> current
-        }
-    }
-
-    private fun maybeShowMarkFinishedPrompt() {
-        if (!finishPromptEnabled) return
-        if (!lastKnownReachedEnd) return
-        if (finishPromptDismissedThisSession) return
-        if (finishedLatch || _readingProgress.value.isFinishedReading()) return
-        _showMarkFinishedPrompt.value = true
+        val snapshot = session.snapshot(contentLen)
+        persistReadingProgress(snapshot.progress, snapshot.position, snapshot.previewText)
     }
 
     fun addBookmark(previewText: String, note: String? = null) {
+        dispatch(ReaderEvent.AddBookmark(previewText, note))
+    }
+
+    private fun addBookmarkInternal(previewText: String, note: String? = null) {
         viewModelScope.launch {
             _book.value?.let { book ->
                 val raw = _content.value
@@ -644,6 +781,10 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun deleteBookmark(bookmark: BookmarkEntity) {
+        dispatch(ReaderEvent.DeleteBookmark(bookmark))
+    }
+
+    private fun deleteBookmarkInternal(bookmark: BookmarkEntity) {
         viewModelScope.launch {
             bookmarkRepository.deleteBookmark(bookmark)
         }
@@ -655,6 +796,11 @@ class ReaderViewModel @Inject constructor(
      * @param positionForAdd 当前视口顶部在全书正文中的字符下标；传入后不再依赖可能滞后的 readingProgress。
      */
     suspend fun toggleBookmarkAtSwipe(
+        previewForAdd: String? = null,
+        positionForAdd: Int? = null,
+    ): Boolean? = toggleBookmarkAtSwipeInternal(previewForAdd, positionForAdd)
+
+    private suspend fun toggleBookmarkAtSwipeInternal(
         previewForAdd: String? = null,
         positionForAdd: Int? = null,
     ): Boolean? {
@@ -670,14 +816,14 @@ class ReaderViewModel @Inject constructor(
             position = pos,
             context = appContext,
         )
-        lastKnownReadingCharPos = pos
         val isPdf = PdfReaderContent.looksLikePdfBody(raw)
-        if (!isPdf) {
-            lastKnownProgressPreview = preview
-        }
-        val progress = pos.toFloat() / raw.length.coerceAtLeast(1)
-        _readingProgress.value = progress
-        scheduleProgressPersist(progress, pos, if (isPdf) "" else preview)
+        session.updateBookmarkPosition(pos, preview, raw.length, isPdf)
+        val snapshot = session.snapshot(raw.length)
+        scheduleProgressPersist(
+            snapshot.progress,
+            snapshot.position,
+            if (isPdf) "" else snapshot.previewText,
+        )
         val window = (total / 40).coerceIn(300, 1500)
         val near = bookmarks.value.find { abs(it.position - pos) <= window }
 
@@ -794,10 +940,23 @@ class ReaderViewModel @Inject constructor(
         color: androidx.compose.ui.graphics.Color,
         style: HighlightStyle,
     ) {
+        dispatch(
+            ReaderEvent.UpdateHighlightAppearance(
+                highlightId = highlightId,
+                colorArgb = highlightColorArgb(color),
+                style = style,
+            )
+        )
+    }
+
+    private fun updateHighlightAppearanceInternal(
+        highlightId: Long,
+        colorArgb: Int,
+        style: HighlightStyle,
+    ) {
         if (highlightId <= 0L) return
         viewModelScope.launch {
             val existing = highlights.value.find { it.id == highlightId } ?: return@launch
-            val colorArgb = highlightColorArgb(color)
             val updated = existing.copy(color = colorArgb, style = style.storageKey)
             // 先乐观更新 UI，再落库
             highlights.value = highlights.value.map { if (it.id == highlightId) updated else it }
@@ -807,6 +966,10 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun deleteHighlight(highlight: HighlightEntity) {
+        dispatch(ReaderEvent.DeleteHighlight(highlight))
+    }
+
+    private fun deleteHighlightInternal(highlight: HighlightEntity) {
         viewModelScope.launch {
             // 先乐观移除，菜单/正文立刻变为未划线
             highlights.value = highlights.value.filterNot { it.id == highlight.id }
@@ -815,6 +978,10 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun deleteHighlightById(highlightId: Long) {
+        dispatch(ReaderEvent.DeleteHighlightById(highlightId))
+    }
+
+    private fun deleteHighlightByIdInternal(highlightId: Long) {
         if (highlightId <= 0L) return
         viewModelScope.launch {
             val existing = highlights.value.firstOrNull { it.id == highlightId } ?: return@launch
@@ -917,116 +1084,39 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    private suspend fun loadFileExtracted(context: Context, book: BookEntity): ExtractedBookText {
-        val canonical = ParsedBookStorage.bundleDir(appContext, book.id)
-        ParsedBookStorage.readBundle(canonical)
-            ?.takeIf { isReadableExtracted(book, it, canonical) }
-            ?.let {
-                persistCanonicalPathsIfNeeded(book, canonical)
-                return it
-            }
-
-        val bundlePath = book.parsedBundlePath
-        if (!bundlePath.isNullOrBlank()) {
-            val dir = File(bundlePath)
-            if (dir.absolutePath != canonical.absolutePath) {
-                ParsedBookStorage.readBundle(dir)
-                    ?.takeIf { isReadableExtracted(book, it, dir) }
-                    ?.let { return it }
-            }
-        }
-
-        // 恢复后正文可能仅在 WebDAV books/{hash}.zip，打开时再补拉一次
-        if (bookContentSync.ensureLocalBookContent(book.id)) {
-            ParsedBookStorage.readBundle(canonical)
-                ?.takeIf { isReadableExtracted(book, it, canonical) }
-                ?.let {
-                    persistCanonicalPathsIfNeeded(book, canonical)
-                    return it
-                }
-        }
-
-        if (ImportedBookFormat.isRemovedStoredKey(book.importFormat)) {
-            return ExtractedBookText.plainBody(
-                BookContentLoader.removedFormatPlaceholder(context, book.importFormat)
-            )
-        }
-        val format = ImportedBookFormat.fromStored(book.importFormat)
-        if (format.isPdf) {
-            // 本地 PDF 打开只读解析包，不再从 content:// / URL 全量重提取。
-            return ExtractedBookText.plainBody("")
-        }
-        val path = book.filePath
-        return try {
-            if (path.startsWith("http://", ignoreCase = true) ||
-                path.startsWith("https://", ignoreCase = true)
-            ) {
-                val result = UrlBookDownloader.download(path)
-                BookContentLoader.loadExtractedFromUrlBytes(
-                    context,
-                    result.bytes,
-                    format,
-                    result.charsetFromHeader
-                )
-            } else if (path.startsWith("content://", ignoreCase = true)) {
-                val uri = Uri.parse(path)
-                BookContentLoader.loadExtractedFromUri(context, uri, format)
-            } else {
-                // 他机绝对路径 / 失效本地路径：不再误读
-                ExtractedBookText.plainBody("")
-            }
-        } catch (_: Exception) {
-            ExtractedBookText.plainBody("")
-        }
-    }
-
-    private fun isReadableExtracted(
-        book: BookEntity,
-        extracted: ExtractedBookText,
-        dir: File,
-    ): Boolean {
-        if (extracted.body.isEmpty()) return false
-        return ParsedBookStorage.isCompleteBundle(dir, book.importFormat)
-    }
-
-    private suspend fun persistCanonicalPathsIfNeeded(book: BookEntity, canonical: File) {
-        val bodyFile = File(canonical, ParsedBookStorage.BODY_FILE)
-        if (!bodyFile.isFile) return
-        val cover = when {
-            File(canonical, ParsedBookStorage.COVER_JPG).isFile ->
-                File(canonical, ParsedBookStorage.COVER_JPG).absolutePath
-            File(canonical, ParsedBookStorage.COVER_PNG).isFile ->
-                File(canonical, ParsedBookStorage.COVER_PNG).absolutePath
-            else -> book.coverImagePath
-        }
-        val localBundle = canonical.absolutePath
-        val localBody = bodyFile.absolutePath
-        if (book.parsedBundlePath == localBundle &&
-            book.filePath == localBody &&
-            book.coverImagePath == cover
-        ) {
-            return
-        }
-        bookRepository.updateBook(
-            book.copy(
-                parsedBundlePath = localBundle,
-                filePath = localBody,
-                coverImagePath = cover,
-            ),
-        )
-    }
-
     override fun onCleared() {
-        // onCleared 时 viewModelScope 已取消；进度与未 flush 的会话片段需同步落盘。
+        // onCleared 时 viewModelScope 已取消；进度与未提交的会话片段交给应用级队列落盘。
         // 正常路径 ON_PAUSE 已写过统计，此处仅兜底（例如未走到 Pause 的销毁）。
         if (_book.value != null) {
-            flushSessionSegmentBlocking()
-            runBlocking {
-                flushReadingProgressNow()
-            }
+            enqueueSessionSegmentSave()
+            enqueueReadingProgressSave()
         }
         super.onCleared()
     }
+}
+
+private fun DocumentOpenResult.Failed.toReaderLoadState(context: Context): ReaderLoadState = when (reason) {
+    DocumentOpenFailure.BookNotFound -> ReaderLoadState.MissingSource(
+        detail ?: context.getString(R.string.reader_error_book_not_found),
+    )
+    DocumentOpenFailure.MissingSource -> ReaderLoadState.MissingSource(
+        detail ?: context.getString(R.string.reader_error_cannot_read_body),
+    )
+    DocumentOpenFailure.BrokenBundle -> ReaderLoadState.BrokenBundle(
+        detail ?: context.getString(R.string.reader_error_pdf_bundle_incomplete),
+    )
+    DocumentOpenFailure.NetworkRequired -> ReaderLoadState.NetworkRequired(
+        detail ?: context.getString(R.string.reader_error_network_required),
+    )
+    DocumentOpenFailure.UnsupportedFormat -> ReaderLoadState.UnsupportedFormat(
+        detail ?: context.getString(R.string.reader_error_cannot_read_body),
+    )
+    DocumentOpenFailure.PermissionDenied -> ReaderLoadState.PermissionDenied(
+        detail ?: context.getString(R.string.reader_error_permission_denied),
+    )
+    DocumentOpenFailure.Failed -> ReaderLoadState.Failed(
+        detail ?: context.getString(R.string.reader_error_cannot_read_body),
+    )
 }
 
 /** 书签 / 阅读进度共用的预览文案规范化。 */

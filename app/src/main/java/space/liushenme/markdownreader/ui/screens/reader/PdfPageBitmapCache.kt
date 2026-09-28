@@ -3,6 +3,7 @@ package space.liushenme.markdownreader.ui.screens.reader
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import space.liushenme.markdownreader.importing.PdfPageRenderSize
+import space.liushenme.markdownreader.markdown.ReaderMediaCache
 import java.io.File
 import java.util.LinkedHashMap
 
@@ -13,7 +14,7 @@ internal data class PdfBitmapKey(val path: String, val targetWidth: Int)
  * 本地只有导入 PNG 时，清晰度上限是文件像素，不会凭空变清。
  */
 internal class PdfPageBitmapCache(
-    private val maxEntries: Int = 8,
+    private val maxEntries: Int = ReaderMediaCache.policy.pdfBitmapEntries,
 ) {
     private val cache = object : LinkedHashMap<PdfBitmapKey, Bitmap>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PdfBitmapKey, Bitmap>?): Boolean {

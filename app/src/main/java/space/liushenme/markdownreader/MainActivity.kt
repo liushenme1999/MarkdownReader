@@ -14,6 +14,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
@@ -23,6 +24,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -39,6 +42,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -60,11 +65,12 @@ import space.liushenme.markdownreader.ui.theme.BookshelfPageBackgroundDark
 import space.liushenme.markdownreader.data.backup.BackupManager
 import space.liushenme.markdownreader.ui.theme.MarkdownReaderTheme
 import space.liushenme.markdownreader.ui.theme.resolveDarkTheme
+import space.liushenme.markdownreader.ui.layout.AppWindowWidthClass
+import space.liushenme.markdownreader.ui.layout.appWindowWidthClass
+import space.liushenme.markdownreader.ui.layout.usesNavigationRail
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import space.liushenme.markdownreader.R
@@ -151,16 +157,6 @@ class MainActivity : AppCompatActivity() {
         pendingOpenUri = IncomingFileIntent.extractOpenableUri(intent)
     }
 
-    override fun onDestroy() {
-        val shouldAutoBackup = !isChangingConfigurations
-        super.onDestroy()
-        if (shouldAutoBackup) {
-            // Activity scope 已取消，使用独立协程完成退出时自动备份（对齐 Legado）
-            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-                backupManager.autoBackup()
-            }
-        }
-    }
 }
 
 @Composable
@@ -202,6 +198,9 @@ private fun MainAppContent(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val shelfPageBg = shelfStylePageBackground()
+    val density = LocalDensity.current
+    val windowWidth = with(density) { LocalWindowInfo.current.containerSize.width.toDp() }
+    val widthClass = appWindowWidthClass(windowWidth)
     val usesShelfStyleChrome = currentRoute in AppRoutes.shelfStyleRoutes
     if (usesShelfStyleChrome) {
         ShelfStyleStatusBarEffect(shelfPageBg)
@@ -218,7 +217,10 @@ private fun MainAppContent(
             var bookshelfHideBottomNav by remember { mutableStateOf(false) }
             val showBottomBar =
                 (currentRoute == AppRoutes.BOOKSHELF || currentRoute == AppRoutes.PROFILE) &&
-                    !bookshelfHideBottomNav
+                    !bookshelfHideBottomNav && widthClass == AppWindowWidthClass.Compact
+            val showRail =
+                (currentRoute == AppRoutes.BOOKSHELF || currentRoute == AppRoutes.PROFILE) &&
+                    !bookshelfHideBottomNav && widthClass.usesNavigationRail()
 
             Scaffold(
                 modifier = Modifier.fillMaxSize(),
@@ -276,13 +278,61 @@ private fun MainAppContent(
                 } else {
                     PaddingValues()
                 }
-                AppNavHost(
-                    navController = navController,
-                    modifier = Modifier.padding(navHostPadding),
-                    pendingOpenUri = pendingOpenUri,
-                    onPendingExternalUriConsumed = onPendingOpenUriConsumed,
-                    onSelectionModeChange = { bookshelfHideBottomNav = it },
-                )
+                Row(modifier = Modifier.fillMaxSize()) {
+                    if (showRail) {
+                        NavigationRail(
+                            containerColor = if (usesShelfStyleChrome) {
+                                shelfPageBg
+                            } else {
+                                MaterialTheme.colorScheme.surface
+                            },
+                        ) {
+                            NavigationRailItem(
+                                selected = currentRoute == AppRoutes.BOOKSHELF,
+                                onClick = {
+                                    navController.navigate(AppRoutes.BOOKSHELF) {
+                                        popUpTo(navController.graph.startDestinationId) { saveState = true }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
+                                },
+                                icon = {
+                                    androidx.compose.material3.Icon(
+                                        Icons.AutoMirrored.Filled.MenuBook,
+                                        contentDescription = stringResource(R.string.nav_bookshelf),
+                                    )
+                                },
+                                label = { Text(stringResource(R.string.nav_bookshelf)) },
+                            )
+                            NavigationRailItem(
+                                selected = currentRoute == AppRoutes.PROFILE,
+                                onClick = {
+                                    navController.navigate(AppRoutes.PROFILE) {
+                                        popUpTo(navController.graph.startDestinationId) { saveState = true }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
+                                },
+                                icon = {
+                                    androidx.compose.material3.Icon(
+                                        Icons.Default.Person,
+                                        contentDescription = stringResource(R.string.nav_profile),
+                                    )
+                                },
+                                label = { Text(stringResource(R.string.nav_profile)) },
+                            )
+                        }
+                    }
+                    AppNavHost(
+                        navController = navController,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(navHostPadding),
+                        pendingOpenUri = pendingOpenUri,
+                        onPendingExternalUriConsumed = onPendingOpenUriConsumed,
+                        onSelectionModeChange = { bookshelfHideBottomNav = it },
+                    )
+                }
             }
             if (usesShelfStyleChrome) {
                 ShelfStyleStatusBarBackdrop(

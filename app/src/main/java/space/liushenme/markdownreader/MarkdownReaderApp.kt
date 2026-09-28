@@ -3,8 +3,10 @@ package space.liushenme.markdownreader
 import android.app.Activity
 import android.app.Application
 import android.os.Bundle
+import androidx.work.Configuration
 import space.liushenme.markdownreader.data.local.BookContentHashBackfill
 import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
+import space.liushenme.markdownreader.data.work.BackgroundWorkScheduler
 import space.liushenme.markdownreader.markdown.DiagramWebViewRenderer
 import space.liushenme.markdownreader.platform.AppLocaleController
 import space.liushenme.markdownreader.platform.MainThreadCrashGuard
@@ -19,7 +21,10 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 @HiltAndroidApp
-class MarkdownReaderApp : Application() {
+class MarkdownReaderApp : Application(), Configuration.Provider {
+
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder().build()
 
     @Inject
     lateinit var readerSettingsRepository: ReaderSettingsRepository
@@ -29,6 +34,9 @@ class MarkdownReaderApp : Application() {
 
     @Inject
     lateinit var appUpdateRepository: AppUpdateRepository
+
+    @Inject
+    lateinit var backgroundWorkScheduler: BackgroundWorkScheduler
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -48,6 +56,8 @@ class MarkdownReaderApp : Application() {
         appScope.launch {
             appUpdateRepository.refresh()
         }
+        backgroundWorkScheduler.ensurePeriodicBackupScheduled()
+        backgroundWorkScheduler.enqueueAutoBackup()
     }
 
     private fun startLocaleSyncIfNeeded() {

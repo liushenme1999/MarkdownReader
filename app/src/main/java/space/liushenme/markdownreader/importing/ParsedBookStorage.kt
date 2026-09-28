@@ -1,6 +1,9 @@
 package space.liushenme.markdownreader.importing
 
 import android.content.Context
+import space.liushenme.markdownreader.document.DocumentArtifactManifest
+import space.liushenme.markdownreader.document.DocumentBlockIndexStorage
+import space.liushenme.markdownreader.document.DocumentFormat
 import space.liushenme.markdownreader.markdown.DiagramPayloadStore
 import space.liushenme.markdownreader.markdown.MarkdownInlineHtml
 import space.liushenme.markdownreader.markdown.MarkdownPreprocessor
@@ -60,6 +63,7 @@ object ParsedBookStorage {
                     File(assetsDir, safeName).writeBytes(bytes)
                 }
             }
+            writeDerivedMetadata(dir, extracted.body)
             true
         }.getOrDefault(false)
     }
@@ -71,7 +75,9 @@ object ParsedBookStorage {
         if (dest.exists()) dest.deleteRecursively()
         bundleDir.mkdirs()
         if (stagingAssets.renameTo(dest) && dest.isDirectory) {
-            return dest.listFiles()?.isNotEmpty() == true
+            val installed = dest.listFiles()?.isNotEmpty() == true
+            if (installed) refreshDerivedMetadata(bundleDir)
+            return installed
         }
         dest.mkdirs()
         val files = stagingAssets.listFiles() ?: return false
@@ -86,12 +92,20 @@ object ParsedBookStorage {
             }
             if (target.isFile && target.length() > 0L) copied++
         }
-        return copied > 0
+        val installed = copied > 0
+        if (installed) refreshDerivedMetadata(bundleDir)
+        return installed
     }
 
     fun readBundle(dir: File): ExtractedBookText? {
         val bodyFile = File(dir, BODY_FILE)
         if (!bodyFile.isFile) return null
+        when (DocumentArtifactManifest.validation(dir)) {
+            DocumentArtifactManifest.Validation.Valid,
+            DocumentArtifactManifest.Validation.MissingManifest,
+            -> Unit
+            else -> return null
+        }
         val rawBody = runCatching { bodyFile.readText(StandardCharsets.UTF_8) }.getOrNull()
             ?: return null
         loadDiagramPayloads(dir)
@@ -105,7 +119,30 @@ object ParsedBookStorage {
         }
         // materialize 会把 book-asset:// 换成更长的 file://，旧 toc.json 偏移会整体错位。
         val toc = BookTocEnricher.alignToBody(body, storedToc)
+        if (DocumentArtifactManifest.validation(dir) == DocumentArtifactManifest.Validation.MissingManifest) {
+            runCatching { writeDerivedMetadata(dir, rawBody) }
+        }
         return ExtractedBookText(body = body, toc = toc, coverImageBytes = null)
+    }
+
+    /** 旧解析包无侧车文件时按当前正文补建，正文与旧数据库字段均不改写。 */
+    fun refreshDerivedMetadata(dir: File): Boolean {
+        val body = runCatching { File(dir, BODY_FILE).readText(StandardCharsets.UTF_8) }.getOrNull()
+            ?: return false
+        return runCatching {
+            writeDerivedMetadata(dir, body)
+            true
+        }.getOrDefault(false)
+    }
+
+    private fun writeDerivedMetadata(dir: File, rawBody: String) {
+        val format = if (PdfReaderContent.looksLikePdfBody(rawBody)) {
+            DocumentFormat.Pdf
+        } else {
+            DocumentFormat.Markdown
+        }
+        DocumentBlockIndexStorage.write(dir, format, rawBody)
+        DocumentArtifactManifest.write(dir)
     }
 
     private fun writeDiagramPayloads(dir: File, body: String) {

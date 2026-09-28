@@ -102,20 +102,106 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
+/**
+ * Floating reader controls. Keeping this layer outside ReaderScreen prevents
+ * chrome animation and layout details from mixing with document restoration.
+ */
+@Composable
+internal fun ReaderChrome(
+    visible: Boolean,
+    title: String,
+    chapterTitle: String?,
+    theme: ReadingTheme,
+    backgroundColor: Color,
+    onNavigateBack: () -> Unit,
+    onToc: () -> Unit,
+    onBookmarks: () -> Unit,
+    onReadingSettings: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier) {
+        AnimatedVisibility(
+            visible = visible,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .zIndex(2f),
+            enter = slideInVertically(
+                initialOffsetY = { -it },
+                animationSpec = tween(300),
+            ) + fadeIn(animationSpec = tween(300)),
+            exit = slideOutVertically(
+                targetOffsetY = { -it },
+                animationSpec = tween(300),
+            ) + fadeOut(animationSpec = tween(300)),
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RectangleShape,
+                tonalElevation = 0.dp,
+                shadowElevation = 2.dp,
+                color = backgroundColor,
+            ) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(backgroundColor),
+                ) {
+                    Spacer(
+                        Modifier
+                            .fillMaxWidth()
+                            .windowInsetsTopHeight(WindowInsets.statusBars),
+                    )
+                    ReaderTopAppBar(
+                        title = title,
+                        chapterTitle = chapterTitle,
+                        onNavigateBack = onNavigateBack,
+                        theme = theme,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        }
+
+        AnimatedVisibility(
+            visible = visible,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .zIndex(2f),
+            enter = slideInVertically(
+                initialOffsetY = { it },
+                animationSpec = tween(300),
+            ) + fadeIn(animationSpec = tween(300)),
+            exit = slideOutVertically(
+                targetOffsetY = { it },
+                animationSpec = tween(300),
+            ) + fadeOut(animationSpec = tween(300)),
+        ) {
+            ReaderImmersiveBottomBar(
+                modifier = Modifier.fillMaxWidth(),
+                theme = theme,
+                chromeBackground = backgroundColor,
+                onToc = onToc,
+                onBookmarks = onBookmarks,
+                onReadingSettings = onReadingSettings,
+            )
+        }
+    }
+}
+
 @Composable
 internal fun ReaderImmersiveChapterTitleBar(
-    viewModel: ReaderViewModel,
     tocEntries: List<MarkdownTocEntry>,
-    totalChars: Int,
+    readingProgress: Float,
+    viewportTopChar: Int,
+    viewportBottomChar: Int,
+    visibleChapterOffset: Int?,
     fallbackTitle: String,
     theme: ReadingTheme,
     modifier: Modifier = Modifier,
     reserveStatusBarInset: Boolean = true,
 ) {
-    val readingProgress by viewModel.readingProgress.collectAsState()
-    val viewportTopChar by viewModel.viewportTopChar.collectAsState()
-    val viewportBottomChar by viewModel.viewportBottomChar.collectAsState()
-    val visibleChapterOffset by viewModel.visibleChapterOffset.collectAsState()
     val chapterEntry = remember(tocEntries, viewportTopChar, viewportBottomChar, visibleChapterOffset) {
         chapterEntryForTitleBar(tocEntries, viewportTopChar, viewportBottomChar, visibleChapterOffset)
     }
@@ -130,13 +216,11 @@ internal fun ReaderImmersiveChapterTitleBar(
 
 @Composable
 internal fun rememberChapterTitleForProgress(
-    viewModel: ReaderViewModel,
     tocEntries: List<MarkdownTocEntry>,
-    totalChars: Int,
+    viewportTopChar: Int,
+    viewportBottomChar: Int,
+    visibleChapterOffset: Int?,
 ): String? {
-    val viewportTopChar by viewModel.viewportTopChar.collectAsState()
-    val viewportBottomChar by viewModel.viewportBottomChar.collectAsState()
-    val visibleChapterOffset by viewModel.visibleChapterOffset.collectAsState()
     val chapterEntry = remember(tocEntries, viewportTopChar, viewportBottomChar, visibleChapterOffset) {
         chapterEntryForTitleBar(tocEntries, viewportTopChar, viewportBottomChar, visibleChapterOffset)
     }

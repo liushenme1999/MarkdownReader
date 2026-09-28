@@ -1,7 +1,11 @@
 name: Android CI
 
-# 已关闭 push / PR 自动触发，避免消耗 Actions 额度。需要时在 GitHub Actions 页手动 Run workflow。
+# 主分支与开发分支持续校验；也保留手动触发，便于发布前复验。
 on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
   workflow_dispatch:
 
 env:
@@ -29,7 +33,6 @@ jobs:
 
       - name: Run Android Lint
         run: ./gradlew lint
-        continue-on-error: true
 
       - name: Upload lint reports
         uses: actions/upload-artifact@v4

@@ -65,6 +65,12 @@ class ReadingSettingsViewModel @Inject constructor(
         initialValue = ReaderSettingsRepository.DEFAULT_HIDE_SYSTEM_BARS,
     )
 
+    val showTocInLandscape = readerSettingsRepository.showTocInLandscape.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = ReaderSettingsRepository.DEFAULT_SHOW_TOC_IN_LANDSCAPE,
+    )
+
     val pageTurnMode = readerSettingsRepository.pageTurnMode.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -130,6 +136,10 @@ class ReadingSettingsViewModel @Inject constructor(
 
     fun setHideSystemBars(hide: Boolean) {
         viewModelScope.launch { readerSettingsRepository.setHideSystemBars(hide) }
+    }
+
+    fun setShowTocInLandscape(show: Boolean) {
+        viewModelScope.launch { readerSettingsRepository.setShowTocInLandscape(show) }
     }
 
     fun setPageTurnMode(mode: ReaderPageTurnMode) {

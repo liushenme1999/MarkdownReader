@@ -40,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -65,6 +66,7 @@ fun BackupRestoreScreen(
 ) {
     val pageBg = shelfStylePageBackground()
     val context = LocalContext.current
+    val resources = LocalResources.current
     val config by viewModel.config.collectAsState()
     val busy by viewModel.busy.collectAsState()
     val events by viewModel.events.collectAsState()
@@ -81,35 +83,35 @@ fun BackupRestoreScreen(
         val e = events ?: return@LaunchedEffect
         val text = when (e) {
             is BackupUiEvent.BackupSuccess ->
-                context.getString(R.string.backup_toast_backup_success, e.fileName)
+                resources.getString(R.string.backup_toast_backup_success, e.fileName)
             is BackupUiEvent.BackupFailed ->
-                context.getString(R.string.backup_toast_backup_failed, e.detail)
+                resources.getString(R.string.backup_toast_backup_failed, e.detail)
             BackupUiEvent.RestoreListEmpty ->
-                context.getString(R.string.backup_toast_restore_list_empty)
+                resources.getString(R.string.backup_toast_restore_list_empty)
             is BackupUiEvent.RestoreListFailed ->
-                context.getString(R.string.backup_toast_restore_list_failed, e.detail)
+                resources.getString(R.string.backup_toast_restore_list_failed, e.detail)
             BackupUiEvent.RestoreSuccess ->
-                context.getString(R.string.backup_toast_restore_success)
+                resources.getString(R.string.backup_toast_restore_success)
             is BackupUiEvent.RestoreFailed ->
-                context.getString(R.string.backup_toast_restore_failed, e.detail)
+                resources.getString(R.string.backup_toast_restore_failed, e.detail)
             is BackupUiEvent.ContentBackupSuccess ->
-                context.getString(
+                resources.getString(
                     R.string.backup_toast_content_backup_success,
                     e.result.success,
                     e.result.skipped,
                     e.result.failed,
                 )
             is BackupUiEvent.ContentBackupFailed ->
-                context.getString(R.string.backup_toast_content_backup_failed, e.detail)
+                resources.getString(R.string.backup_toast_content_backup_failed, e.detail)
             is BackupUiEvent.ContentRestoreSuccess ->
-                context.getString(
+                resources.getString(
                     R.string.backup_toast_content_restore_success,
                     e.result.success,
                     e.result.skipped,
                     e.result.failed,
                 )
             is BackupUiEvent.ContentRestoreFailed ->
-                context.getString(R.string.backup_toast_content_restore_failed, e.detail)
+                resources.getString(R.string.backup_toast_content_restore_failed, e.detail)
         }
         Toast.makeText(context, text, Toast.LENGTH_LONG).show()
         viewModel.clearEvent()

@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -46,6 +47,7 @@ fun ProfileScreen(
     viewModel: ProfileViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val shelfBg = shelfStylePageBackground()
     val profile by viewModel.profile.collectAsState()
     val todayReadingMinutes by viewModel.todayReadingMinutes.collectAsState()
@@ -80,12 +82,12 @@ fun ProfileScreen(
                     showClearCacheDialog = false
                     viewModel.clearCache { bytesFreed ->
                         val message = if (bytesFreed > 0) {
-                            context.getString(
+                            resources.getString(
                                 R.string.toast_cache_cleared_with_size,
                                 formatCacheBytes(bytesFreed),
                             )
                         } else {
-                            context.getString(R.string.toast_cache_cleared)
+                            resources.getString(R.string.toast_cache_cleared)
                         }
                         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                     }

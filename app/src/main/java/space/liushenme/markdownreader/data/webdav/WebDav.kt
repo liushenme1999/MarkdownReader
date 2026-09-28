@@ -20,8 +20,9 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.StringReader
 import java.net.URLDecoder
-import java.time.ZonedDateTime
-import java.time.format.DateTimeFormatter
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 
 /**
@@ -33,8 +34,6 @@ class WebDav(
 ) {
     companion object {
         private const val DEFAULT_CONTENT_TYPE = "application/octet-stream"
-
-        private val dateTimeFormatter = DateTimeFormatter.RFC_1123_DATE_TIME
 
         private const val PROP_FIND =
             """<?xml version="1.0"?>
@@ -253,10 +252,7 @@ class WebDav(
                             size = parser.nextText()?.toLongOrNull() ?: 0L
                         local.equals("getlastmodified", ignoreCase = true) -> {
                             val text = parser.nextText().orEmpty()
-                            lastModify = runCatching {
-                                ZonedDateTime.parse(text, dateTimeFormatter)
-                                    .toInstant().toEpochMilli()
-                            }.getOrDefault(0L)
+                            lastModify = parseHttpDate(text)
                         }
                         local.equals("resourcetype", ignoreCase = true) -> {
                             inResourceType = true
@@ -328,4 +324,11 @@ class WebDav(
 
     private fun pathsEqual(a: String, b: String): Boolean =
         a.trimEnd('/').equals(b.trimEnd('/'), ignoreCase = true)
+
+    private fun parseHttpDate(raw: String): Long = runCatching {
+        SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss zzz", Locale.US).apply {
+            isLenient = false
+            timeZone = TimeZone.getTimeZone("GMT")
+        }.parse(raw)?.time ?: 0L
+    }.getOrDefault(0L)
 }

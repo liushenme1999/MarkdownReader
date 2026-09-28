@@ -3,8 +3,6 @@ package space.liushenme.markdownreader.ui.screens.reader
 import android.app.Activity
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.drawable.ColorDrawable
-import android.os.Build
 import android.text.Spannable
 import android.text.SpannableString
 import android.text.Spanned
@@ -14,26 +12,15 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.ViewConfiguration
-import android.view.WindowManager
 import android.text.method.LinkMovementMethod
 import android.view.View
 import android.widget.TextView
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
@@ -43,29 +30,23 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Dp
@@ -76,9 +57,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.zIndex
 import androidx.core.graphics.ColorUtils
 import androidx.core.text.PrecomputedTextCompat
@@ -88,8 +66,10 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import space.liushenme.markdownreader.R
+import space.liushenme.markdownreader.document.DocumentFormat
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.importing.ParsedBookStorage
@@ -104,6 +84,8 @@ import space.liushenme.markdownreader.ui.components.ShelfStyleSystemBarsEffect
 import space.liushenme.markdownreader.ui.components.iconTintForDeleteStrip
 import space.liushenme.markdownreader.ui.theme.MarkdownReaderTheme
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
+import space.liushenme.markdownreader.ui.layout.appWindowWidthClass
+import space.liushenme.markdownreader.ui.layout.usesWideReaderNavigation
 import io.noties.markwon.Markwon
 import io.noties.markwon.core.CorePlugin
 import io.noties.markwon.core.spans.HeadingSpan
@@ -129,31 +111,43 @@ import kotlin.math.roundToInt
 fun ReaderScreen(
     navController: NavController,
     bookId: Long,
+    jumpKind: String? = null,
+    jumpPosition: Int? = null,
+    jumpHighlightId: Long? = null,
+    jumpBookmarkId: Long? = null,
+    jumpPreview: String? = null,
     viewModel: ReaderViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    val book by viewModel.book.collectAsState()
-    val content by viewModel.content.collectAsState()
-    val bookmarks by viewModel.bookmarks.collectAsState()
-    val highlights by viewModel.highlights.collectAsState()
-    val readerLoadEpoch by viewModel.readerLoadEpoch.collectAsState()
-    val currentTheme by viewModel.currentTheme.collectAsState()
-    val readingStyleState by viewModel.readingStyleState.collectAsState()
-    val fontSize by viewModel.fontSize.collectAsState()
-    val readerPaddingDp by viewModel.readerPaddingDp.collectAsState()
-    val readerLineSpacingMultiplier by viewModel.readerLineSpacingMultiplier.collectAsState()
-    val codeBlockWrap by viewModel.codeBlockWrap.collectAsState()
-    val hideSystemBarsPref by viewModel.hideSystemBars.collectAsState()
-    val loadError by viewModel.loadError.collectAsState()
-    val pageTurnMode by viewModel.pageTurnMode.collectAsState()
-    val showMarkFinishedPrompt by viewModel.showMarkFinishedPrompt.collectAsState()
-    val configuration = LocalConfiguration.current
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val book = uiState.book
+    val content = uiState.content
+    val bookmarks = uiState.bookmarks
+    val highlights = uiState.highlights
+    val readerLoadEpoch = uiState.readerLoadEpoch
+    val currentTheme = uiState.currentTheme
+    val readingStyleState = uiState.readingStyleState
+    val fontSize = uiState.fontSize
+    val readerPaddingDp = uiState.readerPaddingDp
+    val readerLineSpacingMultiplier = uiState.readerLineSpacingMultiplier
+    val codeBlockWrap = uiState.codeBlockWrap
+    val hideSystemBarsPref = uiState.hideSystemBars
+    val loadError = uiState.loadError
+    val pageTurnMode = uiState.pageTurnMode
+    val windowSize = LocalWindowInfo.current.containerSize
+    val windowDensity = LocalDensity.current
+    val windowWidthDp = with(windowDensity) { windowSize.width.toDp().value.roundToInt() }
+    val windowHeightDp = with(windowDensity) { windowSize.height.toDp().value.roundToInt() }
 
+    val documentFormat = uiState.documentSnapshot?.document?.format
     val importFormat = book?.let { ImportedBookFormat.fromStored(it.importFormat) }
-    val isPdfBook = importFormat?.isPdf == true || PdfReaderContent.looksLikePdfBody(content)
-    val renderPlainText = importFormat?.usesReaderPlainBody == true
+    val isPdfBook = documentFormat == DocumentFormat.Pdf ||
+        importFormat?.isPdf == true ||
+        PdfReaderContent.looksLikePdfBody(content)
+    val renderPlainText = documentFormat == DocumentFormat.PlainText ||
+        importFormat?.usesReaderPlainBody == true
     val readerContent = remember(content, isPdfBook) {
         if (isPdfBook) PdfReaderContent.sanitizeStoredBody(content) else content
     }
@@ -185,18 +179,25 @@ fun ReaderScreen(
     var showReaderSettingsSheet by remember { mutableStateOf(false) }
     var showBookmarks by remember { mutableStateOf(false) }
     var showToc by remember { mutableStateOf(false) }
+    var pendingWideTocEntry by remember { mutableStateOf<MarkdownTocEntry?>(null) }
     var showTopBar by remember { mutableStateOf(false) }
     var readerTextSelectionActive by remember { mutableStateOf(false) }
+    var externalAnnotationConsumed by remember(bookId, jumpKind, jumpPosition, jumpHighlightId, jumpBookmarkId) {
+        mutableStateOf(false)
+    }
     var pendingHighlightSelection by remember {
         mutableStateOf<PendingHighlightPicker?>(null)
     }
     var diagramPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var pdfPageZoomed by remember { mutableStateOf(false) }
 
-    val lastHighlightColorArgb by viewModel.lastHighlightColorArgb.collectAsState()
-    val lastHighlightStyle by viewModel.lastHighlightStyle.collectAsState()
+    val lastHighlightColorArgb = uiState.lastHighlightColorArgb
+    val lastHighlightStyle = uiState.lastHighlightStyle
 
     val snackbarHostState = remember { SnackbarHostState() }
+    val annotationLocatingMessage = stringResource(R.string.reader_annotation_locating)
+    val annotationLocatedMessage = stringResource(R.string.reader_annotation_located)
+    val annotationNearbyMessage = stringResource(R.string.reader_annotation_nearby)
     val readerTextView = remember { mutableStateOf<TextView?>(null) }
 
     val immersiveReading = content.isNotEmpty() && loadError == null
@@ -213,7 +214,7 @@ fun ReaderScreen(
         }
     }
 
-    val structuredToc by viewModel.structuredToc.collectAsState()
+    val structuredToc = uiState.structuredToc
 
     val tocEntries = remember(readerContent, renderPlainText, structuredToc, isPdfBook, context) {
         if (isPdfBook) {
@@ -238,7 +239,19 @@ fun ReaderScreen(
     val readingTitleFallback = stringResource(R.string.reader_title_reading)
     val snackbarBookmarkAdded = stringResource(R.string.snackbar_bookmark_added)
     val snackbarBookmarkRemoved = stringResource(R.string.snackbar_bookmark_removed)
-    val backToBookshelfLabel = stringResource(R.string.reader_back_to_bookshelf)
+
+    LaunchedEffect(viewModel, bookId, snackbarBookmarkAdded, snackbarBookmarkRemoved) {
+        viewModel.effects.collect { effect ->
+            when (effect) {
+                is ReaderEffect.BookLoaded -> if (effect.bookId == bookId) showTopBar = false
+                is ReaderEffect.LoadFailed -> Unit
+                is ReaderEffect.BookmarkToggled -> snackbarHostState.showBriefSnackbar(
+                    if (effect.added) snackbarBookmarkAdded else snackbarBookmarkRemoved,
+                )
+            }
+        }
+    }
+
     val totalChars = book?.totalChars?.takeIf { it > 0 } ?: content.length.coerceAtLeast(1)
 
     val pageSpecs = remember(
@@ -246,14 +259,14 @@ fun ReaderScreen(
         isPdfBook,
         pageTurnMode,
         fontSize,
-        configuration.screenHeightDp,
-        configuration.screenWidthDp,
+        windowHeightDp,
+        windowWidthDp,
     ) {
         when {
             pageTurnMode == ReaderPageTurnMode.VerticalScroll || isPdfBook -> emptyList()
             else -> splitMarkdownToPages(
                 readerContent,
-                estimateTargetCharsPerPage(fontSize, configuration.screenHeightDp, configuration.screenWidthDp),
+                estimateTargetCharsPerPage(fontSize, windowHeightDp, windowWidthDp),
             )
         }
     }
@@ -263,8 +276,11 @@ fun ReaderScreen(
     )
 
     // ===== 章节惰性渲染窗口（仅 VerticalScroll 模式生效）=====
-    val chapterBoundaries = remember(readerContent, tocEntries) {
-        computeChapterBoundaries(readerContent, tocEntries)
+    val documentChunkIndex = uiState.documentSnapshot?.chunkIndex
+    val chapterBoundaries = remember(readerContent, tocEntries, documentChunkIndex) {
+        val chapter = computeChapterBoundaries(readerContent, tocEntries)
+        val blockAligned: IntArray = documentChunkIndex?.boundaries ?: intArrayOf()
+        (chapter.toList() + blockAligned.toList()).distinct().sorted().toIntArray()
     }
     // 正文一到齐就同步算出首窗，避免先 (0,0) 空 setText 再整窗二次渲染。
     val initialDisplayWindow = remember(
@@ -601,7 +617,7 @@ fun ReaderScreen(
                     if (draftWasCancelled) {
                         removeReaderHighlightDecorationById(owner, draftId)
                         owner.unregisterDraftHighlight(draftId)
-                        if (id != null) viewModel.deleteHighlightById(id)
+                        if (id != null) viewModel.dispatch(ReaderEvent.DeleteHighlightById(id))
                         owner.clearPendingHighlightMenuIfUnbound()
                         return@addHighlightFromSelection
                     }
@@ -614,7 +630,17 @@ fun ReaderScreen(
                             )
                             it.unregisterDraftHighlight(draftId)
                         }
-                        viewModel.updateHighlightAppearance(id, pending.color, pending.style)
+                        viewModel.dispatch(
+                            ReaderEvent.UpdateHighlightAppearance(
+                                highlightId = id,
+                                colorArgb = if (pending.color.alpha < 0.06f) {
+                                    lastHighlightColorArgb
+                                } else {
+                                    pending.color.toArgb()
+                                },
+                                style = pending.style,
+                            )
+                        )
                         if (pendingHighlightSelection === pending &&
                             owner?.isInTextSelection() == true
                         ) {
@@ -649,7 +675,9 @@ fun ReaderScreen(
         }
         pendingHighlightSelection = null
         if (highlightId > 0L) {
-            highlights.find { it.id == highlightId }?.let { viewModel.deleteHighlight(it) }
+            highlights.find { it.id == highlightId }?.let {
+                viewModel.dispatch(ReaderEvent.DeleteHighlight(it))
+            }
         }
         tv?.bindSelectionHighlightId(null, 0, 0)
     }
@@ -968,7 +996,7 @@ fun ReaderScreen(
     }
 
     LaunchedEffect(bookId) {
-        viewModel.loadBook(context, bookId)
+        viewModel.dispatch(ReaderEvent.LoadBook(bookId))
         showTopBar = false
     }
 
@@ -1467,27 +1495,27 @@ fun ReaderScreen(
         }
         val topChar = currentTopGlobalChar()
             ?: lastScrollTopGlobalChar.takeIf { it >= 0 }
-        viewModel.flushVisibleProgressBlocking(topChar, preview)
+        viewModel.dispatch(ReaderEvent.PersistVisibleProgress(topChar, preview))
     }
 
     DisposableEffect(lifecycleOwner, bookId) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_RESUME -> viewModel.onReadingResumed()
+                Lifecycle.Event.ON_RESUME -> viewModel.dispatch(ReaderEvent.ReadingResumed)
                 Lifecycle.Event.ON_PAUSE -> {
                     persistVisibleProgressNow()
-                    viewModel.onReadingPaused()
+                    viewModel.dispatch(ReaderEvent.ReadingPaused)
                 }
                 else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
-            viewModel.onReadingResumed()
+            viewModel.dispatch(ReaderEvent.ReadingResumed)
         }
         onDispose {
             persistVisibleProgressNow()
-            viewModel.onReadingPaused()
+            viewModel.dispatch(ReaderEvent.ReadingPaused)
             lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
@@ -1496,7 +1524,7 @@ fun ReaderScreen(
         val previous = MarkdownLinkDispatcher.onBeforeOpenWebUrl
         MarkdownLinkDispatcher.onBeforeOpenWebUrl = {
             persistVisibleProgressNow()
-            viewModel.onReadingPaused()
+            viewModel.dispatch(ReaderEvent.ReadingPaused)
         }
         onDispose {
             MarkdownLinkDispatcher.onBeforeOpenWebUrl = previous
@@ -1526,86 +1554,54 @@ fun ReaderScreen(
         }
     }
 
-    Box(Modifier.fillMaxSize()) {
-    if (!isPdfBook) {
-        ReaderPaperBackground(
-            theme = currentTheme,
-            modifier = Modifier.fillMaxSize(),
-        )
-    }
-    Scaffold(
-        containerColor = if (isPdfBook) paperBaseColor else Color.Transparent,
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        contentWindowInsets = if (immersiveReading) {
-            WindowInsets(0, 0, 0, 0)
-        } else {
-            ScaffoldDefaults.contentWindowInsets
+    val readerChapterTitle = rememberChapterTitleForProgress(
+        tocEntries = tocEntries,
+        viewportTopChar = uiState.viewportTopChar,
+        viewportBottomChar = uiState.viewportBottomChar,
+        visibleChapterOffset = uiState.visibleChapterOffset,
+    )
+    val wideReaderNavigation = uiState.showTocInLandscape &&
+        windowSize.width > windowSize.height &&
+        appWindowWidthClass(
+        with(windowDensity) { windowSize.width.toDp() },
+    ).usesWideReaderNavigation() && tocEntries.isNotEmpty()
+    ReaderContainer(
+        isPdf = isPdfBook,
+        immersive = immersiveReading,
+        textSelectionActive = readerTextSelectionActive,
+        hideSystemBars = hideSystemBarsPref,
+        theme = currentTheme,
+        paperColor = paperBaseColor,
+        chromeColor = systemBarChromeColor,
+        snackbarHostState = snackbarHostState,
+        title = book?.title ?: readingTitleFallback,
+        chapterTitle = readerChapterTitle,
+        chromeVisible = readerChromeVisible,
+        wideNavigation = wideReaderNavigation,
+        tocEntries = tocEntries,
+        currentTocEntry = chapterEntryForTitleBar(
+            tocEntries,
+            uiState.viewportTopChar,
+            uiState.viewportBottomChar,
+            uiState.visibleChapterOffset,
+        ),
+        tocTitle = stringResource(R.string.reader_toc_title),
+        tocEmptyMessage = emptyTocMessage,
+        onTocEntryClick = { entry ->
+            pendingWideTocEntry = entry
         },
-        topBar = {
-            if (!immersiveReading && !readerTextSelectionActive) {
-                Column(Modifier.fillMaxWidth()) {
-                    Spacer(
-                        Modifier
-                            .fillMaxWidth()
-                            .windowInsetsTopHeight(WindowInsets.statusBars)
-                    )
-                    ReaderTopAppBar(
-                        title = book?.title ?: readingTitleFallback,
-                        chapterTitle = rememberChapterTitleForProgress(
-                            viewModel = viewModel,
-                            tocEntries = tocEntries,
-                            totalChars = totalChars,
-                        ),
-                        onNavigateBack = { navController.navigateUp() },
-                        theme = currentTheme
-                    )
-                }
-            }
-        }
-    ) { paddingValues ->
-        val readerContentPadding = if (immersiveReading) {
-            PaddingValues(0.dp)
-        } else {
-            paddingValues
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .then(
-                    if (isPdfBook) {
-                        Modifier.background(paperBaseColor)
-                    } else {
-                        Modifier
-                    },
-                ),
+        onNavigateBack = { navController.navigateUp() },
+        onToc = { showToc = true },
+        onBookmarks = { showBookmarks = true },
+        onReadingSettings = { showReaderSettingsSheet = true },
+    ) {
+        ReaderContent(
+            loadState = uiState.loadState,
+            hasContent = content.isNotEmpty(),
+            isPdf = isPdfBook,
+            onRetry = { viewModel.dispatch(ReaderEvent.RetryLoad) },
+            onBack = { navController.navigateUp() },
         ) {
-            if (immersiveReading && !isPdfBook && !hideSystemBarsPref) {
-                ShelfStyleStatusBarBackdrop(
-                    backgroundColor = systemBarChromeColor,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .zIndex(100f),
-                )
-            }
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(readerContentPadding)
-                    .then(
-                        if (immersiveReading && !hideSystemBarsPref) {
-                            if (isPdfBook) {
-                                Modifier.statusBarsPadding().navigationBarsPadding()
-                            } else {
-                                Modifier.navigationBarsPadding()
-                            }
-                        } else {
-                            Modifier
-                        },
-                    ),
-            ) {
-            when (val err = loadError) {
-                null -> {
-                    if (content.isNotEmpty()) {
                         // 长按选区走系统复制/全选菜单，不在此弹出划线顶栏。
                         val onReaderVerticalScroll: (Int) -> Unit = { deltaPx ->
                             if (immersiveReading && showTopBar) {
@@ -1616,36 +1612,30 @@ fun ReaderScreen(
                             }
                         }
                         val onReaderSwipeBookmark: () -> Unit = {
-                            scope.launch {
-                                val tv = readerTextView.value
-                                val topChar = currentTopGlobalChar()
-                                val preview = if (isPdfBook) {
-                                    PdfReaderContent.bookmarkPreview(
-                                        context,
-                                        readerContent,
-                                        (topChar ?: 0).coerceIn(0, readerContent.length),
-                                    )
-                                } else {
-                                    tv?.let { previewPlainTextFromTextViewTop(it) }
-                                }
-                                if (topChar != null) {
-                                    viewModel.updateReadingProgressAtCharNow(
-                                        topChar,
-                                        if (isPdfBook) null else preview,
-                                        documentReachedEnd(),
-                                    )
-                                }
-                                when (
-                                    viewModel.toggleBookmarkAtSwipe(
-                                        previewForAdd = preview,
-                                        positionForAdd = topChar,
-                                    )
-                                ) {
-                                    true -> snackbarHostState.showBriefSnackbar(snackbarBookmarkAdded)
-                                    false -> snackbarHostState.showBriefSnackbar(snackbarBookmarkRemoved)
-                                    null -> { }
-                                }
+                            val tv = readerTextView.value
+                            val topChar = currentTopGlobalChar()
+                            val preview = if (isPdfBook) {
+                                PdfReaderContent.bookmarkPreview(
+                                    context,
+                                    readerContent,
+                                    (topChar ?: 0).coerceIn(0, readerContent.length),
+                                )
+                            } else {
+                                tv?.let { previewPlainTextFromTextViewTop(it) }
                             }
+                            if (topChar != null) {
+                                viewModel.updateReadingProgressAtCharNow(
+                                    topChar,
+                                    if (isPdfBook) null else preview,
+                                    documentReachedEnd(),
+                                )
+                            }
+                            viewModel.dispatch(
+                                ReaderEvent.ToggleBookmarkAtSwipe(
+                                    previewText = preview,
+                                    positionForAdd = topChar,
+                                )
+                            )
                         }
                         // 沉浸模式章节小标题常驻，不随大顶栏/底栏显隐改变布局（避免点击唤出工具栏时正文跳动）
                         val showImmersiveChapterBar = immersiveReading && !isPdfBook
@@ -1660,9 +1650,11 @@ fun ReaderScreen(
                         Column(Modifier.fillMaxSize()) {
                             if (showImmersiveChapterBar) {
                                 ReaderImmersiveChapterTitleBar(
-                                    viewModel = viewModel,
                                     tocEntries = tocEntries,
-                                    totalChars = totalChars,
+                                    readingProgress = uiState.readingProgress,
+                                    viewportTopChar = uiState.viewportTopChar,
+                                    viewportBottomChar = uiState.viewportBottomChar,
+                                    visibleChapterOffset = uiState.visibleChapterOffset,
                                     fallbackTitle = book?.title ?: readingTitleFallback,
                                     theme = currentTheme,
                                     reserveStatusBarInset = !hideSystemBarsPref,
@@ -1785,7 +1777,7 @@ fun ReaderScreen(
                                                             val preview = if (isPdfBook) {
                                                                 null
                                                             } else {
-                                                                readerTv?.let { previewPlainTextFromTextViewTop(it) }
+                                                                previewPlainTextFromTextViewTop(readerTv)
                                                             }
                                                             viewModel.updateReadingProgressAtChar(
                                                                 estimated,
@@ -1899,163 +1891,20 @@ fun ReaderScreen(
                                 }
                             }
                         }
-                    } else {
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center,
-                        ) {
-                            CircularProgressIndicator()
-                            if (isPdfBook) {
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Text(
-                                    text = stringResource(R.string.reader_opening_pdf),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
-                                )
-                            }
-                        }
-                    }
-                }
-                else -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text(
-                            text = err,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
-                        )
-                        Spacer(modifier = Modifier.height(20.dp))
-                        Button(onClick = { navController.navigateUp() }) {
-                            Text(backToBookshelfLabel)
-                        }
-                    }
-                }
-            }
-
-            }
-
-            // 大顶栏 / 底栏：浮层，显隐不改变正文与章节小标题的布局
-            AnimatedVisibility(
-                visible = readerChromeVisible,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .zIndex(2f),
-                enter = slideInVertically(
-                    initialOffsetY = { -it },
-                    animationSpec = tween(300)
-                ) + fadeIn(animationSpec = tween(300)),
-                exit = slideOutVertically(
-                    targetOffsetY = { -it },
-                    animationSpec = tween(300)
-                ) + fadeOut(animationSpec = tween(300)),
-            ) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RectangleShape,
-                    tonalElevation = 0.dp,
-                    shadowElevation = 2.dp,
-                    color = systemBarChromeColor,
-                ) {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .background(systemBarChromeColor),
-                    ) {
-                        Spacer(
-                            Modifier
-                                .fillMaxWidth()
-                                .windowInsetsTopHeight(WindowInsets.statusBars)
-                        )
-                        ReaderTopAppBar(
-                            title = book?.title ?: readingTitleFallback,
-                            chapterTitle = rememberChapterTitleForProgress(
-                                viewModel = viewModel,
-                                tocEntries = tocEntries,
-                                totalChars = totalChars,
-                            ),
-                            onNavigateBack = { navController.navigateUp() },
-                            theme = currentTheme,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                }
-            }
-
-            AnimatedVisibility(
-                visible = readerChromeVisible,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .zIndex(2f),
-                enter = slideInVertically(
-                    initialOffsetY = { it },
-                    animationSpec = tween(300)
-                ) + fadeIn(animationSpec = tween(300)),
-                exit = slideOutVertically(
-                    targetOffsetY = { it },
-                    animationSpec = tween(300)
-                ) + fadeOut(animationSpec = tween(300)),
-            ) {
-                ReaderImmersiveBottomBar(
-                    modifier = Modifier.fillMaxWidth(),
-                    theme = currentTheme,
-                    chromeBackground = systemBarChromeColor,
-                    onToc = { showToc = true },
-                    onBookmarks = { showBookmarks = true },
-                    onReadingSettings = { showReaderSettingsSheet = true },
-                )
-            }
         }
     }
-    }
 
-    if (showMarkFinishedPrompt) {
-        ReaderMarkFinishedDialog(
-            onConfirm = { viewModel.markAsFinished() },
-            onDismiss = { viewModel.dismissFinishPrompt() },
-        )
-    }
-
-    diagramPreviewBitmap?.let { bitmap ->
-        DiagramPreviewDialog(
-            bitmap = bitmap,
-            onDismiss = { diagramPreviewBitmap = null },
-        )
-    }
-
-    if (showReaderSettingsSheet) {
-        ReaderSettingsSheet(
-            styleState = readingStyleState,
-            fontSize = fontSize,
-            readerPaddingDp = readerPaddingDp,
-            readerLineSpacingMultiplier = readerLineSpacingMultiplier,
-            codeBlockWrap = codeBlockWrap,
-            hideSystemBars = hideSystemBarsPref,
-            pageTurnMode = pageTurnMode,
-            onSelectStyle = { viewModel.selectReadingStyle(it) },
-            onAddStyle = { viewModel.addReadingStyle(it) },
-            onUpdateStyle = { index, theme -> viewModel.updateReadingStyle(index, theme) },
-            onDeleteStyle = { viewModel.deleteReadingStyle(it) },
-            onResetAllStyles = { viewModel.resetAllReadingStyles(it) },
-            onFontSizeChange = { viewModel.setFontSize(it) },
-            onPaddingDpChange = { viewModel.setReaderPaddingDp(it) },
-            onLineSpacingChange = { viewModel.setReaderLineSpacingMultiplier(it) },
-            onCodeBlockWrapChange = { viewModel.setCodeBlockWrap(it) },
-            onHideSystemBarsChange = { viewModel.setHideSystemBars(it) },
-            onPageTurnModeChange = { viewModel.setPageTurnMode(it) },
-            onDismiss = {
-                showReaderSettingsSheet = false
-                if (immersiveReading) showTopBar = false
-            },
-        )
-    }
+    ReaderOverlays(
+        uiState = uiState,
+        viewModel = viewModel,
+        diagramPreviewBitmap = diagramPreviewBitmap,
+        showReaderSettings = showReaderSettingsSheet,
+        onDismissDiagramPreview = { diagramPreviewBitmap = null },
+        onDismissReaderSettings = {
+            showReaderSettingsSheet = false
+            if (immersiveReading) showTopBar = false
+        },
+    )
 
     fun jumpToReaderChar(target: AnnotationJumpTarget) {
         if (readerContent.isEmpty()) return
@@ -2071,24 +1920,29 @@ fun ReaderScreen(
             charPos = charPos,
             tocEntry = null,
         )
-        if (isPdfBook && pdfPages.isNotEmpty()) {
-            val decoded = PdfPageCatalog.decodeProgress(pdfPages, charPos, readerContent.length)
-            val page = (pdfPageIndex ?: decoded.pageIndex).coerceIn(0, pdfPages.lastIndex)
-            val fraction = if (pdfPageIndex != null && pdfPageIndex != decoded.pageIndex) {
-                0f
-            } else {
-                decoded.fractionInPage
-            }
-            pdfViewportAnchor = PdfViewportAnchor(page, fraction)
-            pdfJumpGeneration++
-            pdfJumpRequest = PdfJumpRequest(pdfJumpGeneration, page, fraction)
-            coverUntilPositionRestore = true
-            lastScrollTopGlobalChar = PdfPageCatalog.encodeProgress(
-                pdfPages,
-                page,
-                fraction,
-                readerContent.length,
+        val navigationPlan = createReaderNavigationPlan(
+            requestKind = ReaderNavigationRequestKind.Annotation,
+            isPdf = isPdfBook,
+            pageTurnMode = pageTurnMode,
+            hasPageSpecs = pageSpecs.isNotEmpty(),
+            pdfPages = pdfPages,
+            contentLength = contentLen,
+            requestedChar = charPos,
+            resolvedPdfPageIndex = pdfPageIndex,
+        )
+        if (navigationPlan is ReaderNavigationPlan.PdfContinuous) {
+            pdfViewportAnchor = PdfViewportAnchor(
+                navigationPlan.pageIndex,
+                navigationPlan.fractionInPage,
             )
+            pdfJumpGeneration++
+            pdfJumpRequest = PdfJumpRequest(
+                pdfJumpGeneration,
+                navigationPlan.pageIndex,
+                navigationPlan.fractionInPage,
+            )
+            coverUntilPositionRestore = true
+            lastScrollTopGlobalChar = navigationPlan.progressChar
             viewModel.updateReadingProgressAtChar(
                 lastScrollTopGlobalChar,
                 null,
@@ -2096,10 +1950,10 @@ fun ReaderScreen(
             )
             return
         }
-        if (pageTurnMode != ReaderPageTurnMode.VerticalScroll && pageSpecs.isNotEmpty()) {
+        if (navigationPlan is ReaderNavigationPlan.Paged) {
             jumpToGlobalCharInPager(
                 scope = scope,
-                charPos = charPos,
+                charPos = navigationPlan.charPosition,
                 contentLen = contentLen,
                 sourceContent = readerContent,
                 renderPlainText = renderPlainText,
@@ -2111,19 +1965,19 @@ fun ReaderScreen(
                 assignActiveTextView = { readerTextView.value = it },
                 onProgress = {
                     viewModel.updateReadingProgressAtChar(
-                        charPos,
+                        navigationPlan.charPosition,
                         bookmarkPreview,
-                        reachedEndForChar(charPos),
+                        reachedEndForChar(navigationPlan.charPosition),
                     )
                 },
                 pdfJumpByPageIndex = isPdfBook,
-                pdfPageIndex = pdfPageIndex,
+                pdfPageIndex = navigationPlan.pdfPageIndex,
                 highlightId = highlightId,
                 themeSignature = currentTheme.contentSignature(),
                 fontSize = fontSize,
                 codeBlockWrap = codeBlockWrap,
             )
-        } else if (isPdfBook && pdfPageIndex != null) {
+        } else if (navigationPlan is ReaderNavigationPlan.PdfVertical) {
             pendingScrollRestoreGlobalChar = null
             pendingScrollRestoreBookmarkPreview = null
             pendingScrollRestoreHighlightId = null
@@ -2135,7 +1989,7 @@ fun ReaderScreen(
             jumpToPdfPageVertically(
                 contentLen = contentLen,
                 chapterBoundaries = chapterBoundaries,
-                pageIndex = pdfPageIndex,
+                pageIndex = navigationPlan.pageIndex,
                 tocEntries = tocEntries,
                 setReadingWindow = { start, end ->
                     displayWindowStartChar = start
@@ -2144,13 +1998,14 @@ fun ReaderScreen(
                 onPendingPdfPageIndex = { pendingScrollRestorePdfPageIndex = it },
                 onProgress = {
                     viewModel.updateReadingProgressAtChar(
-                        charPos,
+                        navigationPlan.charPosition,
                         null,
-                        reachedEndForChar(charPos),
+                        reachedEndForChar(navigationPlan.charPosition),
                     )
                 },
             )
         } else {
+            check(navigationPlan is ReaderNavigationPlan.ChunkWindow)
             clearPendingScrollCharOffset(readerTextView.value)
             pendingScrollRestoreBookmarkPreview = bookmarkPreview
             pendingScrollRestoreHighlightId = highlightId
@@ -2160,12 +2015,12 @@ fun ReaderScreen(
             jumpToCharInChunkWindow(
                 sourceContent = readerContent,
                 contentLen = contentLen,
-                charPos = charPos,
+                charPos = navigationPlan.charPosition,
                 setReadingWindow = { start, end ->
                     displayWindowStartChar = start
                     displayWindowEndChar = end
                     stashSavedPositionSnapForPendingRestore(
-                        sourceOffset = charPos,
+                        sourceOffset = navigationPlan.charPosition,
                         windowStart = start,
                         windowEnd = end,
                         preview = bookmarkPreview,
@@ -2175,13 +2030,76 @@ fun ReaderScreen(
                 onAnchorGlobalChar = { queueScrollRestore(it) },
                 onProgress = {
                     viewModel.updateReadingProgressAtChar(
-                        charPos,
+                        navigationPlan.charPosition,
                         bookmarkPreview,
-                        reachedEndForChar(charPos),
+                        reachedEndForChar(navigationPlan.charPosition),
                     )
                 },
             )
         }
+    }
+
+    LaunchedEffect(pendingWideTocEntry, readerContent) {
+        val entry = pendingWideTocEntry ?: return@LaunchedEffect
+        if (readerContent.isBlank()) return@LaunchedEffect
+        pendingWideTocEntry = null
+        jumpToReaderChar(
+            AnnotationJumpTarget(
+                sourceOffset = entry.sourceOffset,
+                previewText = null,
+                kind = AnnotationJumpKind.Bookmark,
+            ),
+        )
+        if (immersiveReading) showTopBar = false
+    }
+
+    LaunchedEffect(
+        readerContent,
+        uiState.loadState,
+        jumpKind,
+        jumpPosition,
+        jumpHighlightId,
+        jumpBookmarkId,
+        jumpPreview,
+    ) {
+        val requestedPosition = jumpPosition ?: return@LaunchedEffect
+        if (externalAnnotationConsumed || requestedPosition < 0) return@LaunchedEffect
+        if (readerContent.isBlank() || uiState.loadState !is ReaderLoadState.Ready) {
+            return@LaunchedEffect
+        }
+        val kind = when (jumpKind?.lowercase()) {
+            "highlight" -> AnnotationJumpKind.Highlight
+            "bookmark" -> AnnotationJumpKind.Bookmark
+            else -> return@LaunchedEffect
+        }
+        externalAnnotationConsumed = true
+        val resolvedPosition = when {
+            kind == AnnotationJumpKind.Highlight && jumpHighlightId != null ->
+                annotationAnchors.highlightJump[jumpHighlightId] ?: requestedPosition
+            kind == AnnotationJumpKind.Bookmark && jumpBookmarkId != null ->
+                annotationAnchors.bookmarkJump[jumpBookmarkId] ?: requestedPosition
+            else -> requestedPosition
+        }
+        val wasClamped = requestedPosition >= readerContent.length
+        snackbarHostState.showSnackbar(
+            message = annotationLocatingMessage,
+            withDismissAction = false,
+            duration = SnackbarDuration.Short,
+        )
+        jumpToReaderChar(
+            AnnotationJumpTarget(
+                sourceOffset = resolvedPosition,
+                previewText = jumpPreview,
+                kind = kind,
+                highlightId = jumpHighlightId?.takeIf { it > 0L },
+            ),
+        )
+        delay(350L)
+        snackbarHostState.showSnackbar(
+            message = if (wasClamped) annotationNearbyMessage else annotationLocatedMessage,
+            withDismissAction = false,
+            duration = SnackbarDuration.Short,
+        )
     }
 
     val readerSafeTv = readerTextView.value as? SafeReaderTextView
@@ -2219,7 +2137,17 @@ fun ReaderScreen(
                     )
                 }
                 pending.persistedHighlightId?.let { id ->
-                    viewModel.updateHighlightAppearance(id, color, style)
+                    viewModel.dispatch(
+                        ReaderEvent.UpdateHighlightAppearance(
+                            highlightId = id,
+                            colorArgb = if (color.alpha < 0.06f) {
+                                lastHighlightColorArgb
+                            } else {
+                                color.toArgb()
+                            },
+                            style = style,
+                        )
+                    )
                 }
             },
             onDismiss = {
@@ -2233,306 +2161,178 @@ fun ReaderScreen(
         )
     }
 
-    // 书签 / 划线列表
-    if (showBookmarks) {
-        val bookmarkRows = remember(bookmarks, isPdfBook, readerContent) {
-            if (!isPdfBook) bookmarks
-            else bookmarks.map { bookmark ->
-                bookmark.copy(
-                    previewText = PdfReaderContent.bookmarkPreview(
-                        context,
-                        readerContent,
-                        bookmark.position,
-                    ),
-                )
-            }
-        }
-        BookmarksSheet(
-            bookmarks = bookmarkRows,
+    val currentTocEntry = remember(
+        tocEntries,
+        uiState.viewportTopChar,
+        uiState.viewportBottomChar,
+        uiState.visibleChapterOffset,
+    ) {
+        chapterEntryForTitleBar(
+            tocEntries,
+            uiState.viewportTopChar,
+            uiState.viewportBottomChar,
+            uiState.visibleChapterOffset,
+        )
+    }
+    ReaderNavigationSheets(
+        showMarks = showBookmarks,
+        showToc = showToc,
+        marksState = ReaderMarksSheetState(
+            bookmarks = bookmarks,
             highlights = highlights,
-            totalChars = book?.totalChars?.takeIf { it > 0 } ?: readerContent.length.coerceAtLeast(1),
+            totalChars = book?.totalChars?.takeIf { it > 0 }
+                ?: readerContent.length.coerceAtLeast(1),
+            isPdf = isPdfBook,
+            sourceContent = readerContent,
             pendingBookmarkIds = annotationAnchors.pendingBookmarkIds,
             pendingHighlightIds = annotationAnchors.pendingHighlightIds,
-            onBookmarkClick = { bookmark ->
-                val position = annotationAnchors.bookmarkJump[bookmark.id] ?: bookmark.position
-                jumpToReaderChar(
-                    AnnotationJumpTarget(
-                        sourceOffset = position,
-                        previewText = bookmark.previewText,
-                        kind = AnnotationJumpKind.Bookmark,
-                    ),
-                )
-                showBookmarks = false
-            },
-            onDeleteBookmark = { bookmark ->
-                viewModel.deleteBookmark(bookmark)
-            },
-            onHighlightClick = { highlight ->
-                val position = annotationAnchors.highlightJump[highlight.id] ?: highlight.startPosition
-                jumpToReaderChar(
-                    AnnotationJumpTarget(
-                        sourceOffset = position,
-                        previewText = highlight.highlightedText,
-                        kind = AnnotationJumpKind.Highlight,
-                        highlightId = highlight.id,
-                    ),
-                )
-                showBookmarks = false
-            },
-            onDeleteHighlight = { highlight ->
-                viewModel.deleteHighlight(highlight)
-            },
-            onDismiss = {
-                showBookmarks = false
-                if (immersiveReading) showTopBar = false
-            }
-        )
-    }
-
-    // 目录
-    if (showToc) {
-        val tocTopChar by viewModel.viewportTopChar.collectAsState()
-        val tocBottomChar by viewModel.viewportBottomChar.collectAsState()
-        val tocChapterOffset by viewModel.visibleChapterOffset.collectAsState()
-        val chapterEntry = remember(tocEntries, tocTopChar, tocBottomChar, tocChapterOffset) {
-            chapterEntryForTitleBar(tocEntries, tocTopChar, tocBottomChar, tocChapterOffset)
-        }
-        TocSheet(
+            bookmarkJumpPositions = annotationAnchors.bookmarkJump,
+            highlightJumpPositions = annotationAnchors.highlightJump,
+        ),
+        tocState = ReaderTocSheetState(
             entries = tocEntries,
-            emptyTocMessage = emptyTocMessage,
-            currentEntry = chapterEntry,
-            onEntryClick = { entry ->
-                if (readerContent.isNotEmpty()) {
-                    val contentLen = readerContent.length
-                    val charPos = entry.sourceOffset.coerceIn(0, (contentLen - 1).coerceAtLeast(0))
-                    val pdfPageIndex = pdfPageIndexForTocOrBookmark(
-                        isPdfBook = isPdfBook,
-                        tocEntries = tocEntries,
-                        readerContent = readerContent,
-                        charPos = charPos,
-                        tocEntry = entry,
-                    )
-                    if (isPdfBook && pdfPages.isNotEmpty()) {
-                        val page = (pdfPageIndex ?: 0).coerceIn(0, pdfPages.lastIndex)
-                        pdfViewportAnchor = PdfViewportAnchor(page, 0f)
-                        pdfJumpGeneration++
-                        pdfJumpRequest = PdfJumpRequest(pdfJumpGeneration, page, 0f)
-                        coverUntilPositionRestore = true
-                        val pos = pdfPages[page].sourceOffset
-                        lastScrollTopGlobalChar = pos
-                        viewModel.updateReadingProgressAtChar(pos, reachedEnd = reachedEndForChar(pos))
-                    } else if (pageTurnMode != ReaderPageTurnMode.VerticalScroll && pageSpecs.isNotEmpty()) {
-                        jumpToGlobalCharInPager(
-                            scope = scope,
-                            charPos = charPos,
-                            contentLen = contentLen,
-                            sourceContent = readerContent,
-                            renderPlainText = renderPlainText,
-                            tocEntries = tocEntries,
-                            preferredTocEntry = entry,
-                            pageSpecs = pageSpecs,
-                            pagerState = pagerState,
-                            pageTextViews = pageTextViews,
-                            assignActiveTextView = { readerTextView.value = it },
-                            onProgress = { viewModel.updateReadingProgressAtChar(charPos, reachedEnd = reachedEndForChar(charPos)) },
-                            pdfJumpByPageIndex = isPdfBook,
-                            pdfPageIndex = pdfPageIndex,
-                            themeSignature = currentTheme.contentSignature(),
-                            fontSize = fontSize,
-                            codeBlockWrap = codeBlockWrap,
-                        )
-                    } else if (isPdfBook && pdfPageIndex != null) {
-                        pendingScrollRestoreGlobalChar = null
-                        pendingScrollRestoreBookmarkPreview = null
-                        pendingScrollRestoreHighlightId = null
-                        pendingScrollRestoreAnchor = null
-                        pendingScrollRestoreSnapToLine = true
-                        clearPendingSavedPositionSnap(readerTextView.value)
-                        coverUntilPositionRestore = true
-                        bumpScrollRestoreGeneration()
-                        jumpToPdfPageVertically(
-                            contentLen = contentLen,
-                            chapterBoundaries = chapterBoundaries,
-                            pageIndex = pdfPageIndex,
-                            tocEntries = tocEntries,
-                            setReadingWindow = { start, end ->
-                                displayWindowStartChar = start
-                                displayWindowEndChar = end
-                            },
-                            onPendingPdfPageIndex = { pendingScrollRestorePdfPageIndex = it },
-                            onProgress = { viewModel.updateReadingProgressAtChar(charPos, reachedEnd = reachedEndForChar(charPos)) },
-                        )
-                    } else {
-                        // 目录跳转：目标章节严格置顶，走独立置顶通道，不与 offset/anchor 恢复竞争。
-                        clearPendingScrollCharOffset(readerTextView.value)
-                        pendingScrollRestoreGlobalChar = null
-                        pendingScrollRestoreBookmarkPreview = null
-                        pendingScrollRestoreHighlightId = null
-                        pendingScrollRestorePdfPageIndex = null
-                        pendingScrollRestoreAnchor = null
-                        pendingScrollRestoreSnapToLine = true
-                        // 使任何在途的 offset 恢复 LaunchedEffect 失效。
-                        bumpScrollRestoreGeneration()
-                        windowExpandInFlight = false
-                        expandRestoreGuard[0] = false
-                        val (winStart, winEnd) = computeTocJumpReadingWindow(
-                            chapterBoundaries,
-                            charPos,
-                            contentLen,
-                        )
-                        requestReaderScrollToTop(readerTextView.value)
-                        // 立刻滚一次：同章再点 / 正文尚未替换时 onLayout 不一定再触发。
-                        readerTextView.value?.let { tv ->
-                            if (tv.scrollY != 0) tv.scrollTo(0, 0)
-                        }
-                        displayWindowStartChar = winStart
-                        displayWindowEndChar = winEnd.coerceAtLeast((winStart + 1).coerceAtMost(contentLen))
-                        viewModel.updateReadingProgressAtChar(charPos, reachedEnd = reachedEndForChar(charPos))
-                        // 目标章节渲染完成后台预扩上文，避免下滑看前文时撞硬顶停顿。
-                        prefetchUpTargetChar = if (winStart > 0) winStart else -1
-                    }
-                }
-                showToc = false
-                if (immersiveReading) showTopBar = false
-            },
-            onDismiss = {
-                showToc = false
-                if (immersiveReading) showTopBar = false
-            }
-        )
-    }
-
-}
-
-@Composable
-private fun ReaderMarkFinishedDialog(
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.reader_mark_finished_title)) },
-        text = { Text(stringResource(R.string.reader_mark_finished_message)) },
-        confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text(stringResource(R.string.reader_mark_finished_confirm))
-            }
+            emptyMessage = emptyTocMessage,
+            currentEntry = currentTocEntry,
+        ),
+        onAnnotationClick = { target ->
+            jumpToReaderChar(target)
+            showBookmarks = false
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.reader_mark_finished_later))
+        onDeleteBookmark = { viewModel.dispatch(ReaderEvent.DeleteBookmark(it)) },
+        onDeleteHighlight = { viewModel.dispatch(ReaderEvent.DeleteHighlight(it)) },
+        onTocEntryClick = { entry ->
+            if (readerContent.isNotEmpty()) {
+                val contentLen = readerContent.length
+                val charPos = entry.sourceOffset.coerceIn(0, (contentLen - 1).coerceAtLeast(0))
+                val pdfPageIndex = pdfPageIndexForTocOrBookmark(
+                    isPdfBook = isPdfBook,
+                    tocEntries = tocEntries,
+                    readerContent = readerContent,
+                    charPos = charPos,
+                    tocEntry = entry,
+                )
+                val navigationPlan = createReaderNavigationPlan(
+                    requestKind = ReaderNavigationRequestKind.Toc,
+                    isPdf = isPdfBook,
+                    pageTurnMode = pageTurnMode,
+                    hasPageSpecs = pageSpecs.isNotEmpty(),
+                    pdfPages = pdfPages,
+                    contentLength = contentLen,
+                    requestedChar = charPos,
+                    resolvedPdfPageIndex = pdfPageIndex,
+                )
+                if (navigationPlan is ReaderNavigationPlan.PdfContinuous) {
+                    pdfViewportAnchor = PdfViewportAnchor(
+                        navigationPlan.pageIndex,
+                        navigationPlan.fractionInPage,
+                    )
+                    pdfJumpGeneration++
+                    pdfJumpRequest = PdfJumpRequest(
+                        pdfJumpGeneration,
+                        navigationPlan.pageIndex,
+                        navigationPlan.fractionInPage,
+                    )
+                    coverUntilPositionRestore = true
+                    val pos = navigationPlan.progressChar
+                    lastScrollTopGlobalChar = pos
+                    viewModel.updateReadingProgressAtChar(pos, reachedEnd = reachedEndForChar(pos))
+                } else if (navigationPlan is ReaderNavigationPlan.Paged) {
+                    jumpToGlobalCharInPager(
+                        scope = scope,
+                        charPos = navigationPlan.charPosition,
+                        contentLen = contentLen,
+                        sourceContent = readerContent,
+                        renderPlainText = renderPlainText,
+                        tocEntries = tocEntries,
+                        preferredTocEntry = entry,
+                        pageSpecs = pageSpecs,
+                        pagerState = pagerState,
+                        pageTextViews = pageTextViews,
+                        assignActiveTextView = { readerTextView.value = it },
+                        onProgress = {
+                            viewModel.updateReadingProgressAtChar(
+                                navigationPlan.charPosition,
+                                reachedEnd = reachedEndForChar(navigationPlan.charPosition),
+                            )
+                        },
+                        pdfJumpByPageIndex = isPdfBook,
+                        pdfPageIndex = navigationPlan.pdfPageIndex,
+                        themeSignature = currentTheme.contentSignature(),
+                        fontSize = fontSize,
+                        codeBlockWrap = codeBlockWrap,
+                    )
+                } else if (navigationPlan is ReaderNavigationPlan.PdfVertical) {
+                    pendingScrollRestoreGlobalChar = null
+                    pendingScrollRestoreBookmarkPreview = null
+                    pendingScrollRestoreHighlightId = null
+                    pendingScrollRestoreAnchor = null
+                    pendingScrollRestoreSnapToLine = true
+                    clearPendingSavedPositionSnap(readerTextView.value)
+                    coverUntilPositionRestore = true
+                    bumpScrollRestoreGeneration()
+                    jumpToPdfPageVertically(
+                        contentLen = contentLen,
+                        chapterBoundaries = chapterBoundaries,
+                        pageIndex = navigationPlan.pageIndex,
+                        tocEntries = tocEntries,
+                        setReadingWindow = { start, end ->
+                            displayWindowStartChar = start
+                            displayWindowEndChar = end
+                        },
+                        onPendingPdfPageIndex = { pendingScrollRestorePdfPageIndex = it },
+                        onProgress = {
+                            viewModel.updateReadingProgressAtChar(
+                                navigationPlan.charPosition,
+                                reachedEnd = reachedEndForChar(navigationPlan.charPosition),
+                            )
+                        },
+                    )
+                } else {
+                    check(navigationPlan is ReaderNavigationPlan.ChunkWindow)
+                    // 目录跳转：目标章节严格置顶，走独立置顶通道，不与 offset/anchor 恢复竞争。
+                    clearPendingScrollCharOffset(readerTextView.value)
+                    pendingScrollRestoreGlobalChar = null
+                    pendingScrollRestoreBookmarkPreview = null
+                    pendingScrollRestoreHighlightId = null
+                    pendingScrollRestorePdfPageIndex = null
+                    pendingScrollRestoreAnchor = null
+                    pendingScrollRestoreSnapToLine = true
+                    bumpScrollRestoreGeneration()
+                    windowExpandInFlight = false
+                    expandRestoreGuard[0] = false
+                    val (winStart, winEnd) = computeTocJumpReadingWindow(
+                        chapterBoundaries,
+                        navigationPlan.charPosition,
+                        contentLen,
+                    )
+                    requestReaderScrollToTop(readerTextView.value)
+                    readerTextView.value?.let { tv ->
+                        if (tv.scrollY != 0) tv.scrollTo(0, 0)
+                    }
+                    displayWindowStartChar = winStart
+                    displayWindowEndChar = winEnd.coerceAtLeast(
+                        (winStart + 1).coerceAtMost(contentLen),
+                    )
+                    viewModel.updateReadingProgressAtChar(
+                        navigationPlan.charPosition,
+                        reachedEnd = reachedEndForChar(navigationPlan.charPosition),
+                    )
+                    prefetchUpTargetChar = if (winStart > 0) winStart else -1
+                }
             }
+            showToc = false
+            if (immersiveReading) showTopBar = false
+        },
+        onDismissMarks = {
+            showBookmarks = false
+            if (immersiveReading) showTopBar = false
+        },
+        onDismissToc = {
+            showToc = false
+            if (immersiveReading) showTopBar = false
         },
     )
-}
 
-@Composable
-private fun DiagramPreviewDialog(
-    bitmap: Bitmap,
-    onDismiss: () -> Unit,
-) {
-    var scale by remember(bitmap) { mutableFloatStateOf(1f) }
-    var offsetX by remember(bitmap) { mutableFloatStateOf(0f) }
-    var offsetY by remember(bitmap) { mutableFloatStateOf(0f) }
-    val image = remember(bitmap) { bitmap.asImageBitmap() }
-    // 深灰半透明遮罩让预览图保持突出，同时仍能看见模糊后的阅读页背景。
-    val glassTint = Color(0xFF20242B).copy(alpha = 0.72f)
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        val dialogView = LocalView.current
-        val blurRadiusPx = with(LocalDensity.current) { 56.dp.roundToPx() }
-        DisposableEffect(dialogView, blurRadiusPx) {
-            val window = (dialogView.parent as? DialogWindowProvider)?.window
-            window?.setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
-            window?.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                runCatching {
-                    window?.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
-                    window?.attributes = window?.attributes?.apply {
-                        setBlurBehindRadius(blurRadiusPx)
-                    }
-                    window?.setBackgroundBlurRadius(blurRadiusPx)
-                }
-            }
-            onDispose {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    runCatching {
-                        window?.clearFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
-                        window?.setBackgroundBlurRadius(0)
-                    }
-                }
-            }
-        }
-        BoxWithConstraints(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(glassTint)
-                .pointerInput(bitmap, scale, offsetX, offsetY) {
-                    detectTapGestures { tap ->
-                        val imageW = bitmap.width.toFloat().coerceAtLeast(1f)
-                        val imageH = bitmap.height.toFloat().coerceAtLeast(1f)
-                        val fitScale = min(size.width / imageW, size.height / imageH)
-                        val drawnW = imageW * fitScale * scale
-                        val drawnH = imageH * fitScale * scale
-                        val centerX = size.width / 2f + offsetX
-                        val centerY = size.height / 2f + offsetY
-                        val insideImage =
-                            tap.x in (centerX - drawnW / 2f)..(centerX + drawnW / 2f) &&
-                                tap.y in (centerY - drawnH / 2f)..(centerY + drawnH / 2f)
-                        if (!insideImage) onDismiss()
-                    }
-                },
-        ) {
-            Image(
-                bitmap = image,
-                contentDescription = stringResource(R.string.reader_diagram_preview_cd),
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(bitmap) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            scale = (scale * zoom).coerceIn(0.5f, 8f)
-                            offsetX += pan.x
-                            offsetY += pan.y
-                        }
-                    }
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        translationX = offsetX
-                        translationY = offsetY
-                    },
-            )
-
-            Text(
-                text = stringResource(R.string.reader_diagram_zoom_hint),
-                style = MaterialTheme.typography.labelMedium,
-                color = Color.White.copy(alpha = 0.72f),
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .navigationBarsPadding()
-                    .padding(bottom = 20.dp),
-            )
-
-            IconButton(
-                onClick = onDismiss,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .statusBarsPadding()
-                    .padding(12.dp)
-                    .background(Color.Black.copy(alpha = 0.35f), CircleShape),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = stringResource(R.string.reader_diagram_close_cd),
-                    tint = Color.White,
-                )
-            }
-        }
-    }
 }
 
 private class PendingHighlightPicker(
