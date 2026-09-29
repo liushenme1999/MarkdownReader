@@ -21,6 +21,12 @@
     <string name="search_clear_cd">Clear search</string>
     <string name="error_unknown">Unknown error</string>
     <string name="error_network">Network error</string>
+    <string name="external_link_warning_title">Opening an external webpage</string>
+    <string name="external_link_warning_message">The content of external webpages is not controlled by this app. Verify that the URL scheme and domain are trusted, and never enter passwords, verification codes, or other sensitive information on an untrusted page.</string>
+    <string name="external_link_warning_url_label">Destination URL</string>
+    <string name="external_link_warning_copy">Copy URL</string>
+    <string name="external_link_warning_copied">URL copied</string>
+    <string name="external_link_warning_continue">Continue</string>
     <string name="unknown_book">Unknown book</string>
     <string name="book_untitled">Untitled book</string>
     <string name="book_from_network">Online book</string>

@@ -1576,11 +1576,9 @@ fun ReaderScreen(
         chromeVisible = readerChromeVisible,
         wideNavigation = wideReaderNavigation,
         tocEntries = tocEntries,
-        currentTocEntry = chapterEntryForTitleBar(
-            tocEntries,
-            uiState.viewportTopChar,
-            uiState.viewportBottomChar,
-            uiState.visibleChapterOffset,
+        currentTocEntry = currentChapterEntryForReaderRail(
+            tocEntries = tocEntries,
+            viewportTopChar = uiState.viewportTopChar,
         ),
         tocTitle = stringResource(R.string.reader_toc_title),
         tocEmptyMessage = emptyTocMessage,

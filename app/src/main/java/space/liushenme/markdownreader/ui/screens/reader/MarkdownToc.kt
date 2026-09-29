@@ -69,6 +69,18 @@ fun currentChapterEntryForViewport(
 }
 
 /**
+ * 横屏常驻目录的当前项。常驻目录应跟随正文视口顶部所在章节，不能因为
+ * 下一个标题刚好露在视口底部，或旧的渲染层章节锚点尚未刷新而提前/滞后一章。
+ */
+fun currentChapterEntryForReaderRail(
+    tocEntries: List<MarkdownTocEntry>,
+    viewportTopChar: Int,
+): MarkdownTocEntry? {
+    if (tocEntries.isEmpty()) return null
+    return tocEntries.lastOrNull { it.sourceOffset <= viewportTopChar.coerceAtLeast(0) }
+}
+
+/**
  * 用渲染层 [HeadingSpan] 起点对齐小标题栏：视口里露出来的标题优先于源码坐标估算。
  *
  * [headingStarts] 与窗口内目录项按出现顺序对应；对不上时再按标题文本匹配。

@@ -24,6 +24,12 @@
     <string name="search_clear_cd">清除搜索</string>
     <string name="error_unknown">未知错误</string>
     <string name="error_network">网络错误</string>
+    <string name="external_link_warning_title">即将打开外部网页</string>
+    <string name="external_link_warning_message">外部网页内容不受应用控制。请确认网址的协议和域名可信，不要在不可信页面输入密码、验证码或其他敏感信息。</string>
+    <string name="external_link_warning_url_label">目标网址</string>
+    <string name="external_link_warning_copy">复制网址</string>
+    <string name="external_link_warning_copied">网址已复制</string>
+    <string name="external_link_warning_continue">继续打开</string>
     <string name="unknown_book">未知书籍</string>
     <string name="book_untitled">未命名书籍</string>
     <string name="book_from_network">网络书籍</string>

@@ -21,6 +21,12 @@
     <string name="search_clear_cd">清除搜尋</string>
     <string name="error_unknown">未知錯誤</string>
     <string name="error_network">網路錯誤</string>
+    <string name="external_link_warning_title">即將開啟外部網頁</string>
+    <string name="external_link_warning_message">外部網頁內容不受應用程式控制。請確認網址的通訊協定與網域可信，請勿在不可信的頁面輸入密碼、驗證碼或其他敏感資訊。</string>
+    <string name="external_link_warning_url_label">目標網址</string>
+    <string name="external_link_warning_copy">複製網址</string>
+    <string name="external_link_warning_copied">網址已複製</string>
+    <string name="external_link_warning_continue">繼續開啟</string>
     <string name="unknown_book">未知書籍</string>
     <string name="book_untitled">未命名書籍</string>
     <string name="book_from_network">網路書籍</string>

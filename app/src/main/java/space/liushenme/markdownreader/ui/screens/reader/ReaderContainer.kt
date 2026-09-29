@@ -29,6 +29,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -37,6 +41,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.zIndex
 import space.liushenme.markdownreader.ui.components.ShelfStyleStatusBarBackdrop
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
+import kotlinx.coroutines.flow.first
 
 /**
  * Stable reader page shell. Document rendering is supplied as a slot so
@@ -178,6 +183,29 @@ private fun WideReaderTocRail(
     onEntryClick: (MarkdownTocEntry) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(entries, currentEntry?.sourceOffset) {
+        val currentIndex = currentEntry?.let { selected ->
+            entries.indexOfFirst { it.sourceOffset == selected.sourceOffset }
+        } ?: -1
+        if (currentIndex < 0) return@LaunchedEffect
+
+        // The effect can run before LazyColumn's first measure. Wait for the
+        // item provider to be ready, otherwise a missed scroll would never be
+        // retried until the next chapter change.
+        snapshotFlow { listState.layoutInfo.totalItemsCount }
+            .first { it >= entries.size }
+
+        // Avoid moving the outline when the current heading is already visible.
+        val isVisible = listState.layoutInfo.visibleItemsInfo.any {
+            it.index == currentIndex
+        }
+        if (!isVisible) {
+            listState.animateScrollToItem(currentIndex)
+        }
+    }
+
     Column(modifier = modifier.fillMaxHeight()) {
         Text(
             text = title,
@@ -196,6 +224,7 @@ private fun WideReaderTocRail(
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(vertical = 8.dp),
+                state = listState,
             ) {
                 items(entries, key = { "wide_toc_${it.sourceOffset}_${it.level}" }) { entry ->
                     val selected = currentEntry?.sourceOffset == entry.sourceOffset

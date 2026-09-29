@@ -55,6 +55,7 @@ import space.liushenme.markdownreader.navigation.AppRoutes
 import space.liushenme.markdownreader.navigation.MarkdownLinkNavigation
 import space.liushenme.markdownreader.ui.components.CompactMainBottomBar
 import space.liushenme.markdownreader.ui.components.CompactMainBottomNavItem
+import space.liushenme.markdownreader.ui.components.ExternalLinkWarningDialog
 import space.liushenme.markdownreader.ui.components.ShelfStyleStatusBarBackdrop
 import space.liushenme.markdownreader.ui.components.ShelfStyleStatusBarEffect
 import space.liushenme.markdownreader.ui.components.shelfStylePageBackground
@@ -71,6 +72,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import space.liushenme.markdownreader.R
+
+private data class PendingExternalLink(
+    val url: String,
+    val proceed: () -> Unit,
+)
 
 @AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
@@ -186,8 +192,11 @@ private fun MainAppContent(
     onPendingOpenUriConsumed: () -> Unit = {},
 ) {
     val navController = rememberNavController()
+    var pendingExternalLink by remember { mutableStateOf<PendingExternalLink?>(null) }
     DisposableEffect(navController) {
-        MarkdownLinkNavigation.setupNavigation(navController)
+        MarkdownLinkNavigation.setupNavigation(navController) { url, proceed ->
+            pendingExternalLink = PendingExternalLink(url = url, proceed = proceed)
+        }
         onDispose {
             MarkdownLinkNavigation.cleanup()
         }
@@ -341,6 +350,18 @@ private fun MainAppContent(
                 ShelfStyleStatusBarBackdrop(
                     backgroundColor = shelfPageBg,
                     modifier = Modifier.align(Alignment.TopCenter),
+                )
+            }
+            pendingExternalLink?.let { pending ->
+                ExternalLinkWarningDialog(
+                    url = pending.url,
+                    onConfirm = {
+                        pendingExternalLink = null
+                        pending.proceed()
+                    },
+                    onDismiss = {
+                        pendingExternalLink = null
+                    },
                 )
             }
         }

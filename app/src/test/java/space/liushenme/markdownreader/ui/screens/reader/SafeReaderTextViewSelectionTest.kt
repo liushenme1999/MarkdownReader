@@ -365,6 +365,49 @@ class SafeReaderTextViewSelectionTest {
     }
 
     @Test
+    fun consumedLinkTap_cancelsPendingLongPressSelection() {
+        val context = RuntimeEnvironment.getApplication()
+        val body = SpannableString("前文 链接文字 后文")
+        val linkStart = body.indexOf("链接文字")
+        body.setSpan(
+            object : ClickableSpan() {
+                override fun onClick(widget: android.view.View) = Unit
+            },
+            linkStart,
+            linkStart + "链接文字".length,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+        )
+        val view = SafeReaderTextView(context).apply {
+            setText(body, TextView.BufferType.SPANNABLE)
+            textSize = 22f
+            setPadding(8, 8, 8, 8)
+            measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(400, android.view.View.MeasureSpec.EXACTLY),
+                android.view.View.MeasureSpec.makeMeasureSpec(200, android.view.View.MeasureSpec.EXACTLY),
+            )
+            layout(0, 0, 400, 200)
+        }
+        FrameLayout(context).apply {
+            addView(view)
+            measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(400, android.view.View.MeasureSpec.EXACTLY),
+                android.view.View.MeasureSpec.makeMeasureSpec(200, android.view.View.MeasureSpec.EXACTLY),
+            )
+            layout(0, 0, 400, 200)
+        }
+        val (x, y) = offsetXYForSpanOn(view, linkStart, linkStart + 1)
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
+        try {
+            view.onTouchEvent(down)
+            assertTrue(view.isSelectionLongPressScheduledForTest())
+            assertTrue(view.dispatchLinkClickIfPresent(x, y))
+            assertFalse(view.isSelectionLongPressScheduledForTest())
+        } finally {
+            down.recycle()
+        }
+    }
+
+    @Test
     fun inlineLatexAsyncDrawable_isSelectableForLongPress() {
         val context = RuntimeEnvironment.getApplication()
         val markwon = ReaderMarkwonFactory.create(context)

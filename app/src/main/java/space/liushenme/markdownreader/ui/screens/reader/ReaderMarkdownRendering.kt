@@ -2068,6 +2068,13 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         val target = readerHitTargetAt(x, y)
         if (target.kind != ReaderHitKind.LINK) return false
         val span = target.span as? ClickableSpan ?: return false
+        // bindReaderGesturesAndScroll consumes ACTION_UP before TextView.onTouchEvent
+        // gets a chance to cancel the long-press runnable. Cancel it here as well,
+        // otherwise it can fire behind the external-link warning dialog and open the
+        // copy/highlight ActionMode after the link has already been clicked.
+        cancelSelectionLongPress()
+        pointerDown = false
+        parent?.requestDisallowInterceptTouchEvent(false)
         pendingLinkTarget = null
         ReaderTextLinkTouch.dispatchClickableSpan(this, span)
         (text as? Spannable)?.let { Selection.removeSelection(it) }

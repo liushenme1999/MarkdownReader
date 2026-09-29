@@ -43,6 +43,15 @@ class MarkdownTocTest {
     }
 
     @Test
+    fun readerRail_followsViewportTopInsteadOfNextVisibleHeading() {
+        val entry = currentChapterEntryForReaderRail(
+            tocEntries = toc,
+            viewportTopChar = 2000,
+        )
+        assertEquals("9.4.4 与 ContextBuilder 的深度集成", entry?.title)
+    }
+
+    @Test
     fun viewport_picksTopmostVisibleHeadingWhenSeveralFit() {
         val entry = currentChapterEntryForViewport(
             tocEntries = toc,

@@ -171,13 +171,18 @@ fun AppNavHost(
 }
 
 object MarkdownLinkNavigation {
-    fun setupNavigation(navController: NavHostController) {
+    fun setupNavigation(
+        navController: NavHostController,
+        onRequestOpenWebUrl: ((String, () -> Unit) -> Unit)? = null,
+    ) {
         MarkdownLinkDispatcher.openUrl = { url ->
             navController.navigate(AppRoutes.webLink(url))
         }
+        MarkdownLinkDispatcher.onRequestOpenWebUrl = onRequestOpenWebUrl
     }
 
     fun cleanup() {
         MarkdownLinkDispatcher.openUrl = null
+        MarkdownLinkDispatcher.onRequestOpenWebUrl = null
     }
 }
