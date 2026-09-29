@@ -1,16 +1,23 @@
 package space.liushenme.markdownreader.ui.screens.bookshelf
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
@@ -28,6 +35,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.shape.RoundedCornerShape
 import space.liushenme.markdownreader.R
 
 @Composable
@@ -145,51 +155,84 @@ internal fun BookshelfImportMethodDialog(
     onGitHubImport: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    val configuration = LocalConfiguration.current
+    val maxDialogHeight = (configuration.screenHeightDp - 32).coerceAtLeast(240).dp
+    val dialogWidth = minOf(
+        configuration.screenWidthDp * 0.88f,
+        560f,
+    ).coerceAtLeast(280f).dp
+    Dialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.dialog_import_book_title)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier
+                .width(dialogWidth)
+                .defaultMinSize(minHeight = 220.dp)
+                .heightIn(max = maxDialogHeight),
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, top = 24.dp, end = 24.dp, bottom = 12.dp),
+            ) {
                 Text(
-                    stringResource(R.string.dialog_import_supported_formats),
-                    style = MaterialTheme.typography.bodyMedium
+                    text = stringResource(R.string.dialog_import_book_title),
+                    style = MaterialTheme.typography.headlineSmall,
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                TextButton(
-                    onClick = onLocalImport,
-                    modifier = Modifier.fillMaxWidth()
+                Spacer(modifier = Modifier.height(12.dp))
+                Column(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState()),
                 ) {
                     Text(
-                        stringResource(R.string.dialog_import_from_local),
-                        modifier = Modifier.fillMaxWidth(),
+                        stringResource(R.string.dialog_import_supported_formats),
+                        style = MaterialTheme.typography.bodyMedium,
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    TextButton(
+                        onClick = onLocalImport,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            stringResource(R.string.dialog_import_from_local),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    TextButton(
+                        onClick = onUrlImport,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            stringResource(R.string.dialog_import_from_url),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    TextButton(
+                        onClick = onGitHubImport,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            stringResource(R.string.dialog_import_from_github),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
-                TextButton(
-                    onClick = onUrlImport,
-                    modifier = Modifier.fillMaxWidth()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
                 ) {
-                    Text(
-                        stringResource(R.string.dialog_import_from_url),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
                 }
-                TextButton(
-                    onClick = onGitHubImport,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        stringResource(R.string.dialog_import_from_github),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.action_cancel))
             }
         }
-    )
+    }
 }
 
 @Composable

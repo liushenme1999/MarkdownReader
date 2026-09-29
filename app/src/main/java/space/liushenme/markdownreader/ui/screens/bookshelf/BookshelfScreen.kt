@@ -15,18 +15,12 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.calculateEndPadding
-import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -78,8 +72,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -336,36 +330,30 @@ fun BookshelfScreen(
                 // Keep the tint visibly translucent so the shelf background can show through.
                 val glassStart = Color(0xFFEDE3FF).copy(alpha = 0.48f)
                 val glassEnd = Color(0xFFB99AEF).copy(alpha = 0.30f)
-                Surface(
+                Box(
                     modifier = Modifier
                         .size(60.dp)
-                        .clickable(role = Role.Button, onClick = { openImportChooser() }),
-                    shape = CircleShape,
-                    color = Color.Transparent,
-                    shadowElevation = 10.dp,
-                    border = androidx.compose.foundation.BorderStroke(
-                        width = 1.dp,
-                        color = Color.White.copy(alpha = 0.52f),
-                    ),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                brush = Brush.linearGradient(
-                                    colors = listOf(glassStart, glassEnd),
-                                ),
-                                shape = CircleShape,
+                        .clip(CircleShape)
+                        .background(
+                            brush = Brush.linearGradient(
+                                colors = listOf(glassStart, glassEnd),
                             ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = importDescription,
-                            tint = Color(0xFF5E438C),
-                            modifier = Modifier.size(30.dp),
+                            shape = CircleShape,
                         )
-                    }
+                        .border(
+                            width = 1.dp,
+                            color = Color.White.copy(alpha = 0.52f),
+                            shape = CircleShape,
+                        )
+                        .clickable(role = Role.Button, onClick = { openImportChooser() }),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = importDescription,
+                        tint = Color(0xFF5E438C),
+                        modifier = Modifier.size(30.dp),
+                    )
                 }
             }
         },
@@ -418,9 +406,6 @@ fun BookshelfScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .windowInsetsPadding(
-                                WindowInsets.systemBars.only(WindowInsetsSides.Horizontal),
-                            )
                             .padding(end = 4.dp, top = 4.dp, bottom = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -541,11 +526,10 @@ fun BookshelfScreen(
             }
         }
     ) { paddingValues ->
-        val layoutDirection = LocalLayoutDirection.current
         val contentPadding = PaddingValues(
-            start = paddingValues.calculateStartPadding(layoutDirection),
+            start = 0.dp,
             top = paddingValues.calculateTopPadding(),
-            end = paddingValues.calculateEndPadding(layoutDirection),
+            end = 0.dp,
             bottom = if (managementVisible) 0.dp else paddingValues.calculateBottomPadding(),
         )
         Box(

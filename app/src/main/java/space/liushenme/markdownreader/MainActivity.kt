@@ -260,7 +260,14 @@ private fun MainAppContent(
                 val layoutDirection = LocalLayoutDirection.current
                 val navHostPadding = if (useMainScaffoldInsets) {
                     PaddingValues(
-                        start = paddingValues.calculateStartPadding(layoutDirection),
+                        // In landscape the NavigationRail already occupies the leading edge.
+                        // Applying the outer Scaffold's horizontal safe inset after the rail
+                        // creates an oversized gap before the page content.
+                        start = if (isLandscape) {
+                            0.dp
+                        } else {
+                            paddingValues.calculateStartPadding(layoutDirection)
+                        },
                         top = paddingValues.calculateTopPadding(),
                         end = paddingValues.calculateEndPadding(layoutDirection),
                         bottom = if (
