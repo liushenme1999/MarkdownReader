@@ -7,6 +7,9 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -109,10 +112,11 @@ fun ProfileScreen(
             ShelfStyleTopBarBackground(shelfBg) {
             TopAppBar(
                 // Scaffold 已对 topBar 施加状态栏区域；避免与 TopAppBar 默认 windowInsets 叠加成双倍顶距
-                windowInsets = WindowInsets(),
+                windowInsets = WindowInsets.systemBars.only(WindowInsetsSides.Horizontal),
                 title = {
                     Text(
                         stringResource(R.string.profile_title),
+                        modifier = Modifier.padding(start = 4.dp),
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontFamily = FontFamily.SansSerif,
                             fontWeight = FontWeight.Black
