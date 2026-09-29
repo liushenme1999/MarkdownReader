@@ -8,7 +8,7 @@
 | **包名** | `space.liushenme.markdownreader` |
 | **最低系统** | Android 7.0 (API 24) |
 | **目标 SDK** | 35 |
-| **当前版本** | 1.1.8 (versionCode 20) |
+| **当前版本** | 1.1.9 (versionCode 21) |
 | **仓库** | [github.com/liukejun1999/MarkdownReader](https://github.com/liushenme1999/MarkdownReader) |
 
 ## 安装包下载
@@ -17,7 +17,7 @@
 
 | 版本 | 下载 | 大小约 |
 |------|------|--------|
-| **1.1.8** | [MD阅读器_release_1.1.8.apk](app/release/MD阅读器_release_1.1.8.apk) | 16.2 MB |
+| **1.1.9** | [MD阅读器_release_1.1.9.apk](app/release/MD阅读器_release_1.1.9.apk) | 16.2 MB |
 
 安装说明：
 
@@ -52,6 +52,7 @@
 - 阅读页顶栏随进度显示当前章节标题
 - 目录（TOC）跳转；导入时优先使用结构化目录
 - 书签、多色高亮、文本选择与笔记
+- Markdown 表格支持长按选中单个单元格、拖动选择相邻区域，并按 TSV 格式复制到 Excel/WPS
 - 阅读进度（字符坐标）自动保存
 - 内链锚点跳转；外链可在应用内 WebView 打开
 

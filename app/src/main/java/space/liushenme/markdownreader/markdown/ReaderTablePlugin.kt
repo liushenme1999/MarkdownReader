@@ -67,17 +67,23 @@ internal object ReaderTablePlugin {
         private var tableRowIsHeader = false
         private var tableRows = 0
         private var lastWasTableRow = false
+        private var tableId = 0
+        private var tableRowIndex = 0
 
         fun clear() {
             pendingTableRow = null
             tableRowIsHeader = false
             tableRows = 0
             lastWasTableRow = false
+            tableId = 0
+            tableRowIndex = 0
         }
 
         fun configure(builder: MarkwonVisitor.Builder) {
             builder
                 .on(TableBlock::class.java) { visitor, tableBlock ->
+                    tableId++
+                    tableRowIndex = 0
                     lastWasTableRow = false
                     visitor.blockStart(tableBlock)
                     val length = visitor.length()
@@ -131,6 +137,8 @@ internal object ReaderTablePlugin {
                 cells = row,
                 rowHeader = tableRowIsHeader,
                 rowOdd = tableRows % 2 == 1,
+                tableId = tableId,
+                rowIndex = tableRowIndex++,
             )
             tableRows = if (tableRowIsHeader) 0 else tableRows + 1
             visitor.setSpans(spanStart, span)

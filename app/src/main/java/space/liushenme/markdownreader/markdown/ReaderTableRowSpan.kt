@@ -28,7 +28,18 @@ internal class ReaderTableRowSpan(
     cells: List<TableRowSpan.Cell>,
     private val rowHeader: Boolean,
     private val rowOdd: Boolean,
+    val tableId: Int,
+    val rowIndex: Int,
 ) : TableRowSpan(theme, cells, rowHeader, rowOdd) {
+
+    private val readerCells: List<TableRowSpan.Cell> = cells.toList()
+
+    val columnCount: Int
+        get() = readerCells.size
+
+    fun cellText(column: Int): CharSequence? = readerCells.getOrNull(column)?.text()
+
+    fun cellTexts(): List<CharSequence> = readerCells.map { it.text() }
 
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val fillRect = Rect()

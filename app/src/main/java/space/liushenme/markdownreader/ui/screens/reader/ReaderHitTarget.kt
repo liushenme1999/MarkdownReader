@@ -15,6 +15,7 @@ internal enum class ReaderHitKind {
     TEXT,
     HEADING,
     INLINE_FORMULA,
+    TABLE_CELL,
     LINK,
     CODE_BLOCK,
     IMAGE,
@@ -38,6 +39,7 @@ internal data class ReaderHitTarget(
         get() = kind == ReaderHitKind.TEXT ||
             kind == ReaderHitKind.HEADING ||
             kind == ReaderHitKind.INLINE_FORMULA ||
+            kind == ReaderHitKind.TABLE_CELL ||
             kind == ReaderHitKind.LINK ||
             kind == ReaderHitKind.EXISTING_HIGHLIGHT
 }
@@ -76,6 +78,15 @@ internal fun resolveReaderHitTarget(
     val spanned = textView.text as? Spanned
     if (spanned == null || spanned.isEmpty()) {
         return ReaderHitTarget(ReaderHitKind.OUTSIDE)
+    }
+
+    tableCellHitAt(textView, x, y)?.let { hit ->
+        return ReaderHitTarget(
+            kind = ReaderHitKind.TABLE_CELL,
+            span = hit,
+            canSelect = true,
+            canHighlight = false,
+        )
     }
 
     val drawable = ReaderTextLinkTouch.findAsyncDrawableSpanAt(textView, x, y)

@@ -6,6 +6,18 @@
 
 ## [Unreleased]
 
+## [1.1.9] - 2026-09-29
+
+### 新增
+
+- Markdown 表格支持长按选中单个单元格，并拖动选择相邻的多行多列
+- 表格选区支持按 TSV 格式复制，可直接粘贴到 Excel 或 WPS
+
+### 优化
+
+- 表格选区拖动时支持向回拖动缩小选区
+- 表格选区菜单只显示复制操作，避免与正文划线范围混淆
+
 ## [1.1.8] - 2026-09-29
 
 ### 优化
@@ -295,7 +307,11 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.5...HEAD
+[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.9...HEAD
+[1.1.9]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.8...v1.1.9
+[1.1.8]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.7...v1.1.8
+[1.1.7]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.6...v1.1.7
+[1.1.6]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.5...v1.1.6
 [1.1.5]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.4...v1.1.5
 [1.1.4]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.2...v1.1.3

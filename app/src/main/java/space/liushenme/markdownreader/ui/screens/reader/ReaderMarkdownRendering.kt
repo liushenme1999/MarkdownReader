@@ -241,6 +241,7 @@ internal fun applyReaderTextContent(
         }
         return
     }
+    (textView as? SafeReaderTextView)?.dismissSelection()
     textView.setTag(TAG_READER_RENDER_SIG, renderSig)
     // 正文异步渲染期间可能先刷过划线签名；清掉以免完成后被「已同步」挡住二次刷新。
     textView.setTag(TAG_READER_HIGHLIGHT_SIG, null)
@@ -1014,6 +1015,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         // 纯色底画在文字下；下划线画在文字上。不用 LineBackgroundSpan，避免 ParagraphStyle 卡死布局。
         drawReaderHighlightDecorations(this, canvas, underText = true)
         drawReaderSelectionBackground(canvas)
+        drawReaderTableSelection(canvas)
         super.onDraw(canvas)
         // 行内公式的底色画在 ReplacementSpan 里，会盖住先画的选区；公式画完后再补一层。
         drawInlineFormulaSelectionOverlay(canvas)
@@ -1055,6 +1057,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     /** 每次手指按下只允许触发一次扩窗，避免连续扩到全书末尾。 */
     private var windowExpandConsumedThisGesture = false
     private var selectionActive = false
+    private var tableSelection: ReaderTableSelection? = null
+    private var tableSelectionAnchor: ReaderTableCellHit? = null
     private var savedSelStart = -1
     private var savedSelEnd = -1
     private var readerSelectionActionMode: ActionMode? = null
@@ -1125,13 +1129,13 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             if (recreatingSelectionActionMode) return
             // 手指仍按着且由我们扩选时，系统若暂时拆菜单，等当前手势结束再恢复。
             // 松手后不能继续保护，否则会留下「高亮还在、句柄已消失」的孤儿选区。
-            if (freezeSelectionExtendUntilUp && pointerDown) {
+            if ((freezeSelectionExtendUntilUp || tableSelection != null) && pointerDown) {
                 post {
                     if (!clearingSelectionUi &&
                         selectionActive &&
-                        freezeSelectionExtendUntilUp &&
+                        (freezeSelectionExtendUntilUp || tableSelection != null) &&
                         pointerDown &&
-                        hasSelectionRange() &&
+                        (tableSelection != null || hasSelectionRange()) &&
                         readerSelectionActionMode == null
                     ) {
                         restoreSelectionActionMode()
@@ -1147,7 +1151,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                         selectionActive &&
                         readerSelectionActionMode == null &&
                         !recreatingSelectionActionMode &&
-                        !(freezeSelectionExtendUntilUp && pointerDown)
+                        !(freezeSelectionExtendUntilUp && pointerDown) &&
+                        !(tableSelection != null && pointerDown)
                     ) {
                         dismissSelection()
                     }
@@ -1156,6 +1161,12 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         }
 
         override fun onGetContentRect(mode: ActionMode?, view: View?, outRect: Rect) {
+            tableSelection?.let { selection ->
+                tableSelectionBoundsInView(this@SafeReaderTextView, selection)?.let {
+                    outRect.set(it)
+                    return
+                }
+            }
             val range = currentSelectionRange()
             val local = if (range != null) {
                 selectionContentRectInView(range.first, range.last + 1)
@@ -1212,6 +1223,12 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         menu ?: return
         menu.clear()
         menu.add(Menu.NONE, MENU_ID_COPY, 0, context.getString(R.string.selection_menu_copy))
+        if (tableSelection != null) {
+            stripSearchMenuItems(menu)
+            patchProcessTextMenuItems(menu)
+            appliedMenuShowsCancel = false
+            return
+        }
         // 划线 / 取消划线必须用不同 itemId：MIUI FloatingToolbar 按 id 缓存芯片文案，
         // 同 id 只改 title 时界面仍显示「划线」。
         val showCancel = shouldShowCancelHighlightTitle()
@@ -1302,6 +1319,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     }
 
     private fun currentSelectedText(): String {
+        tableSelection?.let { return tableSelectionText(this, it) }
         val codeSpan = codeSelectionSpan
         if (codeSpan != null && codeSpan.hasSelection()) {
             return codeSpan.selectedText()
@@ -1323,6 +1341,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     }
 
     private fun currentSelectionExistingHighlightId(): Long? {
+        if (tableSelection != null) return null
         val codeSpan = codeSelectionSpan
         if (codeSpan != null && codeSpan.hasSelection()) {
             val covering = codeSpan.highlightRangeCovering(codeSpan.selectionStart)
@@ -1565,7 +1584,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     private fun restoreSelectionActionMode() {
         if (readerSelectionActionMode != null) return
-        if (!hasSelectionRange()) return
+        if (tableSelection == null && !hasSelectionRange()) return
         try {
             val mode = startActionMode(selectionActionModeCallback, ActionMode.TYPE_FLOATING)
             // 拉起后立刻按选区校正锚点（部分 ROM 首帧会用默认 0,0）
@@ -1582,7 +1601,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     }
 
     private fun invalidateSelectionActionModeContentRect() {
-        if (!selectionActive || !hasSelectionRange()) return
+        if (!selectionActive || (tableSelection == null && !hasSelectionRange())) return
         try {
             readerSelectionActionMode?.invalidateContentRect()
         } catch (_: Throwable) {
@@ -1648,6 +1667,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     /** 单元测试：Floating ActionMode 当前锚点矩形。 */
     internal fun selectionActionModeRectForTest(): android.graphics.Rect? {
+        tableSelection?.let { return tableSelectionBoundsInView(this, it) }
         val range = currentSelectionRange()
         return if (range != null) {
             selectionContentRectInView(range.first, range.last + 1)
@@ -1655,6 +1675,10 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             codeSelectionContentRectInView()
         }
     }
+
+    internal fun tableSelectionForTest(): ReaderTableSelection? = tableSelection
+
+    internal fun selectedTextForTest(): String = currentSelectedText()
 
     /** 选区在窗口坐标系中的包围盒（用于划线浮窗定位）。 */
     internal fun selectionBoundsInWindow(selStart: Int, selEnd: Int): android.graphics.Rect? {
@@ -2117,7 +2141,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     /** 划词会话进行中（含拖句柄），不要求 Spannable 此刻仍有有效 range。 */
     fun isInTextSelection(): Boolean = selectionActive
 
-    fun hasVisibleTextSelection(): Boolean = selectionActive && hasSelectionRange()
+    fun hasVisibleTextSelection(): Boolean =
+        selectionActive && (tableSelection != null || hasSelectionRange())
 
     fun prepareForNewTouch(x: Float, y: Float) {
         isVerticalScrollDrag = false
@@ -2160,7 +2185,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     }
 
     fun dismissSelection() {
-        val hadChrome = selectionActive || readerSelectionActionMode != null || hasSelectionRange()
+        val hadChrome = selectionActive || tableSelection != null ||
+            readerSelectionActionMode != null || hasSelectionRange()
         if (pointerDown && hadChrome) {
             outsideTapDismissedSelection = true
         }
@@ -2241,6 +2267,8 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             }
             allowReaderScrollSideEffects = false
             customSelectionSessionActive = false
+            tableSelection = null
+            tableSelectionAnchor = null
             setHighlightColor(readerSelectionColor)
             activeSelectionHandle = null
             selectionHandleAnchorOffset = -1
@@ -2268,7 +2296,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     }
 
     private fun revertToLinkModeIfIdle() {
-        if (selectionActive || hasSelectionRange()) return
+        if (selectionActive || tableSelection != null || hasSelectionRange()) return
         movementMethod = linkMovement
     }
 
@@ -2311,6 +2339,12 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     }
 
     private fun isTouchNearSelection(x: Float, y: Float): Boolean {
+        tableSelection?.let { selection ->
+            val bounds = tableSelectionBoundsInView(this, selection) ?: return false
+            val slop = (8f * resources.displayMetrics.density).toInt()
+            bounds.inset(-slop, -slop)
+            return bounds.contains(x.toInt(), y.toInt())
+        }
         if (codeSelectionSpan != null && codeSelectionSpan?.hasSelection() == true) {
             if (selectionHandleAtIncludingCode(x, y) != null) return true
             return isTouchOnCodeBlockInnerSelection(x, y)
@@ -2395,7 +2429,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     private var suppressingSelectionCallback = false
     private val startSelectionLongPressRunnable = Runnable {
         selectionLongPressScheduled = false
-        if (!pointerDown || selectionActive || isVerticalScrollDrag) return@Runnable
+        if (!pointerDown || selectionActive || tableSelection != null || isVerticalScrollDrag) return@Runnable
         if (gestureOnDiagram || codeCopyDown || codeScrolling) return@Runnable
         if (!isTapGesture(lastTouchX, lastTouchY)) return@Runnable
         if (gestureOnCodeBlock || scrollableCodeBlockSpanAt(lastTouchX, lastTouchY) != null) {
@@ -2403,6 +2437,11 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             return@Runnable
         }
         val target = readerHitTargetAt(touchDownX, touchDownY)
+        if (target.kind == ReaderHitKind.TABLE_CELL) {
+            val selected = startTableSelectionAtPressed()
+            readerHitDbg("longPress table selected=$selected")
+            return@Runnable
+        }
         val selected = startSelectionAtPressedChar()
         readerHitDbg(
             "longPress kind=${target.kind} range=${target.displayedStart}..${target.displayedEnd} " +
@@ -2421,7 +2460,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
 
     private fun maybeScheduleSelectionLongPress() {
         cancelSelectionLongPress()
-        if (!pointerDown || selectionActive) return
+        if (!pointerDown || selectionActive || tableSelection != null) return
         if (gestureOnDiagram || codeCopyDown) return
         selectionLongPressScheduled = true
         postDelayed(startSelectionLongPressRunnable, SELECTION_LONG_PRESS_TIMEOUT_MS)
@@ -2786,6 +2825,32 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         canvas.restore()
     }
 
+    private fun drawReaderTableSelection(canvas: Canvas) {
+        val selection = tableSelection ?: return
+        val spanned = text as? Spanned ?: return
+        val layout = layout ?: return
+        val spans = spanned.getSpans(0, spanned.length, space.liushenme.markdownreader.markdown.ReaderTableRowSpan::class.java)
+            .filter { it.tableId == selection.tableId && it.rowIndex in selection.startRow..selection.endRow }
+        if (spans.isEmpty()) return
+
+        selectionBackgroundPaint.color = ColorUtils.setAlphaComponent(readerSelectionColor, 88)
+        canvas.save()
+        canvas.clipRect(
+            scrollX + compoundPaddingLeft,
+            scrollY + extendedPaddingTop,
+            scrollX + width - compoundPaddingRight,
+            scrollY + height - extendedPaddingBottom,
+        )
+        canvas.translate(compoundPaddingLeft.toFloat(), extendedPaddingTop.toFloat())
+        for (span in spans) {
+            for (column in selection.startColumn..selection.endColumn) {
+                val rect = tableCellBoundsInContent(spanned, layout, span, column) ?: continue
+                canvas.drawRect(rect, selectionBackgroundPaint)
+            }
+        }
+        canvas.restore()
+    }
+
     /**
      * 行内公式底色由 ReplacementSpan 在文字绘制阶段盖住选区。
      * 公式画完后，只把选区再画到公式跨度上，普通文字仍保持选区在字形下方。
@@ -3006,6 +3071,49 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         cancelLongPress()
         parent?.requestDisallowInterceptTouchEvent(true)
         restoreSelectionActionMode()
+        invalidate()
+        return true
+    }
+
+    private fun startTableSelectionAtPressed(): Boolean {
+        val hit = tableCellHitAt(this, touchDownX, touchDownY) ?: return false
+        tableSelectionAnchor = hit
+        tableSelection = ReaderTableSelection(
+            tableId = hit.span.tableId,
+            startRow = hit.row,
+            endRow = hit.row,
+            startColumn = hit.column,
+            endColumn = hit.column,
+        )
+        pendingLinkTarget = null
+        customSelectionSessionActive = false
+        selectionAnchorOffset = -1
+        lockedSelectionStart = -1
+        lockedSelectionEnd = -1
+        freezeSelectionExtendUntilUp = false
+        ensureSelectionInteractionMode()
+        if (!requestFocus()) {
+            isFocusable = true
+            isFocusableInTouchMode = true
+            requestFocus()
+        }
+        setSelectionActive(true)
+        suppressScrollRefCount++
+        selectionIncrementedSuppress = true
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        parent?.requestDisallowInterceptTouchEvent(true)
+        restoreSelectionActionMode()
+        invalidate()
+        return true
+    }
+
+    private fun extendTableSelectionTo(x: Float, y: Float): Boolean {
+        val anchor = tableSelectionAnchor ?: return false
+        val hit = tableCellHitAt(this, x, y) ?: return false
+        val next = ReaderTableSelection.between(anchor, hit) ?: return false
+        if (next == tableSelection) return true
+        tableSelection = next
+        invalidateSelectionActionModeContentRect()
         invalidate()
         return true
     }
@@ -3309,6 +3417,11 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                     parent?.requestDisallowInterceptTouchEvent(true)
                     return true
                 }
+                if (tableSelection != null && isTouchNearSelection(event.x, event.y)) {
+                    pendingOutsideTapDismiss = false
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    return true
+                }
                 if (selectionActive || readerSelectionActionMode != null || hasSelectionRange()) {
                     pendingOutsideTapDismiss = !isTouchNearSelection(event.x, event.y)
                 } else {
@@ -3318,6 +3431,11 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             MotionEvent.ACTION_MOVE -> {
                 lastTouchX = event.x
                 lastTouchY = event.y
+                if (tableSelection != null) {
+                    extendTableSelectionTo(event.x, event.y)
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    return true
+                }
                 if (activeSelectionHandle != null) {
                     updateSelectionFromHandleDrag(event.x, event.y)
                     parent?.requestDisallowInterceptTouchEvent(true)
@@ -3383,6 +3501,19 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 // 松手后等惯性结束，再补一次视口锚点补偿（拖动中跳过的异步重排）。
                 removeCallbacks(settleViewportAfterScrollRunnable)
                 postDelayed(settleViewportAfterScrollRunnable, 180L)
+                if (tableSelection != null) {
+                    if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                        dismissSelection()
+                    } else {
+                        restoreSelectionActionMode()
+                        invalidate()
+                    }
+                    isVerticalScrollDrag = false
+                    gestureOnDiagram = false
+                    gestureOnCodeBlock = false
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    return true
+                }
                 val codeConsumed = handleCodeBlockTouch(event)
                 if (codeConsumed) {
                     pendingLinkTarget = null
