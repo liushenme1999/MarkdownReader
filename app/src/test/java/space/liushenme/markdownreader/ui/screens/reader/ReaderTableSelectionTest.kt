@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.text.Spanned
 import android.view.View
 import android.view.MotionEvent
+import android.view.Menu
 import android.widget.PopupMenu
 import android.widget.FrameLayout
 import android.widget.TextView
@@ -145,6 +146,33 @@ class ReaderTableSelectionTest {
             .getSystemService(ClipboardManager::class.java)
         assertEquals("1\t2\n4\t5", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
         assertTrue(!view.hasVisibleTextSelection())
+    }
+
+    @Test
+    fun tableSelectionMenu_removesHyperOsSelectAndCommonPhrases() {
+        val view = tableView()
+        val rendered = view.text as Spanned
+        val rows = rendered.getSpans(0, rendered.length, ReaderTableRowSpan::class.java)
+            .sortedBy { rendered.getSpanStart(it) }
+        val cell = requireNotNull(
+            tableCellBoundsInView(view, rendered, requireNotNull(view.layout), rows[1], 0),
+        )
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, cell.centerX(), cell.centerY(), 0)
+        try {
+            assertTrue(view.onTouchEvent(down))
+            assertTrue(view.fireScheduledSelectionLongPressForTest())
+        } finally {
+            down.recycle()
+        }
+
+        val menu = PopupMenu(view.context, view).menu
+        menu.add(Menu.NONE, 101, 1, "选择")
+        menu.add(Menu.NONE, 102, 2, "常用语")
+        menu.add(Menu.NONE, 103, 3, "复制")
+        view.sanitizeSelectionMenuForTest(menu)
+
+        assertEquals(1, menu.size())
+        assertEquals("复制", menu.getItem(0).title.toString())
     }
 
     private fun tableView(): SafeReaderTextView {

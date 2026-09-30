@@ -23,6 +23,7 @@ app/debug/
 # Other artifacts under app/release/ (APKs are re-included above)
 app/release/baselineProfiles/
 app/release/output-metadata.json
+app/release/mapping.txt
 
 # Gradle files
 .gradle/

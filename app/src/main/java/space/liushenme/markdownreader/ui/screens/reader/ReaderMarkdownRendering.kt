@@ -1104,7 +1104,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         override fun onCreateActionMode(mode: ActionMode?, menu: Menu?): Boolean {
             readerSelectionActionMode = mode
             populateSelectionMenu(menu)
-            // MIUI 常在 Menu 之外再注入「搜索」芯片，延迟隐藏
+            // MIUI/HyperOS 常在回调返回后再注入系统芯片，延迟清理
             scheduleHideSelectionSearchAction()
             return true
         }
@@ -1225,6 +1225,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         menu.add(Menu.NONE, MENU_ID_COPY, 0, context.getString(R.string.selection_menu_copy))
         if (tableSelection != null) {
             stripSearchMenuItems(menu)
+            stripUnsupportedTableSelectionItems(menu)
             patchProcessTextMenuItems(menu)
             appliedMenuShowsCancel = false
             return
@@ -1307,10 +1308,51 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         return action == Intent.ACTION_WEB_SEARCH || action == Intent.ACTION_SEARCH
     }
 
+    /**
+     * 表格选区不是 TextView 的字符范围。澎湃系统注入的「选择」会尝试用
+     * WordIterator 重新选词，「常用语」也会读取同一套字符下标，都会对表格
+     * 的自定义选区触发 IndexOutOfBoundsException。表格菜单只保留复制。
+     */
+    private fun stripUnsupportedTableSelectionItems(menu: Menu?) {
+        if (tableSelection == null) return
+        menu ?: return
+        val removeIds = ArrayList<Int>(2)
+        for (i in 0 until menu.size()) {
+            val item = menu.getItem(i) ?: continue
+            if (isUnsupportedTableSelectionItem(item)) {
+                removeIds.add(item.itemId)
+            }
+        }
+        for (id in removeIds) {
+            menu.removeItem(id)
+        }
+    }
+
+    private fun isUnsupportedTableSelectionItem(item: MenuItem): Boolean {
+        val title = item.title?.toString()?.trim().orEmpty()
+        return title == "选择" ||
+            title == "選擇" ||
+            title.equals("Select", ignoreCase = true) ||
+            title == "常用语" ||
+            title == "常用語" ||
+            title.equals("Common phrases", ignoreCase = true)
+    }
+
     private fun scheduleHideSelectionSearchAction() {
-        val menu = readerSelectionActionMode?.menu
-        stripSearchMenuItems(menu)
-        patchProcessTextMenuItems(menu)
+        val mode = readerSelectionActionMode
+        val sanitize = {
+            if (readerSelectionActionMode === mode) {
+                val menu = mode?.menu
+                stripSearchMenuItems(menu)
+                stripUnsupportedTableSelectionItems(menu)
+                patchProcessTextMenuItems(menu)
+            }
+        }
+        sanitize()
+        // HyperOS 可能在 onCreateActionMode/onPrepareActionMode 返回后异步注入按钮。
+        // 两次短延迟覆盖不同版本的 FloatingToolbar 注入时机，普通正文仍只清理搜索。
+        post(sanitize)
+        postDelayed(sanitize, 120L)
     }
 
     private fun shouldShowCancelHighlightTitle(): Boolean {
@@ -1696,6 +1738,12 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
     /** 单元测试：填充选区菜单项。 */
     internal fun populateSelectionMenuForTest(menu: Menu) {
         populateSelectionMenu(menu)
+    }
+
+    /** 单元测试：模拟 ROM 在 ActionMode 回调之后注入系统菜单项，再执行清理。 */
+    internal fun sanitizeSelectionMenuForTest(menu: Menu) {
+        stripSearchMenuItems(menu)
+        stripUnsupportedTableSelectionItems(menu)
     }
 
     /** 单元测试：模拟点击选区菜单项。 */
