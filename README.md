@@ -17,17 +17,17 @@
 
 | 版本 | 下载 | 大小约 |
 |------|------|--------|
-| **1.2.1** | [MD阅读器_release_1.2.1.apk](app/release/MD阅读器_release_1.2.1.apk) | 8.2 MB |
+| **1.2.1** | [MD._release_1.2.1.apk](https://github.com/liushenme1999/MarkdownReader/releases/download/v1.2.1/MD._release_1.2.1.apk) | 8.2 MB |
 
 安装说明：
 
-1. 点击上方链接，进入仓库中的 APK 文件页，再点击 **Download** / **下载** 保存到手机
+1. 点击上方链接，浏览器会直接保存 APK；也可从 GitHub Release 页面下载
 2. 在系统设置中允许本应用（或文件管理器）「安装未知应用」
 3. 打开已下载的 APK 完成安装
 
 > Debug 包与中间产物仍不纳入版本库；仓库只保留最新正式包，便于直接下载。
 >
-> 启动后会在后台读取仓库根目录 [latest.json](latest.json)。有新版本时「我的 → 关于应用」显示红点，进入后可点「更新版本」。发版时请与 APK、`versionName` / `versionCode` 一并更新。
+> 启动后会在后台读取仓库根目录 [latest.json](latest.json)。有新版本时「我的 → 关于应用」显示红点，进入后可点「更新版本」，此时会直接打开 Release APK 下载地址。发版时请与 APK、`versionName` / `versionCode` 一并更新。
 
 ## 功能特性
 
@@ -174,7 +174,7 @@ RELEASE_KEY_PASSWORD=你的密钥密码
 ./gradlew assembleRelease
 ```
 
-发版时请同步更新根目录 [latest.json](latest.json) 的 `versionName`、`versionCode`、`pageUrl`，供应用内检查更新。
+发版时请同步更新根目录 [latest.json](latest.json) 的 `versionName`、`versionCode` 和 Release APK 直链 `pageUrl`，供应用内检查更新。
 
 > 请勿将 keystore 或密码写入仓库。`signing/` 与 `*.keystore` 已在 `.gitignore` 中忽略。
 
