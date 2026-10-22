@@ -12,6 +12,12 @@
 - 修复 `\\[...\\]` 块级公式定界符不被识别的问题
 - 修复 JLatexMath 渲染 `cases` 环境时第二列与左侧值间距过小的问题
 
+## [1.2.2] - 2026-10-22
+
+### 修复
+
+- 修复 Release 包因 R8 裁剪 JLaTeXMath 反射入口，导致 `cases` 等公式环境无法渲染的问题
+
 ## [Unreleased]
 
 ## [1.2.0] - 2026-10-22
@@ -326,6 +332,7 @@
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
 [Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.1...HEAD
+[1.2.2]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.9...v1.2.0
 [1.1.9]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.8...v1.1.9

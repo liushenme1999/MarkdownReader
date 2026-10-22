@@ -61,6 +61,13 @@
 -keep class io.noties.markwon.** { *; }
 -dontwarn io.noties.markwon.**
 
+# JLaTeXMath 通过 XML/字符串反射加载宏与环境；
+# 否则 R8 会移除 NewCommandMacro.executeMacro，导致 Release 下 cases 等环境不可用。
+-keep class org.scilab.forge.jlatexmath.** { *; }
+-keep class ru.noties.jlatexmath.** { *; }
+-dontwarn org.scilab.forge.jlatexmath.**
+-dontwarn ru.noties.jlatexmath.**
+
 # ==================== Data Classes / Entities ====================
 
 -keep class space.liushenme.markdownreader.data.local.entity.** { *; }
