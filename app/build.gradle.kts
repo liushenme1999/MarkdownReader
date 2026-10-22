@@ -7,6 +7,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt.android)
+    alias(libs.plugins.detekt)
 }
 
 // 与 res/values/strings.xml 中的 app_name 保持一致
@@ -43,8 +44,8 @@ android {
         applicationId = "space.liushenme.markdownreader"
         minSdk = 24
         targetSdk = 35
-        versionCode = 21
-        versionName = "1.1.9"
+        versionCode = 22
+        versionName = "1.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -240,6 +241,12 @@ listOf("debug", "release").forEach { buildType ->
 
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
+}
+
+detekt {
+    config.setFrom(files("$rootDir/detekt.yml"))
+    buildUponDefaultConfig = true
+    parallel = true
 }
 
 dependencies {

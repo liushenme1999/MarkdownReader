@@ -13,12 +13,12 @@ import javax.inject.Singleton
 class ShelfGroupRepository @Inject constructor(
     private val shelfGroupDao: ShelfGroupDao,
     private val bookDao: BookDao,
-) {
-    fun observeGroups(): Flow<List<ShelfGroupEntity>> = shelfGroupDao.observeAll()
+) : IShelfGroupRepository {
+    override fun observeGroups(): Flow<List<ShelfGroupEntity>> = shelfGroupDao.observeAll()
 
-    suspend fun getGroups(): List<ShelfGroupEntity> = shelfGroupDao.getAll()
+    override suspend fun getGroups(): List<ShelfGroupEntity> = shelfGroupDao.getAll()
 
-    suspend fun ensureAllGroup() {
+    override suspend fun ensureAllGroup() {
         if (shelfGroupDao.getByName(ShelfGroups.ALL_SENTINEL) != null) return
         val groups = shelfGroupDao.getAll()
         if (groups.isNotEmpty()) {
@@ -34,7 +34,7 @@ class ShelfGroupRepository @Inject constructor(
     }
 
     /** 首次创建时插在「全部」之后；若已存在则不动顺序。 */
-    suspend fun ensureFavoritesGroup() {
+    override suspend fun ensureFavoritesGroup() {
         if (shelfGroupDao.getByName(ShelfGroups.FAVORITES_SENTINEL) != null) return
         val allGroup = shelfGroupDao.getByName(ShelfGroups.ALL_SENTINEL)
         val insertOrder = if (allGroup != null) {
@@ -57,7 +57,7 @@ class ShelfGroupRepository @Inject constructor(
     }
 
     /** 确保系统分组存在，并将书上已有、但表中缺失的分组名补齐。 */
-    suspend fun syncFromBooks() {
+    override suspend fun syncFromBooks() {
         ensureAllGroup()
         ensureFavoritesGroup()
         val existing = shelfGroupDao.getAll().map { it.name }.toSet()
@@ -75,7 +75,7 @@ class ShelfGroupRepository @Inject constructor(
         }
     }
 
-    suspend fun ensureGroup(name: String): Boolean {
+    override suspend fun ensureGroup(name: String): Boolean {
         if (!ShelfGroups.isUserGroupName(name)) return false
         val trimmed = name.trim()
         if (shelfGroupDao.getByName(trimmed) != null) return true
@@ -85,7 +85,7 @@ class ShelfGroupRepository @Inject constructor(
         ) != -1L
     }
 
-    suspend fun addGroup(name: String): Boolean {
+    override suspend fun addGroup(name: String): Boolean {
         if (!ShelfGroups.isUserGroupName(name)) return false
         val trimmed = name.trim()
         if (shelfGroupDao.getByName(trimmed) != null) return false
@@ -95,7 +95,7 @@ class ShelfGroupRepository @Inject constructor(
         ) != -1L
     }
 
-    suspend fun deleteGroup(group: ShelfGroupEntity) {
+    override suspend fun deleteGroup(group: ShelfGroupEntity) {
         if (group.isSystemGroup) return
         bookDao.clearShelfGroupByName(group.name)
         shelfGroupDao.delete(group)
@@ -105,7 +105,7 @@ class ShelfGroupRepository @Inject constructor(
      * 重命名用户分组，并同步更新书籍上的 shelfGroup。
      * @return true 表示已更新或名称未变；false 表示名称非法或与其它分组冲突。
      */
-    suspend fun renameGroup(group: ShelfGroupEntity, newName: String): Boolean {
+    override suspend fun renameGroup(group: ShelfGroupEntity, newName: String): Boolean {
         if (group.isSystemGroup) return false
         if (!ShelfGroups.isUserGroupName(newName)) return false
         val trimmed = newName.trim()
@@ -116,12 +116,12 @@ class ShelfGroupRepository @Inject constructor(
         return true
     }
 
-    suspend fun setVisible(group: ShelfGroupEntity, visible: Boolean) {
+    override suspend fun setVisible(group: ShelfGroupEntity, visible: Boolean) {
         if (group.isVisible == visible) return
         shelfGroupDao.update(group.copy(isVisible = visible))
     }
 
-    suspend fun reorderGroups(orderedIds: List<Long>) {
+    override suspend fun reorderGroups(orderedIds: List<Long>) {
         if (orderedIds.isEmpty()) return
         val byId = shelfGroupDao.getAll().associateBy { it.id }
         val updates = orderedIds.mapIndexedNotNull { index, id ->

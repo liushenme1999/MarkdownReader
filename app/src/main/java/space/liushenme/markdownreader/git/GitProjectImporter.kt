@@ -7,6 +7,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import space.liushenme.markdownreader.data.local.entity.GitProjectEntity
 import space.liushenme.markdownreader.data.repository.GitProjectRepository
 
@@ -22,6 +23,11 @@ class GitProjectImporter @Inject constructor(
     @ApplicationContext private val context: Context,
     private val gitProjectRepository: GitProjectRepository,
 ) {
+
+    companion object {
+        private const val CLONE_TIMEOUT_MS = 120_000L
+        private const val PULL_TIMEOUT_MS = 60_000L
+    }
 
     suspend fun importPublicRepo(
         context: Context,
@@ -54,13 +60,15 @@ class GitProjectImporter @Inject constructor(
         val projectId = gitProjectRepository.insert(placeholder)
         val dest = GitProjectStorage.projectDir(context, projectId)
         try {
-            val result = GitRepoLock.withLock(GitRepoLock.keyForRemote(parsed.httpsBrowseUrl)) {
-                GitProjectCloner.clone(
-                    cloneUrl = parsed.cloneUrl,
-                    destination = dest,
-                    branch = branch,
-                    onProgress = onProgress,
-                )
+            val result = withTimeout(CLONE_TIMEOUT_MS) {
+                GitRepoLock.withLock(GitRepoLock.keyForRemote(parsed.httpsBrowseUrl)) {
+                    GitProjectCloner.clone(
+                        cloneUrl = parsed.cloneUrl,
+                        destination = dest,
+                        branch = branch,
+                        onProgress = onProgress,
+                    )
+                }
             }
             val updated = placeholder.copy(
                 id = projectId,
@@ -115,11 +123,13 @@ class GitProjectImporter @Inject constructor(
                 changed = true,
             )
         }
-        val result = GitProjectPuller.pull(
-            localPath = ready.localPath,
-            branch = ready.defaultBranch,
-            onProgress = onProgress,
-        )
+        val result = withTimeout(PULL_TIMEOUT_MS) {
+            GitProjectPuller.pull(
+                localPath = ready.localPath,
+                branch = ready.defaultBranch,
+                onProgress = onProgress,
+            )
+        }
         val refreshedTitle = GitHubRepoUrlParser.parse(ready.remoteUrl)?.repo
             ?: ready.title
         gitProjectRepository.update(
@@ -194,13 +204,15 @@ class GitProjectImporter @Inject constructor(
             ?: throw GitCloneException("无法识别的 GitHub 仓库地址")
         val dest = GitProjectStorage.projectDir(context, project.id)
         val branch = project.defaultBranch.trim().takeIf { it.isNotEmpty() }
-        val result = GitRepoLock.withLock(GitRepoLock.keyForRemote(parsed.httpsBrowseUrl)) {
-            GitProjectCloner.clone(
-                cloneUrl = parsed.cloneUrl,
-                destination = dest,
-                branch = branch,
-                onProgress = onProgress,
-            )
+        val result = withTimeout(CLONE_TIMEOUT_MS) {
+            GitRepoLock.withLock(GitRepoLock.keyForRemote(parsed.httpsBrowseUrl)) {
+                GitProjectCloner.clone(
+                    cloneUrl = parsed.cloneUrl,
+                    destination = dest,
+                    branch = branch,
+                    onProgress = onProgress,
+                )
+            }
         }
         val updated = project.copy(
             title = parsed.repo.ifBlank { project.title },

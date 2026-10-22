@@ -9,15 +9,15 @@ import javax.inject.Singleton
 @Singleton
 class BookmarkRepository @Inject constructor(
     private val bookmarkDao: BookmarkDao
-) {
-    fun getBookmarksByBookId(bookId: Long): Flow<List<BookmarkEntity>> = 
+) : IBookmarkRepository {
+    override fun getBookmarksByBookId(bookId: Long): Flow<List<BookmarkEntity>> = 
         bookmarkDao.getBookmarksByBookId(bookId)
 
-    fun getAllBookmarks(): Flow<List<BookmarkEntity>> = bookmarkDao.getAllBookmarks()
+    override fun getAllBookmarks(): Flow<List<BookmarkEntity>> = bookmarkDao.getAllBookmarks()
 
-    suspend fun addBookmark(bookmark: BookmarkEntity): Long = bookmarkDao.insertBookmark(bookmark)
+    override suspend fun addBookmark(bookmark: BookmarkEntity): Long = bookmarkDao.insertBookmark(bookmark)
 
-    suspend fun deleteBookmark(bookmark: BookmarkEntity) = bookmarkDao.deleteBookmark(bookmark)
+    override suspend fun deleteBookmark(bookmark: BookmarkEntity) = bookmarkDao.deleteBookmark(bookmark)
 
-    suspend fun deleteBookmarksByBookId(bookId: Long) = bookmarkDao.deleteBookmarksByBookId(bookId)
+    override suspend fun deleteBookmarksByBookId(bookId: Long) = bookmarkDao.deleteBookmarksByBookId(bookId)
 }

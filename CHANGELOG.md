@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-22
+
+### 优化
+
+- 收紧 ProGuard/R8 规则，减少冗余 keep 规则以降低 APK 体积
+- Git 克隆与拉取操作添加超时保护（clone 120s / pull 60s）
+- 核心数据层引入 Repository 接口抽象（Book / Bookmark / Highlight / ShelfGroup / ReadingProgress）
+- 阅读器渲染模块拆分：提取划线装饰渲染与代码块选区为独立文件
+- 集成 Detekt 静态分析工具，建立代码质量基线
+
 ## [1.1.9] - 2026-09-29
 
 ### 新增
@@ -307,7 +317,8 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.9...HEAD
+[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.9...v1.2.0
 [1.1.9]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.8...v1.1.9
 [1.1.8]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.7...v1.1.8
 [1.1.7]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.6...v1.1.7

@@ -4,7 +4,7 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import space.liushenme.markdownreader.data.repository.AppCacheRepository
-import space.liushenme.markdownreader.data.repository.ReadingProgressRepository
+import space.liushenme.markdownreader.data.repository.IReadingProgressRepository
 import space.liushenme.markdownreader.data.repository.UserProfile
 import space.liushenme.markdownreader.data.repository.UserProfileRepository
 import space.liushenme.markdownreader.update.AppUpdateRepository
@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
 class ProfileViewModel @Inject constructor(
     private val userProfileRepository: UserProfileRepository,
     private val appCacheRepository: AppCacheRepository,
-    readingProgressRepository: ReadingProgressRepository,
+    readingProgressRepository: IReadingProgressRepository,
     appUpdateRepository: AppUpdateRepository,
 ) : ViewModel() {
 

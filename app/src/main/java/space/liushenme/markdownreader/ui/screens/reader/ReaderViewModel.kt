@@ -7,9 +7,9 @@ import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.data.local.entity.BookmarkEntity
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
-import space.liushenme.markdownreader.data.repository.BookRepository
-import space.liushenme.markdownreader.data.repository.BookmarkRepository
-import space.liushenme.markdownreader.data.repository.HighlightRepository
+import space.liushenme.markdownreader.data.repository.IBookRepository
+import space.liushenme.markdownreader.data.repository.IBookmarkRepository
+import space.liushenme.markdownreader.data.repository.IHighlightRepository
 import space.liushenme.markdownreader.data.repository.ReaderPersistenceQueue
 import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
 import space.liushenme.markdownreader.document.DocumentOpenFailure
@@ -45,9 +45,9 @@ import kotlin.math.roundToInt
 @HiltViewModel
 class ReaderViewModel @Inject constructor(
     @ApplicationContext private val appContext: Context,
-    private val bookRepository: BookRepository,
-    private val bookmarkRepository: BookmarkRepository,
-    private val highlightRepository: HighlightRepository,
+    private val bookRepository: IBookRepository,
+    private val bookmarkRepository: IBookmarkRepository,
+    private val highlightRepository: IHighlightRepository,
     private val persistenceQueue: ReaderPersistenceQueue,
     private val readerSettingsRepository: ReaderSettingsRepository,
     private val documentRepository: DocumentRepository,

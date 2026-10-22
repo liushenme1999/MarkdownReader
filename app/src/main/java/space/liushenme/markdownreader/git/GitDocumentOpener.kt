@@ -10,7 +10,7 @@ import kotlin.random.Random
 import space.liushenme.markdownreader.data.local.BookContentHasher
 import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.data.local.entity.GitProjectEntity
-import space.liushenme.markdownreader.data.repository.BookRepository
+import space.liushenme.markdownreader.data.repository.IBookRepository
 import space.liushenme.markdownreader.importing.BookTocEnricher
 import space.liushenme.markdownreader.importing.ExtractedBookText
 import space.liushenme.markdownreader.importing.ImportedBookFormat
@@ -19,7 +19,7 @@ import space.liushenme.markdownreader.markdown.MarkdownPreprocessor
 
 @Singleton
 class GitDocumentOpener @Inject constructor(
-    private val bookRepository: BookRepository,
+    private val bookRepository: IBookRepository,
 ) {
 
     /**

@@ -10,18 +10,10 @@
 -keepattributes Exceptions,InnerClasses
 
 -renamesourcefileattribute SourceFile
--keepattributes SourceFile
 
 # ==================== Kotlin ====================
 
 -keep class kotlin.Metadata { *; }
--keepclassmembers class kotlin.Metadata {
-    public <methods>;
-}
-
--dontwarn kotlin.**
--keep class kotlin.** { *; }
--keepclassmembers class kotlin.** { *; }
 
 # Coroutines
 -keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
@@ -29,15 +21,6 @@
 -keepclassmembers class kotlinx.** {
     volatile <fields>;
 }
-
-# ==================== Jetpack Compose ====================
-
--keep class androidx.compose.** { *; }
--dontwarn androidx.compose.**
-
-# Compose runtime
--keep class androidx.compose.runtime.** { *; }
--keepclassmembers class androidx.compose.runtime.** { *; }
 
 # ==================== Room Database ====================
 
@@ -48,48 +31,19 @@
     @androidx.room.* <methods>;
 }
 
-# Room generated classes
--keep class * extends androidx.room.RoomDatabase { *; }
-
 # ==================== Hilt DI ====================
 
 -keep class dagger.hilt.** { *; }
 -keep class javax.inject.** { *; }
 -keep class * extends dagger.hilt.android.internal.managers.ComponentSupplier { *; }
 -keep class * extends dagger.hilt.android.internal.managers.ViewComponentManager$FragmentContextWrapper { *; }
-
-# Hilt ViewModel
 -keep class * extends androidx.lifecycle.ViewModel {
     <init>(...);
 }
-
-# Keep Hilt components
 -keep class * extends dagger.hilt.android.internal.lifecycle.HiltViewModelFactory { *; }
-
-# ==================== Markwon (Markdown) ====================
-
--keep class io.noties.markwon.** { *; }
--dontwarn io.noties.markwon.**
-
-# Markwon extensions
--keep class io.noties.markwon.ext.** { *; }
--keep class io.noties.markwon.html.** { *; }
--keep class io.noties.markwon.image.** { *; }
--keep class io.noties.markwon.inlineparser.** { *; }
-
-# JLatexMath (LaTeX rendering)
--keep class io.noties.markwon.ext.latex.** { *; }
--dontwarn io.noties.markwon.ext.latex.**
-
-# ==================== Data Classes / Entities ====================
-
--keep class space.liushenme.markdownreader.data.local.entity.** { *; }
--keep class space.liushenme.markdownreader.model.** { *; }
 
 # ==================== Gson ====================
 
--keepattributes Signature
--keepattributes *Annotation*
 -dontwarn sun.misc.**
 -keep class com.google.gson.stream.** { *; }
 -keep class * extends com.google.gson.TypeAdapter
@@ -99,14 +53,20 @@
 -keepclassmembers,allowobfuscation class * {
     @com.google.gson.annotations.SerializedName <fields>;
 }
-
-# Application data classes
--keep class space.liushenme.markdownreader.importing.** { *; }
--keep class space.liushenme.markdownreader.data.** { *; }
-
-# Gson TypeToken：R8 抹掉匿名子类泛型会导致正式包 ExceptionInInitializerError
 -keep class com.google.gson.reflect.TypeToken { *; }
 -keep class * extends com.google.gson.reflect.TypeToken { *; }
+
+# ==================== Markwon (Markdown) ====================
+
+-keep class io.noties.markwon.** { *; }
+-dontwarn io.noties.markwon.**
+
+# ==================== Data Classes / Entities ====================
+
+-keep class space.liushenme.markdownreader.data.local.entity.** { *; }
+-keep class space.liushenme.markdownreader.model.** { *; }
+-keep class space.liushenme.markdownreader.data.backup.** { *; }
+-keep class space.liushenme.markdownreader.git.** { *; }
 
 # ==================== Vico Charts ====================
 
@@ -120,39 +80,9 @@
 
 # ==================== Navigation ====================
 
--keep class androidx.navigation.** { *; }
--keepclassmembers class androidx.navigation.** { *; }
-
-# Navigation arguments
 -keepnames class androidx.navigation.fragment.NavHostFragment
 -keepnames class * extends android.os.Parcelable
 -keepnames class * extends java.io.Serializable
-
-# ==================== DataStore ====================
-
--keep class androidx.datastore.** { *; }
--keepclassmembers class androidx.datastore.** { *; }
-
-# ==================== Keep Compose UI classes ====================
-
--keep class androidx.compose.ui.** { *; }
--keep class androidx.compose.foundation.** { *; }
--keep class androidx.compose.material3.** { *; }
--keep class androidx.compose.material.** { *; }
--keepclassmembers class androidx.compose.** { *; }
-
-# ==================== Keep custom views and components ====================
-
--keep class space.liushenme.markdownreader.ui.screens.** { *; }
--keep class space.liushenme.markdownreader.ui.components.** { *; }
--keep class space.liushenme.markdownreader.ui.theme.** { *; }
--keep class space.liushenme.markdownreader.ui.system.** { *; }
-
-# ==================== Keep markdown related classes ====================
-
--keep class space.liushenme.markdownreader.markdown.** { *; }
--keep class space.liushenme.markdownreader.intent.** { *; }
--keep class space.liushenme.markdownreader.navigation.** { *; }
 
 # ==================== General Android Rules ====================
 
@@ -161,15 +91,9 @@
 -keep public class * extends android.app.Service
 -keep public class * extends android.content.BroadcastReceiver
 -keep public class * extends android.content.ContentProvider
--keep public class * extends android.app.backup.BackupAgentHelper
 -keep public class * extends android.preference.Preference
--keep public class * extends android.view.View
 -keep public class * extends androidx.fragment.app.Fragment
 
-# Keep annotation classes
--keep public class * extends java.lang.annotation.Annotation { *; }
-
-# Keep enums
 -keepclassmembers enum * {
     public static **[] values();
     public static ** valueOf(java.lang.String);
@@ -201,13 +125,6 @@
     public static int i(...);
 }
 
-# ==================== Keep reflection-heavy classes ====================
-
--keep class * implements java.lang.reflect.InvocationHandler { *; }
--keepclassmembers class * {
-    @java.lang.invoke.MethodHandle <methods>;
-}
-
 # ==================== WebView ====================
 
 -keepclassmembers class * extends android.webkit.WebViewClient {
@@ -218,19 +135,8 @@
     public void *(android.webkit.WebView, java.lang.String);
 }
 
-# ==================== Firebase / Google Play Services (if added later) ====================
-
-# -keep class com.google.android.gms.** { *; }
-# -dontwarn com.google.android.gms.**
-# -keep class com.google.firebase.** { *; }
-# -dontwarn com.google.firebase.**
-
 # ==================== OkHttp ====================
 
--keepattributes Signature
--keepattributes Exceptions
--keep class okhttp3.** { *; }
--keep interface okhttp3.** { *; }
 -dontwarn okhttp3.**
 -dontwarn okio.**
 
@@ -242,4 +148,3 @@
 -dontwarn java.lang.management.**
 -dontwarn javax.management.**
 -dontwarn org.apache.sshd.**
--keep class space.liushenme.markdownreader.git.** { *; }

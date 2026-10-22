@@ -10,7 +10,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import space.liushenme.markdownreader.data.backup.BookContentSync
 import space.liushenme.markdownreader.data.local.entity.BookEntity
-import space.liushenme.markdownreader.data.repository.BookRepository
+import space.liushenme.markdownreader.data.repository.IBookRepository
 import space.liushenme.markdownreader.importing.BookContentLoader
 import space.liushenme.markdownreader.importing.BookTocEnricher
 import space.liushenme.markdownreader.importing.ExtractedBookText
@@ -129,7 +129,7 @@ private class RemoteDocumentSource(
 @Singleton
 class DocumentRepository @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val bookRepository: BookRepository,
+    private val bookRepository: IBookRepository,
     private val bookContentSync: BookContentSync,
 ) {
     suspend fun open(bookId: Long): DocumentOpenResult {

@@ -11,10 +11,10 @@ import space.liushenme.markdownreader.data.local.BookContentHasher
 import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.data.local.entity.GitProjectEntity
 import space.liushenme.markdownreader.data.local.entity.ShelfGroups
-import space.liushenme.markdownreader.data.repository.BookRepository
+import space.liushenme.markdownreader.data.repository.IBookRepository
 import space.liushenme.markdownreader.data.repository.GitProjectRepository
 import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
-import space.liushenme.markdownreader.data.repository.ShelfGroupRepository
+import space.liushenme.markdownreader.data.repository.IShelfGroupRepository
 import space.liushenme.markdownreader.git.GitCloneException
 import space.liushenme.markdownreader.git.GitHubRepoUrlParser
 import space.liushenme.markdownreader.git.GitProgress
@@ -65,10 +65,10 @@ import kotlin.random.Random
 
 @HiltViewModel
 class BookshelfViewModel @Inject constructor(
-    private val bookRepository: BookRepository,
+    private val bookRepository: IBookRepository,
     private val gitProjectRepository: GitProjectRepository,
     private val gitProjectImporter: GitProjectImporter,
-    private val shelfGroupRepository: ShelfGroupRepository,
+    private val shelfGroupRepository: IShelfGroupRepository,
     private val readerSettingsRepository: ReaderSettingsRepository,
     private val backupManager: BackupManager,
     private val gitPullCoordinator: GitProjectPullCoordinator,

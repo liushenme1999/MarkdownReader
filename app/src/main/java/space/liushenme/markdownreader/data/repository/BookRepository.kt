@@ -18,41 +18,41 @@ class BookRepository @Inject constructor(
     private val bookDao: BookDao,
     private val deletedBookDao: DeletedBookDao,
     private val backgroundWorkScheduler: BackgroundWorkScheduler,
-) {
-    fun getAllBooks(): Flow<List<BookEntity>> = bookDao.getAllBooks()
+) : IBookRepository {
+    override fun getAllBooks(): Flow<List<BookEntity>> = bookDao.getAllBooks()
 
     /** 书架展示用：排除 Git 项目内文档（它们在项目浏览器中打开）。 */
-    fun getStandaloneBooks(): Flow<List<BookEntity>> = bookDao.getStandaloneBooks()
+    override fun getStandaloneBooks(): Flow<List<BookEntity>> = bookDao.getStandaloneBooks()
 
-    fun getFavoriteBooks(): Flow<List<BookEntity>> = bookDao.getFavoriteBooks()
+    override fun getFavoriteBooks(): Flow<List<BookEntity>> = bookDao.getFavoriteBooks()
 
-    suspend fun getBookById(id: Long): BookEntity? = bookDao.getBookById(id)
+    override suspend fun getBookById(id: Long): BookEntity? = bookDao.getBookById(id)
 
-    suspend fun getBookByFilePath(filePath: String): BookEntity? =
+    override suspend fun getBookByFilePath(filePath: String): BookEntity? =
         bookDao.getBookByFilePath(filePath)
 
-    suspend fun getBookByContentHash(contentHash: String): BookEntity? =
+    override suspend fun getBookByContentHash(contentHash: String): BookEntity? =
         bookDao.getBookByContentHash(contentHash)
 
-    suspend fun getBookByGitPath(projectId: Long, relativePath: String): BookEntity? =
+    override suspend fun getBookByGitPath(projectId: Long, relativePath: String): BookEntity? =
         bookDao.getBookByGitPath(projectId, relativePath)
 
-    suspend fun getBooksByGitProjectId(projectId: Long): List<BookEntity> =
+    override suspend fun getBooksByGitProjectId(projectId: Long): List<BookEntity> =
         bookDao.getBooksByGitProjectId(projectId)
 
-    suspend fun addBook(book: BookEntity): Long {
+    override suspend fun addBook(book: BookEntity): Long {
         clearTombstone(book.contentHash)
         return bookDao.insertBook(book)
     }
 
-    suspend fun updateBook(book: BookEntity) = bookDao.updateBook(book)
+    override suspend fun updateBook(book: BookEntity) = bookDao.updateBook(book)
 
     /** 正文落盘成功后调用，异步上传到 WebDAV books/（Git 文档会被同步层跳过）。 */
-    fun scheduleUploadBookContent(bookId: Long) {
+    override fun scheduleUploadBookContent(bookId: Long) {
         backgroundWorkScheduler.enqueueBookContentUpload(bookId)
     }
 
-    suspend fun deleteBook(book: BookEntity, deleteCloudBackup: Boolean = false) {
+    override suspend fun deleteBook(book: BookEntity, deleteCloudBackup: Boolean) {
         val id = book.id
         val hash = tombstoneHash(book)
         if (deleteCloudBackup) {
@@ -65,24 +65,24 @@ class BookRepository @Inject constructor(
         }
     }
 
-    suspend fun updateReadingProgress(
+    override suspend fun updateReadingProgress(
         bookId: Long,
         progress: Float,
         position: Int,
-        previewText: String = "",
+        previewText: String,
     ) {
         bookDao.updateReadingProgress(bookId, progress, position, previewText, Date().time)
     }
 
-    suspend fun toggleFavorite(bookId: Long, isFavorite: Boolean) {
+    override suspend fun toggleFavorite(bookId: Long, isFavorite: Boolean) {
         bookDao.updateFavoriteStatus(bookId, isFavorite)
     }
 
-    suspend fun getBookCount(): Int = bookDao.getBookCount()
+    override suspend fun getBookCount(): Int = bookDao.getBookCount()
 
-    suspend fun deleteBooksByIds(
+    override suspend fun deleteBooksByIds(
         ids: Collection<Long>,
-        deleteCloudBackup: Boolean = false,
+        deleteCloudBackup: Boolean,
     ) {
         if (ids.isEmpty()) return
         val snapshots = ids.mapNotNull { bookDao.getBookById(it) }
@@ -136,17 +136,17 @@ class BookRepository @Inject constructor(
         }
     }
 
-    suspend fun pinBooksByIds(ids: Collection<Long>, pinOrder: Long) {
+    override suspend fun pinBooksByIds(ids: Collection<Long>, pinOrder: Long) {
         if (ids.isEmpty()) return
         bookDao.pinBooksByIds(ids.toList(), pinOrder)
     }
 
-    suspend fun unpinBooksByIds(ids: Collection<Long>) {
+    override suspend fun unpinBooksByIds(ids: Collection<Long>) {
         if (ids.isEmpty()) return
         bookDao.unpinBooksByIds(ids.toList())
     }
 
-    suspend fun updateShelfGroupByIds(ids: Collection<Long>, groupName: String) {
+    override suspend fun updateShelfGroupByIds(ids: Collection<Long>, groupName: String) {
         if (ids.isEmpty()) return
         bookDao.updateShelfGroupByIds(ids.toList(), groupName)
     }

@@ -16,6 +16,7 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -1262,11 +1263,13 @@ class BackupManager @Inject constructor(
         val dest = GitProjectStorage.projectDir(context, local.id)
         val branch = remote.defaultBranch.trim().ifEmpty { local.defaultBranch }
             .takeIf { it.isNotEmpty() }
-        val result = GitProjectCloner.clone(
-            cloneUrl = parsed.cloneUrl,
-            destination = dest,
-            branch = branch,
-        )
+        val result = withTimeout(120_000L) {
+            GitProjectCloner.clone(
+                cloneUrl = parsed.cloneUrl,
+                destination = dest,
+                branch = branch,
+            )
+        }
         gitProjectDao.update(
             local.copy(
                 title = parsed.repo.ifBlank { local.title },

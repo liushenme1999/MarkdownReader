@@ -1,0 +1,106 @@
+build:
+  maxIssues: 2000
+
+complexity:
+  LongMethod:
+    active: false
+  LongParameterList:
+    active: false
+  TooManyFunctions:
+    active: false
+  CyclomaticComplexMethod:
+    active: true
+    threshold: 20
+  NestedBlockDepth:
+    active: true
+    threshold: 5
+  LargeClass:
+    active: false
+
+exceptions:
+  TooGenericExceptionCaught:
+    active: false
+    allowedExceptionNameRegex: '_|(error|exception|e|cause|failure|ignored|unexpected)'
+  SwallowedException:
+    active: false
+
+naming:
+  FunctionNaming:
+    active: true
+    ignoreAnnotated:
+      - 'Composable'
+  MatchingDeclarationName:
+    active: false
+  TopLevelPropertyNaming:
+    active: false
+  VariableNaming:
+    active: false
+
+style:
+  MagicNumber:
+    active: false
+    ignoreNumbers:
+      - '-1'
+      - '0'
+      - '1'
+      - '2'
+    ignorePropertyDeclaration: true
+    ignoreCompanionObjectPropertyDeclaration: true
+    ignoreAnnotation: true
+    ignoreNamedArgument: true
+    ignoreEnums: true
+  MaxLineLength:
+    active: true
+    maxLineLength: 120
+    excludePackageStatements: true
+    excludeImportStatements: true
+    excludeCommentStatements: false
+  ReturnCount:
+    active: false
+    excludedFunctions:
+      - 'equals'
+  UnusedPrivateMember:
+    active: true
+    ignoreAnnotated:
+      - 'Preview'
+  UnusedImports:
+    active: false
+  DestructuringDeclarationWithTooManyEntries:
+    active: false
+  UnusedParameter:
+    active: false
+  UtilityClassWithPublicConstructor:
+    active: false
+  LoopWithTooManyJumpStatements:
+    active: false
+  SafeCast:
+    active: false
+  UnnecessaryParentheses:
+    active: false
+  CanBeNonNullable:
+    active: false
+  BracesOnIfStatements:
+    active: false
+  OptionalUnit:
+    active: false
+  EqualsNullCall:
+    active: true
+  ExplicitItLambdaParameter:
+    active: false
+  ExpressionBodySyntax:
+    active: false
+  ForbiddenComment:
+    active: false
+  NewLineAtEndOfFile:
+    active: true
+  SerialVersionUIDInSerializableClass:
+    active: false
+  ThrowsCount:
+    active: false
+  VarCouldBeVal:
+    active: false
+
+empty-blocks:
+  EmptyFunctionBlock:
+    active: true
+    ignoreOverridden: true

@@ -5,10 +5,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.data.local.entity.isFinishedReading
-import space.liushenme.markdownreader.data.repository.BookRepository
-import space.liushenme.markdownreader.data.repository.BookmarkRepository
-import space.liushenme.markdownreader.data.repository.HighlightRepository
-import space.liushenme.markdownreader.data.repository.ReadingProgressRepository
+import space.liushenme.markdownreader.data.repository.IBookRepository
+import space.liushenme.markdownreader.data.repository.IBookmarkRepository
+import space.liushenme.markdownreader.data.repository.IHighlightRepository
+import space.liushenme.markdownreader.data.repository.IReadingProgressRepository
 import space.liushenme.markdownreader.data.repository.ReadingTrendAggregator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -19,10 +19,10 @@ import javax.inject.Inject
 @HiltViewModel
 class StatisticsViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val bookRepository: BookRepository,
-    private val bookmarkRepository: BookmarkRepository,
-    private val highlightRepository: HighlightRepository,
-    private val readingProgressRepository: ReadingProgressRepository,
+    private val bookRepository: IBookRepository,
+    private val bookmarkRepository: IBookmarkRepository,
+    private val highlightRepository: IHighlightRepository,
+    private val readingProgressRepository: IReadingProgressRepository,
 ) : ViewModel() {
 
     private val _statistics = MutableStateFlow(ReadingStatistics())

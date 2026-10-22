@@ -11,6 +11,7 @@ import space.liushenme.markdownreader.data.local.dao.HighlightDao
 import space.liushenme.markdownreader.data.local.dao.ReadingProgressDao
 import space.liushenme.markdownreader.data.local.dao.ShelfGroupDao
 import dagger.Module
+import dagger.Binds
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -23,6 +24,16 @@ import space.liushenme.markdownreader.BuildConfig
 import space.liushenme.markdownreader.update.AppUpdateChecker
 import space.liushenme.markdownreader.update.AppUpdateFetcher
 import space.liushenme.markdownreader.update.AppUpdateRepository
+import space.liushenme.markdownreader.data.repository.BookRepository
+import space.liushenme.markdownreader.data.repository.IBookRepository
+import space.liushenme.markdownreader.data.repository.BookmarkRepository
+import space.liushenme.markdownreader.data.repository.IBookmarkRepository
+import space.liushenme.markdownreader.data.repository.HighlightRepository
+import space.liushenme.markdownreader.data.repository.IHighlightRepository
+import space.liushenme.markdownreader.data.repository.ShelfGroupRepository
+import space.liushenme.markdownreader.data.repository.IShelfGroupRepository
+import space.liushenme.markdownreader.data.repository.ReadingProgressRepository
+import space.liushenme.markdownreader.data.repository.IReadingProgressRepository
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -74,4 +85,23 @@ object AppModule {
     @Singleton
     fun provideAppUpdateRepository(fetcher: AppUpdateFetcher): AppUpdateRepository =
         AppUpdateRepository(fetcher, BuildConfig.VERSION_CODE)
+}
+
+@Module
+@InstallIn(SingletonComponent::class)
+abstract class RepositoryModule {
+    @Binds
+    abstract fun bindBookRepository(impl: BookRepository): IBookRepository
+
+    @Binds
+    abstract fun bindBookmarkRepository(impl: BookmarkRepository): IBookmarkRepository
+
+    @Binds
+    abstract fun bindHighlightRepository(impl: HighlightRepository): IHighlightRepository
+
+    @Binds
+    abstract fun bindShelfGroupRepository(impl: ShelfGroupRepository): IShelfGroupRepository
+
+    @Binds
+    abstract fun bindReadingProgressRepository(impl: ReadingProgressRepository): IReadingProgressRepository
 }

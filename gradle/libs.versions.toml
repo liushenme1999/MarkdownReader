@@ -4,6 +4,7 @@ kotlin = "2.3.10"
 ksp = "2.3.7"
 hilt = "2.59.2"
 compose-compiler = "1.5.14"
+detekt = "1.23.7"
 
 androidx-core = "1.15.0"
 androidx-appcompat = "1.7.0"
@@ -96,6 +97,7 @@ android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 hilt-android = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
+detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
 
 [bundles]
 androidx-compose = [

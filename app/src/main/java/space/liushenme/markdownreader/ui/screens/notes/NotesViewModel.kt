@@ -6,9 +6,9 @@ import androidx.lifecycle.viewModelScope
 import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.entity.BookmarkEntity
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
-import space.liushenme.markdownreader.data.repository.BookRepository
-import space.liushenme.markdownreader.data.repository.BookmarkRepository
-import space.liushenme.markdownreader.data.repository.HighlightRepository
+import space.liushenme.markdownreader.data.repository.IBookRepository
+import space.liushenme.markdownreader.data.repository.IBookmarkRepository
+import space.liushenme.markdownreader.data.repository.IHighlightRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
@@ -17,9 +17,9 @@ import javax.inject.Inject
 
 @HiltViewModel
 class NotesViewModel @Inject constructor(
-    private val highlightRepository: HighlightRepository,
-    private val bookmarkRepository: BookmarkRepository,
-    private val bookRepository: BookRepository,
+    private val highlightRepository: IHighlightRepository,
+    private val bookmarkRepository: IBookmarkRepository,
+    private val bookRepository: IBookRepository,
     @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
 

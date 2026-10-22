@@ -13,12 +13,12 @@ import kotlinx.coroutines.launch
 import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.entity.ShelfGroupEntity
 import space.liushenme.markdownreader.data.local.entity.isSystemGroup
-import space.liushenme.markdownreader.data.repository.ShelfGroupRepository
+import space.liushenme.markdownreader.data.repository.IShelfGroupRepository
 import javax.inject.Inject
 
 @HiltViewModel
 class GroupManagementViewModel @Inject constructor(
-    private val shelfGroupRepository: ShelfGroupRepository,
+    private val shelfGroupRepository: IShelfGroupRepository,
     @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
 

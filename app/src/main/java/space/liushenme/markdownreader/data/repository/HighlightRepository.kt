@@ -9,17 +9,17 @@ import javax.inject.Singleton
 @Singleton
 class HighlightRepository @Inject constructor(
     private val highlightDao: HighlightDao
-) {
-    fun getHighlightsByBookId(bookId: Long): Flow<List<HighlightEntity>> = 
+) : IHighlightRepository {
+    override fun getHighlightsByBookId(bookId: Long): Flow<List<HighlightEntity>> = 
         highlightDao.getHighlightsByBookId(bookId)
 
-    fun getAllHighlights(): Flow<List<HighlightEntity>> = highlightDao.getAllHighlights()
+    override fun getAllHighlights(): Flow<List<HighlightEntity>> = highlightDao.getAllHighlights()
 
-    suspend fun addHighlight(highlight: HighlightEntity): Long = highlightDao.insertHighlight(highlight)
+    override suspend fun addHighlight(highlight: HighlightEntity): Long = highlightDao.insertHighlight(highlight)
 
-    suspend fun updateHighlight(highlight: HighlightEntity) = highlightDao.updateHighlight(highlight)
+    override suspend fun updateHighlight(highlight: HighlightEntity) = highlightDao.updateHighlight(highlight)
 
-    suspend fun deleteHighlight(highlight: HighlightEntity) = highlightDao.deleteHighlight(highlight)
+    override suspend fun deleteHighlight(highlight: HighlightEntity) = highlightDao.deleteHighlight(highlight)
 
-    suspend fun deleteHighlightsByBookId(bookId: Long) = highlightDao.deleteHighlightsByBookId(bookId)
+    override suspend fun deleteHighlightsByBookId(bookId: Long) = highlightDao.deleteHighlightsByBookId(bookId)
 }
