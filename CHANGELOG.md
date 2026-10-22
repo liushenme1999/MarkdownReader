@@ -4,6 +4,14 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [1.2.1] - 2026-10-22
+
+### 修复
+
+- 修复 Markdown 中使用 `$$...$$` 且首尾定界符同行写的多行块级公式无法识别的问题
+- 修复 `\\[...\\]` 块级公式定界符不被识别的问题
+- 修复 JLatexMath 渲染 `cases` 环境时第二列与左侧值间距过小的问题
+
 ## [Unreleased]
 
 ## [1.2.0] - 2026-10-22
@@ -317,7 +325,8 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.9...v1.2.0
 [1.1.9]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.8...v1.1.9
 [1.1.8]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.7...v1.1.8

@@ -13,6 +13,32 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class MarkdownPreprocessorTest {
+    @Test
+    fun `multi-line block latex with inline delimiters is normalized`() {
+        val dollar = "$$"
+        val source = listOf(
+            "Some text before.",
+            dollar + """\text{AST\_Match}(P, G) = \begin{cases}""",
+            "1 & \\text{if equal} \\\\",
+            "0 & \\text{otherwise}",
+            "\\end{cases}" + dollar,
+            "Some text after.",
+        ).joinToString("\n")
+        val result = MarkdownPreprocessor.normalizeBlockLatexSurroundings(source)
+        assertTrue(result.contains(dollar + "\n\\text"))
+        assertTrue(result.contains("\\end{cases}\n" + dollar))
+    }
+
+    @Test
+    fun `bracket block latex is converted to dollar block`() {
+        val source = """
+            \[
+            E = mc^2
+            \]
+        """.trimIndent()
+        val result = MarkdownPreprocessor.normalizeBracketBlockLatex(source)
+        assertTrue(result.contains("$$\nE = mc^2\n$$"))
+    }
 
     private val context: Context
         get() = RuntimeEnvironment.getApplication()

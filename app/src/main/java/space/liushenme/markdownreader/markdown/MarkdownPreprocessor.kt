@@ -50,6 +50,7 @@ object MarkdownPreprocessor {
     fun prepare(markdown: String, context: Context): String {
         if (markdown.isEmpty()) return markdown
         var out = expandHighlight(markdown)
+        out = normalizeBracketBlockLatex(out)
         out = unwrapCenteredLatexDivs(out)
         out = expandSingleLineBlockLatex(out)
         out = normalizeBlockLatexSurroundings(out)
@@ -60,6 +61,41 @@ object MarkdownPreprocessor {
         out = stripLocalRelativeImages(out)
         out = normalizeReaderImageLayout(out)
         return out
+    }
+
+    /**
+     * `\[...\]` 是 LaTeX/Typora 等编辑器的块级公式定界符，
+     * 在 Markwon 的 `$$` 体系之外，需转为 `$$` 独立行。
+     */
+    internal fun normalizeBracketBlockLatex(markdown: String): String {
+        if (!markdown.contains("\\[")) return markdown
+        val lines = markdown.split('\n')
+        val out = ArrayList<String>(lines.size + 8)
+        var inBracketBlock = false
+        for (line in lines) {
+            val trimmed = line.trim()
+            if (!inBracketBlock) {
+                val opener = BRACKET_OPEN.matchEntire(trimmed)
+                if (opener != null) {
+                    val body = opener.groupValues[1].trim()
+                    out.add("$$")
+                    if (body.isNotEmpty()) out.add(body)
+                    inBracketBlock = true
+                    continue
+                }
+            } else {
+                val closer = BRACKET_CLOSE.matchEntire(trimmed)
+                if (closer != null) {
+                    val body = closer.groupValues[1].trim()
+                    if (body.isNotEmpty()) out.add(body)
+                    out.add("$$")
+                    inBracketBlock = false
+                    continue
+                }
+            }
+            out.add(line)
+        }
+        return out.joinToString("\n")
     }
 
     /**
@@ -327,6 +363,32 @@ object MarkdownPreprocessor {
                 out.add("")
                 continue
             }
+            if (!inBlockLatex) {
+                if (COMPLETE_SINGLE_LINE_BLOCK_LATEX.matches(trimmed)) {
+                    out.addAll(expandSingleLineBlockLatexLine(line))
+                    repairIndentedTail = hasIndentedFollowingLine(lines, index)
+                    continue
+                }
+                val opener = INLINE_OPENING_BLOCK_LATEX.matchEntire(trimmed)
+                if (opener != null) {
+                    val body = opener.groupValues[1].trim()
+                    out.add("$$")
+                    if (body.isNotEmpty()) out.add(body)
+                    inBlockLatex = true
+                    continue
+                }
+            }
+            if (inBlockLatex) {
+                val closer = INLINE_CLOSING_BLOCK_LATEX.matchEntire(trimmed)
+                if (closer != null) {
+                    val body = closer.groupValues[1].trim()
+                    if (body.isNotEmpty()) out.add(body)
+                    out.add("$$")
+                    inBlockLatex = false
+                    repairIndentedTail = hasIndentedFollowingLine(lines, index)
+                    continue
+                }
+            }
             if (trimmed == "$$") {
                 if (inBlockLatex) {
                     out.add("$$")
@@ -369,6 +431,16 @@ object MarkdownPreprocessor {
         }
         return false
     }
+
+    /** `$$\text{...}` 行首 `$$` 后紧跟公式内容（多行块级公式的首行）。 */
+    private val INLINE_OPENING_BLOCK_LATEX = Regex("""^\$\$\s*(.+)""")
+    private val COMPLETE_SINGLE_LINE_BLOCK_LATEX = Regex("""^\$\$.+\$\$$""")
+
+    /** `...\end{cases}$$` 行尾 `$$` 前有公式内容（多行块级公式的末行）。 */
+    private val INLINE_CLOSING_BLOCK_LATEX = Regex("""^(.+)\s*\$\$$""")
+
+    private val BRACKET_OPEN = Regex("""^\\\[\s*(.*)""")
+    private val BRACKET_CLOSE = Regex("""^(.*)\s*\\\]""")
 
     private fun shouldStopRepairAfterBlockLatex(trimmed: String, raw: String): Boolean {
         if (trimmed.startsWith("#")) return true

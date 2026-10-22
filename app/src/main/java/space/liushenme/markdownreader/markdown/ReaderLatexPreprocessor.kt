@@ -1,11 +1,15 @@
 package space.liushenme.markdownreader.markdown
 
 /**
- * 将 JLatex 不支持的命令改写为可解析的 LaTeX（如 mhchem `\ce`、cancel 包）。
+ * 将 JLatex 排版差异改写为可解析的 LaTeX（如 `cases` 列间距、mhchem `\ce`、cancel 包）。
  */
 object ReaderLatexPreprocessor {
 
     private val CE_COMMAND = Regex("""\\ce\s*\{""")
+
+    /** JLatex 的 `cases` 会忽略列分隔符后的普通空格，补齐第二列与左值的间距。 */
+    private val CASES_ENV = Regex("""\\begin\{cases\}[\s\S]*?\\end\{cases\}""")
+    private val CASES_COLUMN = Regex("""&(?!\s*\\quad\b)""")
 
     /** `\cancel`/`\bcancel`/`\xcancel` → JLatex 内置 `\st`（水平删除线）。 */
     private val CANCEL_COMMANDS = Regex("""\\(?:x|b)?cancel\s*\{""")
@@ -18,7 +22,7 @@ object ReaderLatexPreprocessor {
 
     fun preprocess(latex: String): String {
         if (latex.isEmpty()) return latex
-        var out = latex
+        var out = insertCasesColumnSpacing(latex)
         for ((pattern, replacement) in COMMAND_ALIASES) {
             out = out.replace(pattern, replacement)
         }
@@ -44,7 +48,7 @@ object ReaderLatexPreprocessor {
      */
     internal fun preprocessBlockLatexInMarkdown(markdown: String): String {
         if (!markdown.contains("$$")) return markdown
-        val lines = markdown.split('\n')
+        val lines = insertCasesColumnSpacing(markdown).split('\n')
         val out = ArrayList<String>(lines.size)
         var inBlock = false
         for (line in lines) {
@@ -73,6 +77,13 @@ object ReaderLatexPreprocessor {
             }
         }
         return out.joinToString("\n")
+    }
+
+    private fun insertCasesColumnSpacing(latex: String): String {
+        if (!latex.contains("\\begin{cases}")) return latex
+        return CASES_ENV.replace(latex) { match ->
+            match.value.replace(CASES_COLUMN) { "&" + "\\quad" }
+        }
     }
 
     private val SINGLE_LINE_BLOCK_LATEX = Regex("""^\$\$(.+)\$\$$""")
