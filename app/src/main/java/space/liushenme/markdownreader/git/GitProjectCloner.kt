@@ -47,6 +47,9 @@ object GitProjectCloner {
                 .setDirectory(destination)
                 .setCloneAllBranches(false)
                 .setDepth(1)
+                .setTransportConfigCallback { transport ->
+                    transport.setTimeout(120)
+                }
                 .setProgressMonitor(monitor)
             val trimmedBranch = branch?.trim()?.takeIf { it.isNotEmpty() }
             if (trimmedBranch != null) {

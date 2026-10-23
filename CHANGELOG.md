@@ -4,6 +4,13 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [1.2.3] - 2026-10-23
+
+### 优化
+
+- 针对 GitHub 大仓库浅克隆优化超时策略：克隆整体超时延长至 10 分钟，拉取超时延长至 5 分钟
+- 增加 Git 传输 120 秒空闲超时，避免服务端打包期间长期无响应时挂起
+
 ## [1.2.1] - 2026-10-22
 
 ### 修复
@@ -331,7 +338,8 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.3...HEAD
+[1.2.3]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/liushenme1999/MarkdownReader/compare/v1.1.9...v1.2.0

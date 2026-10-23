@@ -25,8 +25,8 @@ class GitProjectImporter @Inject constructor(
 ) {
 
     companion object {
-        private const val CLONE_TIMEOUT_MS = 120_000L
-        private const val PULL_TIMEOUT_MS = 60_000L
+        private const val CLONE_TIMEOUT_MS = 600_000L
+        private const val PULL_TIMEOUT_MS = 300_000L
     }
 
     suspend fun importPublicRepo(
