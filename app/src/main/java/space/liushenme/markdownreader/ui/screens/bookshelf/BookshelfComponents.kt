@@ -168,6 +168,7 @@ private fun bookFormatLabel(book: BookEntity): String = when (
     ImportedBookFormat.MARKDOWN -> stringResource(R.string.book_format_markdown)
     ImportedBookFormat.TXT -> stringResource(R.string.book_format_text)
     ImportedBookFormat.PDF -> stringResource(R.string.book_format_pdf)
+    ImportedBookFormat.HTML -> stringResource(R.string.book_format_html)
 }
 
 @Composable

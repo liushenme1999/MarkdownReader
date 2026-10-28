@@ -16,6 +16,7 @@ object DocumentBlockParser {
         if (content.isEmpty()) return emptyList()
         if (format == DocumentFormat.Pdf) return parsePdf(content)
         if (format == DocumentFormat.PlainText) return parsePlainText(content)
+        if (format == DocumentFormat.Html) return parsePlainText(content)
         val lines = sourceLines(content)
         val blocks = ArrayList<DocumentBlock>()
         var i = 0

@@ -15,6 +15,7 @@ import space.liushenme.markdownreader.importing.BookContentLoader
 import space.liushenme.markdownreader.importing.BookTocEnricher
 import space.liushenme.markdownreader.importing.ExtractedBookText
 import space.liushenme.markdownreader.importing.ImportedBookFormat
+import space.liushenme.markdownreader.importing.HtmlDocumentSupport
 import space.liushenme.markdownreader.importing.ParsedBookStorage
 import space.liushenme.markdownreader.importing.PdfReaderContent
 import space.liushenme.markdownreader.importing.UrlBookDownloader
@@ -145,6 +146,7 @@ class DocumentRepository @Inject constructor(
         val text = MarkdownPreprocessor.stripLocalRelativeImages(sourceLoad.extracted.body)
         val detectedFormat = when {
             PdfReaderContent.looksLikePdfBody(text) -> ImportedBookFormat.PDF
+            HtmlDocumentSupport.looksLikeHtmlBody(text) -> ImportedBookFormat.HTML
             else -> ImportedBookFormat.fromStored(latest.importFormat)
         }
         val aligned = BookTocEnricher.alignToBody(
@@ -168,6 +170,7 @@ class DocumentRepository @Inject constructor(
             ImportedBookFormat.MARKDOWN -> DocumentFormat.Markdown
             ImportedBookFormat.TXT -> DocumentFormat.PlainText
             ImportedBookFormat.PDF -> DocumentFormat.Pdf
+            ImportedBookFormat.HTML -> DocumentFormat.Html
         }
         val blocks = DocumentBlockParser.parse(text, documentFormat)
         val chunkIndex = DocumentBlockParser.buildChunkIndex(text.length, blocks)

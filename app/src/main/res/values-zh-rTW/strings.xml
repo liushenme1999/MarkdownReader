@@ -106,6 +106,7 @@
     <string name="book_format_markdown">Markdown</string>
     <string name="book_format_text">文字</string>
     <string name="book_format_pdf">PDF</string>
+    <string name="book_format_html">HTML</string>
     <string name="bookshelf_importing">正在匯入</string>
     <string name="bookshelf_importing_progress">正在匯入 %1$d/%2$d（%3$d%%）</string>
     <string name="bookshelf_importing_wait">匯入完成後可閱讀</string>

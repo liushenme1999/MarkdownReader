@@ -4,7 +4,7 @@ import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.importing.ImportedTocEntry
 
-enum class DocumentFormat { Markdown, PlainText, Pdf }
+enum class DocumentFormat { Markdown, PlainText, Pdf, Html }
 
 enum class DocumentSourceType { ParsedBundle, ContentUri, RemoteUrl, GitWorkingTree, Missing }
 
@@ -162,6 +162,7 @@ fun BookEntity.toDocument(): Document = Document(
         ImportedBookFormat.MARKDOWN -> DocumentFormat.Markdown
         ImportedBookFormat.TXT -> DocumentFormat.PlainText
         ImportedBookFormat.PDF -> DocumentFormat.Pdf
+        ImportedBookFormat.HTML -> DocumentFormat.Html
     },
     contentHash = contentHash,
 )

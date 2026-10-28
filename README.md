@@ -8,7 +8,7 @@
 | **包名** | `space.liushenme.markdownreader` |
 | **最低系统** | Android 7.0 (API 24) |
 | **目标 SDK** | 35 |
-| **当前版本** | 1.2.3 (versionCode 25) |
+| **当前版本** | 1.2.4 (versionCode 26) |
 | **仓库** | [github.com/liukejun1999/MarkdownReader](https://github.com/liushenme1999/MarkdownReader) |
 
 ## 安装包下载
@@ -17,7 +17,7 @@
 
 | 版本 | 下载 | 大小约 |
 |------|------|--------|
-| **1.2.3** | [MD._release_1.2.3.apk](https://github.com/liushenme1999/MarkdownReader/releases/download/v1.2.3/MD._release_1.2.3.apk) | 8.3 MB |
+| **1.2.4** | [MD._release_1.2.4.apk](https://github.com/liushenme1999/MarkdownReader/releases/download/v1.2.4/MD._release_1.2.4.apk) | 8.3 MB |
 
 安装说明：
 
@@ -34,7 +34,7 @@
 ### 书架管理
 
 - 卡片式书籍展示
-- 导入 **Markdown**（`.md` / `.markdown` 等）、**纯文本**（`.txt`）、**PDF**
+- 导入 **Markdown**（`.md` / `.markdown` 等）、**纯文本**（`.txt`）、**PDF**、**HTML**
 - 支持系统文档选择器、URL 下载、「用其他应用打开」与分享导入
 - **从公开 GitHub 仓库导入完整项目**（JGit 浅克隆）：按仓库目录树浏览文档，支持切换分支、`pull` 拉取更新；项目内相对路径图片可正常显示
 - 项目继续阅读历史（可展开，显示进度）；Git 项目与书籍混排、收藏/置顶/分组
@@ -136,7 +136,7 @@ app/src/main/java/
 ## 使用方法
 
 1. 打开应用，点击「导入书籍」
-2. 从文件管理器选择 Markdown / TXT / PDF，或通过分享 /「打开方式」导入
+2. 从文件管理器选择 Markdown / TXT / PDF / HTML，或通过分享 /「打开方式」导入
 3. 在书架点击书籍开始阅读
 4. 长按文本可选择内容并划线或添加书签
 5. 在阅读界面或「我的 → 阅读设置」中调整主题、字号、翻页方式、是否隐藏系统栏等

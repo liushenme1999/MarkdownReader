@@ -72,6 +72,7 @@ import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.document.DocumentFormat
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.importing.ImportedBookFormat
+import space.liushenme.markdownreader.importing.HtmlDocumentSupport
 import space.liushenme.markdownreader.importing.ParsedBookStorage
 import space.liushenme.markdownreader.importing.PdfReaderContent
 import space.liushenme.markdownreader.markdown.MarkdownLinkDispatcher
@@ -147,6 +148,9 @@ fun ReaderScreen(
         PdfReaderContent.looksLikePdfBody(content)
     val renderPlainText = documentFormat == DocumentFormat.PlainText ||
         importFormat?.usesReaderPlainBody == true
+    val renderHtml = documentFormat == DocumentFormat.Html ||
+        importFormat?.isHtml == true ||
+        HtmlDocumentSupport.looksLikeHtmlBody(content)
     val readerContent = remember(content, isPdfBook) {
         if (isPdfBook) PdfReaderContent.sanitizeStoredBody(content) else content
     }
@@ -1597,6 +1601,27 @@ fun ReaderScreen(
             onRetry = { viewModel.dispatch(ReaderEvent.RetryLoad) },
             onBack = { navController.navigateUp() },
         ) {
+            if (renderHtml) {
+                var htmlProgressSaveMs by remember(readerContent) { mutableLongStateOf(0L) }
+                ReaderHtmlBody(
+                    html = readerContent,
+                    modifier = Modifier.fillMaxSize(),
+                    onScrollProgress = { fraction ->
+                        val now = System.currentTimeMillis()
+                        if (now - htmlProgressSaveMs >= 250L) {
+                            htmlProgressSaveMs = now
+                            val progressChar = (fraction * (readerContent.length - 1).coerceAtLeast(0))
+                                .roundToInt()
+                            lastScrollTopGlobalChar = progressChar
+                            viewModel.updateReadingProgressAtChar(
+                                progressChar,
+                                reachedEnd = fraction >= 0.999f,
+                            )
+                        }
+                    },
+                )
+                return@ReaderContent
+            }
                         // 长按选区走系统复制/全选菜单，不在此弹出划线顶栏。
                         val onReaderVerticalScroll: (Int) -> Unit = { deltaPx ->
                             if (immersiveReading && showTopBar) {

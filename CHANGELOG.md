@@ -4,6 +4,14 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [1.2.4] - 2026-10-28
+
+### 新功能
+
+- 支持 `.html` / `.htm` 本地文件导入，并在阅读页使用 WebView 预览
+- HTML 预览启用 JavaScript、DOM 存储和缩放，并按滚动位置更新阅读进度
+- HTML 预览禁用本地文件访问，仅允许 HTTP/HTTPS 资源
+
 ## [1.2.3] - 2026-10-23
 
 ### 优化
@@ -338,7 +346,8 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.3...HEAD
+[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.4...HEAD
+[1.2.4]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.0...v1.2.1

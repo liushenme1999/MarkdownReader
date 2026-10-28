@@ -106,6 +106,7 @@
     <string name="book_format_markdown">Markdown</string>
     <string name="book_format_text">Text</string>
     <string name="book_format_pdf">PDF</string>
+    <string name="book_format_html">HTML</string>
     <string name="bookshelf_importing">Importing</string>
     <string name="bookshelf_importing_progress">Importing %1$d/%2$d (%3$d%%)</string>
     <string name="bookshelf_importing_wait">You can read this book after import finishes</string>

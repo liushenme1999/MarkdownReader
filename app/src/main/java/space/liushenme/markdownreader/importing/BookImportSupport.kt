@@ -8,7 +8,7 @@ import java.net.URI
 object BookImportSupport {
 
     /**
-     * 系统文件选择器 MIME 过滤：仅展示 Markdown / TXT / PDF。
+     * 系统文件选择器 MIME 过滤：仅展示 Markdown / TXT / PDF / HTML。
      * 不含 application/octet-stream，避免其它二进制文件混入列表；目录仍可正常浏览进入。
      */
     val importMimeTypes: Array<String> = arrayOf(
@@ -16,12 +16,14 @@ object BookImportSupport {
         "text/x-markdown",
         "text/plain",
         "application/pdf",
+        "text/html",
     )
 
     private val SUPPORTED_EXTENSIONS = setOf(
         "md", "markdown", "mdown", "mkd",
         "txt", "text", "log",
-        "pdf"
+        "pdf",
+        "html", "htm"
     )
 
     private val REMOVED_EXTENSIONS = setOf(
@@ -31,7 +33,8 @@ object BookImportSupport {
     private val STRIP_SUFFIXES = listOf(
         ".markdown", ".mdown", ".mkd", ".md",
         ".txt", ".text", ".log",
-        ".pdf"
+        ".pdf",
+        ".html", ".htm"
     )
 
     /** 已移除的格式（EPUB / Word / Kindle），用于导入前拦截。 */

@@ -6,13 +6,14 @@ package space.liushenme.markdownreader.importing
 enum class ImportedBookFormat(val storedKey: String) {
     MARKDOWN("markdown"),
     TXT("txt"),
-    PDF("pdf");
+    PDF("pdf"),
+    HTML("html");
 
     val isPlainText: Boolean
         get() = this == MARKDOWN || this == TXT
 
     val hasBuiltInTextExtract: Boolean
-        get() = isPlainText || this == PDF
+        get() = isPlainText || this == PDF || this == HTML
 
     /** 阅读器是否用 TextView 纯文本渲染（非 Markwon）。 */
     val usesReaderPlainBody: Boolean
@@ -20,6 +21,9 @@ enum class ImportedBookFormat(val storedKey: String) {
 
     val isPdf: Boolean
         get() = this == PDF
+
+    val isHtml: Boolean
+        get() = this == HTML
 
     companion object {
         /** 已移除支持的旧格式（数据库中可能仍存在）。 */
@@ -43,6 +47,7 @@ enum class ImportedBookFormat(val storedKey: String) {
                 "md", "markdown", "mdown", "mkd" -> MARKDOWN
                 "txt", "text", "log" -> TXT
                 "pdf" -> PDF
+                "html", "htm" -> HTML
                 else -> TXT
             }
         }
@@ -53,6 +58,7 @@ enum class ImportedBookFormat(val storedKey: String) {
                 m.contains("pdf") -> PDF
                 m.contains("markdown") || m.contains("x-markdown") -> MARKDOWN
                 m.contains("plain") -> TXT
+                m.contains("html") -> HTML
                 else -> TXT
             }
         }

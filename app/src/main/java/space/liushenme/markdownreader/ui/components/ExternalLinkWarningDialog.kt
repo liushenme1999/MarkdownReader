@@ -27,6 +27,7 @@ fun ExternalLinkWarningDialog(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
+    val copiedMessage = stringResource(R.string.external_link_warning_copied)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -59,7 +60,7 @@ fun ExternalLinkWarningDialog(
                             clipboard.setPrimaryClip(ClipData.newPlainText("url", url))
                             Toast.makeText(
                                 context,
-                                context.getString(R.string.external_link_warning_copied),
+                                copiedMessage,
                                 Toast.LENGTH_SHORT,
                             ).show()
                         }
