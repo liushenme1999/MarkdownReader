@@ -7,11 +7,13 @@ import java.util.Date
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.random.Random
+import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.BookContentHasher
 import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.data.local.entity.GitProjectEntity
 import space.liushenme.markdownreader.data.repository.IBookRepository
 import space.liushenme.markdownreader.importing.BookTocEnricher
+import space.liushenme.markdownreader.importing.CodeFileLanguage
 import space.liushenme.markdownreader.importing.ExtractedBookText
 import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.importing.ParsedBookStorage
@@ -35,21 +37,40 @@ class GitDocumentOpener @Inject constructor(
             ?: error("非法路径：$relativePath")
         if (!file.isFile) error("文件不存在：$relativePath")
 
-        val format = ImportedBookFormat.fromFileName(file.name)
-        val rawBody = file.readText(StandardCharsets.UTF_8)
-        val baseDir = file.parentFile ?: root
-        val rewritten = if (format == ImportedBookFormat.MARKDOWN) {
-            MarkdownPreprocessor.rewriteRelativeImagesToFileUri(rawBody, baseDir)
+        val codeLanguage = CodeFileLanguage.fromFileName(file.name)
+        val format = if (codeLanguage != null) {
+            ImportedBookFormat.CODE
         } else {
-            rawBody
+            ImportedBookFormat.fromFileName(file.name)
         }
-        val extracted = BookTocEnricher.alignToBody(
-            format,
-            BookTocEnricher.enrichIfEmpty(
+        val extracted = if (codeLanguage != null) {
+            val body = try {
+                GitCodeFileReader.read(file)
+            } catch (error: GitCodeFileReader.ReadException) {
+                val messageRes = when (error.failure) {
+                    GitCodeFileReader.Failure.TooLarge -> R.string.git_code_file_too_large
+                    GitCodeFileReader.Failure.UnsupportedEncoding ->
+                        R.string.git_code_file_encoding_unsupported
+                }
+                throw IllegalStateException(context.getString(messageRes), error)
+            }
+            ExtractedBookText(body = body, toc = emptyList())
+        } else {
+            val rawBody = file.readText(StandardCharsets.UTF_8)
+            val baseDir = file.parentFile ?: root
+            val rewritten = if (format == ImportedBookFormat.MARKDOWN) {
+                MarkdownPreprocessor.rewriteRelativeImagesToFileUri(rawBody, baseDir)
+            } else {
+                rawBody
+            }
+            BookTocEnricher.alignToBody(
                 format,
-                ExtractedBookText(body = rewritten, toc = emptyList()),
-            ),
-        )
+                BookTocEnricher.enrichIfEmpty(
+                    format,
+                    ExtractedBookText(body = rewritten, toc = emptyList()),
+                ),
+            )
+        }
 
         val filePath = gitFilePath(project.id, relativePath)
         val contentHash = BookContentHasher.hashForGitDocument(project.remoteUrl, relativePath)
@@ -71,7 +92,12 @@ class GitDocumentOpener @Inject constructor(
             )
             bookRepository.updateBook(updated)
             val dir = ParsedBookStorage.bundleDir(context, existing.id)
-            ParsedBookStorage.writeBundle(dir, extracted, coverBytes = null)
+            ParsedBookStorage.writeBundle(
+                dir = dir,
+                extracted = extracted,
+                coverBytes = null,
+                importFormat = format,
+            )
             val withBundle = updated.copy(
                 parsedBundlePath = dir.absolutePath,
                 currentPosition = existing.currentPosition.coerceIn(0, extracted.body.length.coerceAtLeast(0)),
@@ -94,7 +120,12 @@ class GitDocumentOpener @Inject constructor(
             )
             val id = bookRepository.addBook(placeholder)
             val dir = ParsedBookStorage.bundleDir(context, id)
-            val ok = ParsedBookStorage.writeBundle(dir, extracted, coverBytes = null)
+            val ok = ParsedBookStorage.writeBundle(
+                dir = dir,
+                extracted = extracted,
+                coverBytes = null,
+                importFormat = format,
+            )
             val finalBook = placeholder.copy(
                 id = id,
                 parsedBundlePath = if (ok) dir.absolutePath else null,

@@ -33,7 +33,11 @@ object BookContentLoader {
      */
     fun loadExtractedFromUri(context: Context, uri: Uri, format: ImportedBookFormat): ExtractedBookText {
         return when (format) {
-            ImportedBookFormat.MARKDOWN, ImportedBookFormat.TXT, ImportedBookFormat.HTML ->
+            ImportedBookFormat.MARKDOWN,
+            ImportedBookFormat.TXT,
+            ImportedBookFormat.HTML,
+            ImportedBookFormat.CODE,
+            ->
                 ExtractedBookText.plainBody(readPlainTextFromUri(context, uri))
             ImportedBookFormat.PDF ->
                 ExtractedBookText.plainBody(placeholder(context, format))
@@ -47,7 +51,11 @@ object BookContentLoader {
         onPdfProgress: (done: Int, total: Int, coverJpeg: ByteArray?) -> Unit = { _, _, _ -> },
     ): ImportLoadResult {
         return when (format) {
-            ImportedBookFormat.MARKDOWN, ImportedBookFormat.TXT, ImportedBookFormat.HTML ->
+            ImportedBookFormat.MARKDOWN,
+            ImportedBookFormat.TXT,
+            ImportedBookFormat.HTML,
+            ImportedBookFormat.CODE,
+            ->
                 ImportLoadResult(
                     ExtractedBookText.plainBody(
                         readPlainTextFromUri(context, uri, onPdfProgress),
@@ -79,7 +87,11 @@ object BookContentLoader {
         httpCharsetName: String?
     ): ExtractedBookText {
         return when (format) {
-            ImportedBookFormat.MARKDOWN, ImportedBookFormat.TXT, ImportedBookFormat.HTML ->
+            ImportedBookFormat.MARKDOWN,
+            ImportedBookFormat.TXT,
+            ImportedBookFormat.HTML,
+            ImportedBookFormat.CODE,
+            ->
                 ExtractedBookText.plainBody(decodeTextBytes(bytes, httpCharsetName))
             ImportedBookFormat.PDF ->
                 ExtractedBookText.plainBody(placeholder(context, format))
@@ -94,7 +106,11 @@ object BookContentLoader {
         onPdfProgress: (done: Int, total: Int, coverJpeg: ByteArray?) -> Unit = { _, _, _ -> },
     ): ImportLoadResult {
         return when (format) {
-            ImportedBookFormat.MARKDOWN, ImportedBookFormat.TXT, ImportedBookFormat.HTML ->
+            ImportedBookFormat.MARKDOWN,
+            ImportedBookFormat.TXT,
+            ImportedBookFormat.HTML,
+            ImportedBookFormat.CODE,
+            ->
                 ImportLoadResult(loadExtractedFromUrlBytes(context, bytes, format, httpCharsetName))
             ImportedBookFormat.PDF -> {
                 val tmp = File.createTempFile("pdf_", ".pdf", context.cacheDir)
@@ -145,6 +161,7 @@ object BookContentLoader {
     fun placeholder(context: Context, format: ImportedBookFormat): String {
         val label = when (format) {
             ImportedBookFormat.PDF -> "PDF"
+            ImportedBookFormat.CODE -> "Code"
             else -> format.name
         }
         return buildString {

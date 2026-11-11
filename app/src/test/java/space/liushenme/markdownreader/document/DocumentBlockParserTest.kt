@@ -76,6 +76,31 @@ class DocumentBlockParserTest {
     }
 
     @Test
+    fun codeParser_keepsWholeSourceAsSingleCodeBlock() {
+        val source = """
+            # Python comment, not a heading
+            | not | a | table |
+            <template>
+              <button>{{ label }}</button>
+            </template>
+            <script setup>
+            const fence = `````````
+            </script>
+        """.trimIndent()
+
+        val blocks = DocumentBlockParser.parse(source, DocumentFormat.Code, codeLanguage = "vue")
+        val block = blocks.single() as DocumentBlock.CodeBlock
+        val index = DocumentBlockParser.buildChunkIndex(source.length, blocks)
+
+        assertEquals("vue", block.language)
+        assertEquals(source, block.source)
+        assertEquals(0, block.range.start)
+        assertEquals(source.length, block.range.endExclusive)
+        assertEquals(1, index.chunks.size)
+        assertEquals(source.length, index.chunks.single().range.endExclusive)
+    }
+
+    @Test
     fun chunkIndex_keepsLargeDocumentWindowsBlockAligned() {
         val content = buildString {
             repeat(2_000) { index ->

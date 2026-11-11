@@ -107,9 +107,11 @@ import space.liushenme.markdownreader.markdown.MarkdownAnchorIndex
 import space.liushenme.markdownreader.markdown.ReaderMediaCache
 import space.liushenme.markdownreader.markdown.PreparedMarkdown
 import space.liushenme.markdownreader.markdown.ReaderCodeBlockSettings
+import space.liushenme.markdownreader.markdown.ReaderCodeBlockMarkdown
 import space.liushenme.markdownreader.markdown.ReaderMarkwonFactory
 import space.liushenme.markdownreader.markdown.ReaderScrollableCodeBlockSpan
 import space.liushenme.markdownreader.markdown.CodeBlockHighlightRange
+import space.liushenme.markdownreader.markdown.CodeHighlightTheme
 import space.liushenme.markdownreader.markdown.ReaderTableSpacing
 import space.liushenme.markdownreader.ui.screens.reader.anchor.sourceSpanForRenderedQuote
 import ru.noties.jlatexmath.JLatexMathDrawable
@@ -149,7 +151,11 @@ internal fun readerContentSignature(
     themeName: String,
     fontSize: Int,
     codeBlockWrap: Boolean = true,
-): String = "${renderPlainText}_${content.length}_${content.hashCode()}_${themeName}_${fontSize}_w$codeBlockWrap"
+    codeHighlightTheme: CodeHighlightTheme = CodeHighlightTheme.DEFAULT,
+    codeBlockLanguage: String? = null,
+): String =
+    "${renderPlainText}_${content.length}_${content.hashCode()}_${themeName}_${fontSize}_w$codeBlockWrap" +
+        "_code=${codeBlockLanguage.orEmpty()}_syntax=${codeHighlightTheme.stableId}"
 
 internal fun readerHighlightSignature(
     highlights: List<HighlightEntity>,
@@ -165,7 +171,11 @@ internal fun readerRenderSignature(
     fontSize: Int,
     highlights: List<HighlightEntity>,
     codeBlockWrap: Boolean = true,
-): String = "${readerContentSignature(content, renderPlainText, themeName, fontSize, codeBlockWrap)}|${readerHighlightSignature(highlights)}"
+    codeHighlightTheme: CodeHighlightTheme = CodeHighlightTheme.DEFAULT,
+    codeBlockLanguage: String? = null,
+): String =
+    "${readerContentSignature(content, renderPlainText, themeName, fontSize, codeBlockWrap, codeHighlightTheme, codeBlockLanguage)}" +
+        "|${readerHighlightSignature(highlights)}"
 
 /** 把最新划线状态挂到 TextView，供异步 Markdown/纯文本渲染完成时读取（避免闭包捕获空列表）。 */
 internal fun syncReaderPendingHighlights(
@@ -219,6 +229,8 @@ internal fun applyReaderTextContent(
     pdfFullWidthImages: Boolean = false,
     pdfCenterImageVertically: Boolean = false,
     codeBlockWrap: Boolean = true,
+    codeHighlightTheme: CodeHighlightTheme = CodeHighlightTheme.DEFAULT,
+    codeBlockLanguage: String? = null,
 ) {
     syncReaderPendingHighlights(
         textView = textView,
@@ -254,6 +266,8 @@ internal fun applyReaderTextContent(
             pdfFullWidthImages = pdfFullWidthImages,
             pdfCenterImageVertically = pdfCenterImageVertically,
             codeBlockWrap = codeBlockWrap,
+            codeHighlightTheme = codeHighlightTheme,
+            codeBlockLanguage = codeBlockLanguage,
         )
         return
     }
@@ -280,6 +294,8 @@ internal fun applyMarkdownContent(
     pdfFullWidthImages: Boolean = false,
     pdfCenterImageVertically: Boolean = false,
     codeBlockWrap: Boolean = true,
+    codeHighlightTheme: CodeHighlightTheme = CodeHighlightTheme.DEFAULT,
+    codeBlockLanguage: String? = null,
 ) {
     fun finishMarkdownRender() {
         textView.setTag(R.id.reader_markdown_render_complete, renderSig)
@@ -332,12 +348,23 @@ internal fun applyMarkdownContent(
     // prepareMarkdown / rewriteCachedUrls / toMarkdown 全部进后台，避免进页主线程卡顿。
     val appContext = textView.context.applicationContext
     val renderT0 = android.os.SystemClock.uptimeMillis()
-    readerOpenDbg("markwonQueue contentLen=${content.length} sigTail=${renderSig.takeLast(48)}")
+    readerOpenDbg(
+        "markwonQueue contentLen=${content.length} syntax=${codeHighlightTheme.stableId} " +
+            "sigTail=${renderSig.takeLast(48)}",
+    )
     readerMarkwonRenderExecutor.execute {
         val tPrep0 = android.os.SystemClock.uptimeMillis()
-        val prepared = runCatching { ReaderMarkwonFactory.prepareMarkdown(content, appContext) }
-            .getOrElse { PreparedMarkdown(text = content, anchorIndex = MarkdownAnchorIndex()) }
-        val markdown = ReaderMediaCache.rewriteCachedReferences(appContext, prepared.text)
+        val prepared: PreparedMarkdown
+        val markdown: String
+        if (codeBlockLanguage == null) {
+            prepared = runCatching { ReaderMarkwonFactory.prepareMarkdown(content, appContext) }
+                .getOrElse { PreparedMarkdown(text = content, anchorIndex = MarkdownAnchorIndex()) }
+            markdown = ReaderMediaCache.rewriteCachedReferences(appContext, prepared.text)
+        } else {
+            // 代码正文保持逐字不变，仅给当前显示窗口加围栏，避免污染源码偏移和分页。
+            prepared = PreparedMarkdown(text = content, anchorIndex = MarkdownAnchorIndex())
+            markdown = ReaderCodeBlockMarkdown.wrap(content, codeBlockLanguage)
+        }
         val tPrep1 = android.os.SystemClock.uptimeMillis()
         val rendered: CharSequence = synchronized(markwonRenderLock) {
             ReaderCodeBlockSettings.wrapEnabled = codeBlockWrap
@@ -378,6 +405,7 @@ internal fun MarkdownReaderView(
     content: String,
     renderPlainText: Boolean,
     theme: ReadingTheme,
+    codeHighlightTheme: CodeHighlightTheme = CodeHighlightTheme.DEFAULT,
     fontSize: Int,
     readerPaddingDp: Int,
     readerPaddingHorizontalDp: Int = readerPaddingDp,
@@ -406,6 +434,7 @@ internal fun MarkdownReaderView(
     onReaderTextSelectionActiveChange: (Boolean) -> Unit = {},
     pdfFullWidthImages: Boolean = false,
     codeBlockWrap: Boolean = true,
+    codeBlockLanguage: String? = null,
     onOpenPositionReady: () -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -413,8 +442,19 @@ internal fun MarkdownReaderView(
     val invertPdfPages = pdfFullWidthImages && shouldInvertPdfPages(theme.backgroundColor.luminance())
     val paperBaseColor = rememberPaperBaseColor(theme)
     val paperColorArgb = paperBaseColor.toArgb()
-    val markwon = remember(pdfFullWidthImages, paperColorArgb) {
-        ReaderMarkwonFactory.create(context, paperBaseColor)
+    val fullScreenCodeDocument = codeBlockLanguage != null
+    val markwon = remember(
+        pdfFullWidthImages,
+        paperColorArgb,
+        codeHighlightTheme,
+        fullScreenCodeDocument,
+    ) {
+        ReaderMarkwonFactory.create(
+            context = context,
+            paperColor = paperBaseColor,
+            codeHighlightTheme = codeHighlightTheme,
+            fullScreenCodeDocument = fullScreenCodeDocument,
+        )
     }
     val touchState = remember { ReaderTouchState() }
     val slop = ViewConfiguration.get(context).scaledTouchSlop
@@ -456,6 +496,8 @@ internal fun MarkdownReaderView(
                     themeName = themeSignature,
                     fontSize = fontSize,
                     codeBlockWrap = codeBlockWrap,
+                    codeHighlightTheme = codeHighlightTheme,
+                    codeBlockLanguage = codeBlockLanguage,
                 )
                 syncReaderPendingHighlights(
                     textView = this,
@@ -475,6 +517,8 @@ internal fun MarkdownReaderView(
                     pdfFullWidthImages = pdfFullWidthImages,
                     pdfCenterImageVertically = pdfPagedLayout,
                     codeBlockWrap = codeBlockWrap,
+                    codeHighlightTheme = codeHighlightTheme,
+                    codeBlockLanguage = codeBlockLanguage,
                 )
 
                 this.onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange
@@ -517,6 +561,8 @@ internal fun MarkdownReaderView(
                 themeName = themeSignature,
                 fontSize = fontSize,
                 codeBlockWrap = codeBlockWrap,
+                codeHighlightTheme = codeHighlightTheme,
+                codeBlockLanguage = codeBlockLanguage,
             )
             val highlightSig = readerHighlightSignature(highlights)
             val highlightColorArgb = theme.highlightColor.toArgb()
@@ -583,6 +629,8 @@ internal fun MarkdownReaderView(
                     pdfFullWidthImages = pdfFullWidthImages,
                     pdfCenterImageVertically = pdfPagedLayout,
                     codeBlockWrap = codeBlockWrap,
+                    codeHighlightTheme = codeHighlightTheme,
+                    codeBlockLanguage = codeBlockLanguage,
                 )
             } else if (highlightsChanged) {
                 val renderComplete = textView.getTag(R.id.reader_markdown_render_complete) as? String
@@ -903,7 +951,7 @@ internal fun shouldSkipBringPointIntoViewForVisibleTallLine(
  * 阅读器 TextView：参考 Legado 自管触摸选区、文字高亮和首尾句柄；
  * 保留 textIsSelectable 仅用于无障碍，触摸路径不与系统 Editor 混用。
  */
-internal class SafeReaderTextView(context: Context) : TextView(context) {
+internal open class SafeReaderTextView(context: Context) : TextView(context) {
     var allowVerticalScroll: Boolean = true
     /** 正文是否按纯文本渲染；扩窗 stash 恢复时需与写入内容一致。 */
     var renderPlainTextBody: Boolean = false
@@ -2430,7 +2478,9 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
      * @return true 表示已消费此次轻点。
      */
     private fun handleCodeBlockIdleTap(x: Float, y: Float): Boolean {
-        if (!isTapGesture(x, y)) return false
+        val tap = isTapGesture(x, y)
+        val centerZone = isReaderCenterChromeZone(x, y)
+        if (!tap) return false
         if (codeSelectionSpan?.hasSelection() == true) {
             if (selectionHandleAtIncludingCode(x, y) != null) return false
             if (!isTouchOnCodeBlockInnerSelection(x, y)) {
@@ -2439,7 +2489,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
             }
             return false
         }
-        if (!selectionActive && isReaderCenterChromeZone(x, y)) {
+        if (!selectionActive && centerZone) {
             onReaderCenterTap?.invoke()
             return true
         }
@@ -2486,15 +2536,10 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         }
         val target = readerHitTargetAt(touchDownX, touchDownY)
         if (target.kind == ReaderHitKind.TABLE_CELL) {
-            val selected = startTableSelectionAtPressed()
-            readerHitDbg("longPress table selected=$selected")
+            startTableSelectionAtPressed()
             return@Runnable
         }
-        val selected = startSelectionAtPressedChar()
-        readerHitDbg(
-            "longPress kind=${target.kind} range=${target.displayedStart}..${target.displayedEnd} " +
-                "canSelect=${target.canSelect} selected=$selected",
-        )
+        startSelectionAtPressedChar()
     }
 
     private fun cancelSelectionLongPress() {
@@ -3397,6 +3442,7 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
         isVerticalScrollDrag = false
         stopCodeSelectionAutoScroll()
         clearLockedSelectionGesture()
+        cancelLongPress()
         cancelSelectionLongPress()
         parent?.requestDisallowInterceptTouchEvent(false)
         return true
@@ -3440,13 +3486,6 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                     readerHitTargetAt(event.x, event.y).takeIf { it.kind == ReaderHitKind.LINK }
                 } else {
                     null
-                }
-                readerHitTargetAt(event.x, event.y).let { target ->
-                    readerHitDbg(
-                        "down x=${event.x} y=${event.y} kind=${target.kind} " +
-                            "range=${target.displayedStart}..${target.displayedEnd} " +
-                            "canSelect=${target.canSelect} canClick=${target.canClick}",
-                    )
                 }
                 if (pendingLinkTarget != null) {
                     parent?.requestDisallowInterceptTouchEvent(true)
@@ -3544,6 +3583,9 @@ internal class SafeReaderTextView(context: Context) : TextView(context) {
                 lastTouchX = event.x
                 lastTouchY = event.y
                 pointerDown = false
+                // 代码块轻点/横滑会提前消费 UP，需显式清掉 View 自带的系统长按，
+                // 否则它会在松手后选词并触发选区状态，导致刚出现的功能栏被收起。
+                cancelLongPress()
                 cancelSelectionLongPress()
                 lastInteractiveScrollUptimeMs = SystemClock.uptimeMillis()
                 // 松手后等惯性结束，再补一次视口锚点补偿（拖动中跳过的异步重排）。

@@ -28,6 +28,7 @@ object BookTocEnricher {
             ImportedBookFormat.TXT -> PlainTextTocParser.parse(extracted.body)
             ImportedBookFormat.PDF -> extracted.toc
             ImportedBookFormat.HTML -> emptyList()
+            ImportedBookFormat.CODE -> emptyList()
         }
         return extracted.copy(toc = toc)
     }

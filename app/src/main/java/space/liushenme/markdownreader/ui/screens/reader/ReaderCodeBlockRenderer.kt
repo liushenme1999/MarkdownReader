@@ -29,25 +29,35 @@ internal fun sourceSpanForCodeBlockSelection(
     sourceHint: Int,
     searchStart: Int,
     searchEnd: Int,
+    wholeSourceAsCodeBlock: Boolean = false,
 ): Pair<Int, Int>? {
     val selection = textView.codeSelectionSnapshotForSource() ?: return null
     val needle = selectedText.trim().ifEmpty { selection.selectedText.trim() }
     if (needle.isEmpty() || source.isEmpty()) return null
     val from = searchStart.coerceIn(0, source.length)
     val to = searchEnd.coerceIn(from, source.length)
-    val windowRegions = sourceCodeBlockRegions(source).filter { region ->
+    val allRegions = if (wholeSourceAsCodeBlock) {
+        listOf(SourceCodeBlockRegion(bodyStart = 0, bodyEnd = source.length, body = source))
+    } else {
+        sourceCodeBlockRegions(source)
+    }
+    val windowRegions = allRegions.filter { region ->
         region.bodyEnd > from && region.bodyStart < to
     }
     // 页面窗口边界是渲染定位的优化范围，不应阻断代码块内部选区落库。
     // ReplacementSpan 可能跨越窗口边界（尤其是横向分页/扩窗过程中），此时
     // 选中的代码仍然属于当前块，退回全源码代码块集合并用 sourceHint 选最近候选。
-    val regions = windowRegions.ifEmpty { sourceCodeBlockRegions(source) }
+    val regions = if (wholeSourceAsCodeBlock) allRegions else windowRegions.ifEmpty { allRegions }
     if (regions.isEmpty()) return null
     val candidates = regions.mapNotNull { region ->
         val local = sourceSpanForRenderedQuote(
             source = region.body,
             rendered = needle,
-            hint = selection.start.coerceIn(0, region.body.length),
+            hint = if (wholeSourceAsCodeBlock) {
+                sourceHint.coerceIn(0, region.body.length)
+            } else {
+                selection.start.coerceIn(0, region.body.length)
+            },
             searchStart = 0,
             searchEnd = region.body.length,
         ) ?: return@mapNotNull null

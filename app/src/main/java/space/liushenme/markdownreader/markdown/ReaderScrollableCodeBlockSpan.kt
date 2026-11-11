@@ -2,6 +2,7 @@ package space.liushenme.markdownreader.markdown
 
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.drawable.Drawable
 import android.text.Layout
@@ -20,7 +21,9 @@ import kotlin.math.min
  */
 internal class ReaderScrollableCodeBlockSpan(
     private val theme: MarkwonTheme,
-    private val background: Drawable,
+    internal val background: Drawable,
+    internal val codeHighlightTheme: CodeHighlightTheme = CodeHighlightTheme.DEFAULT,
+    internal val fullScreenCodeDocument: Boolean = false,
     private val padH: Int,
     private val padV: Int,
     content: CharSequence,
@@ -28,7 +31,6 @@ internal class ReaderScrollableCodeBlockSpan(
     languageInfo: String?,
     private val wrapEnabled: Boolean,
     private val density: Float,
-    private val isDark: Boolean,
 ) : ReplacementSpan() {
 
     private val content: CharSequence = normalizeContent(content)
@@ -50,10 +52,11 @@ internal class ReaderScrollableCodeBlockSpan(
     private val scrollBarGap = (6f * density + 0.5f).toInt()
     private val copyIconSize = 16f * density
     private val copyHitW = (44f * density).toInt().coerceAtLeast(1)
-    private val chromeColor = if (isDark) 0xFF9AA6B8.toInt() else 0xFF5C6B7A.toInt()
-    private val dividerColor = if (isDark) 0xFF536179.toInt() else 0xFFC8D3E0.toInt()
-    private val trackColor = if (isDark) 0x66536179 else 0x66C8D3E0
-    private val thumbColor = if (isDark) 0xFF8B9BB0.toInt() else 0xFF7A8B9C.toInt()
+    private val palette = codeHighlightTheme.palette
+    private val chromeColor = palette.chrome
+    private val dividerColor = palette.divider
+    private val trackColor = palette.scrollTrack
+    private val thumbColor = palette.scrollThumb
 
     private var drawnLeft = 0f
     private var drawnTop = 0f
@@ -66,7 +69,7 @@ internal class ReaderScrollableCodeBlockSpan(
         private set
     var selectionEnd: Int = -1
         private set
-    var selectionFillColor: Int = 0x663A7AFE.toInt()
+    var selectionFillColor: Int = palette.selection
 
     private val highlightRanges = mutableListOf<CodeBlockHighlightRange>()
     private val selectionFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -363,6 +366,8 @@ internal class ReaderScrollableCodeBlockSpan(
 
     fun headerHeightPx(paint: Paint): Int = headerHeight(paint)
 
+    internal fun requiredHeightForTest(paint: Paint): Int = chromeHeight(ensureLayout(paint), paint)
+
     fun highlightRangesForTest(): List<CodeBlockHighlightRange> = highlightRanges.toList()
 
     internal fun contentSliceForTest(start: Int, end: Int): String =
@@ -459,10 +464,6 @@ internal class ReaderScrollableCodeBlockSpan(
             fm.descent = 0
             fm.top = fm.ascent
             fm.bottom = 0
-            ReaderTableSpacing.compensateLineSpacing(
-                fm,
-                ReaderTableSpacing.lineSpacingMultiplier,
-            )
         }
         val viewport = resolvedViewportWidth()
         lastViewportWidth = viewport
@@ -556,6 +557,7 @@ internal class ReaderScrollableCodeBlockSpan(
         headerH: Int,
         basePaint: Paint,
     ) {
+        drawHeaderBackground(canvas, left, top, right, headerH)
         val divider = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = dividerColor
             strokeWidth = (1f * density).coerceAtLeast(1f)
@@ -588,6 +590,34 @@ internal class ReaderScrollableCodeBlockSpan(
             copyIconSize,
             chromeColor,
         )
+    }
+
+    private fun drawHeaderBackground(
+        canvas: Canvas,
+        left: Float,
+        top: Float,
+        right: Float,
+        headerH: Int,
+    ) {
+        val safeLeft = left
+        val safeRight = right.coerceAtLeast(safeLeft + 1f)
+        val header = RectF(safeLeft, top, safeRight, top + headerH)
+        val headerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = palette.headerBackground
+        }
+        if (fullScreenCodeDocument) {
+            canvas.drawRect(header, headerPaint)
+        } else {
+            val radius = 10f * density
+            val path = Path().apply {
+                addRoundRect(
+                    header,
+                    floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f),
+                    Path.Direction.CW,
+                )
+            }
+            canvas.drawPath(path, headerPaint)
+        }
     }
 
     private fun drawCopyHitRect(blockLeft: Float, blockTop: Float, blockRight: Float, headerH: Int) {
@@ -645,6 +675,7 @@ internal class ReaderScrollableCodeBlockSpan(
     private fun ensureLayout(paint: Paint): StaticLayout {
         val codePaint = TextPaint(paint)
         theme.applyCodeBlockTextStyle(codePaint)
+        codePaint.color = palette.foreground
         val viewport = when {
             lastViewportWidth > 1 -> lastViewportWidth
             ReaderCodeBlockSettings.viewportWidthPx > 1 -> ReaderCodeBlockSettings.viewportWidthPx

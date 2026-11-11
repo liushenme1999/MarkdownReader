@@ -13,6 +13,7 @@ import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.data.repository.IBookRepository
 import space.liushenme.markdownreader.importing.BookContentLoader
 import space.liushenme.markdownreader.importing.BookTocEnricher
+import space.liushenme.markdownreader.importing.CodeFileLanguage
 import space.liushenme.markdownreader.importing.ExtractedBookText
 import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.importing.HtmlDocumentSupport
@@ -66,7 +67,10 @@ private class ParsedBundleDocumentSource(
     )
 
     override fun load(): DocumentSourceLoad {
-        val extracted = ParsedBookStorage.readBundle(dir)
+        val extracted = ParsedBookStorage.readBundle(
+            dir = dir,
+            importFormat = ImportedBookFormat.fromStored(book.importFormat),
+        )
             ?.takeIf { it.body.isNotEmpty() && ParsedBookStorage.isCompleteBundle(dir, book.importFormat) }
             ?: return DocumentSourceLoad.Failed(DocumentOpenFailure.BrokenBundle)
         return DocumentSourceLoad.Ready(extracted, descriptor, dir)
@@ -143,16 +147,26 @@ class DocumentRepository @Inject constructor(
         sourceLoad as DocumentSourceLoad.Ready
 
         var latest = bookRepository.getBookById(bookId) ?: stored
-        val text = MarkdownPreprocessor.stripLocalRelativeImages(sourceLoad.extracted.body)
+        val storedFormat = ImportedBookFormat.fromStored(latest.importFormat)
+        val text = if (storedFormat.isCode) {
+            sourceLoad.extracted.body
+        } else {
+            MarkdownPreprocessor.stripLocalRelativeImages(sourceLoad.extracted.body)
+        }
         val detectedFormat = when {
+            storedFormat.isCode -> ImportedBookFormat.CODE
             PdfReaderContent.looksLikePdfBody(text) -> ImportedBookFormat.PDF
             HtmlDocumentSupport.looksLikeHtmlBody(text) -> ImportedBookFormat.HTML
-            else -> ImportedBookFormat.fromStored(latest.importFormat)
+            else -> storedFormat
         }
-        val aligned = BookTocEnricher.alignToBody(
-            detectedFormat,
-            sourceLoad.extracted.copy(body = text),
-        )
+        val aligned = if (detectedFormat.isCode) {
+            sourceLoad.extracted.copy(body = text, toc = emptyList())
+        } else {
+            BookTocEnricher.alignToBody(
+                detectedFormat,
+                sourceLoad.extracted.copy(body = text),
+            )
+        }
 
         val canonical = ParsedBookStorage.bundleDir(context, bookId)
         if (sourceLoad.bundleDir?.absolutePath == canonical.absolutePath) {
@@ -171,8 +185,14 @@ class DocumentRepository @Inject constructor(
             ImportedBookFormat.TXT -> DocumentFormat.PlainText
             ImportedBookFormat.PDF -> DocumentFormat.Pdf
             ImportedBookFormat.HTML -> DocumentFormat.Html
+            ImportedBookFormat.CODE -> DocumentFormat.Code
         }
-        val blocks = DocumentBlockParser.parse(text, documentFormat)
+        val codeLanguage = if (detectedFormat.isCode) {
+            CodeFileLanguage.fromFileName(latest.gitRelativePath ?: latest.filePath)?.token
+        } else {
+            null
+        }
+        val blocks = DocumentBlockParser.parse(text, documentFormat, codeLanguage)
         val chunkIndex = DocumentBlockParser.buildChunkIndex(text.length, blocks)
         val artifacts = sourceLoad.bundleDir
             ?.let(DocumentArtifactManifest::read)

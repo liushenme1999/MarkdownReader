@@ -1,12 +1,14 @@
 package space.liushenme.markdownreader.importing
 
 import java.io.File
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import space.liushenme.markdownreader.document.DocumentArtifactManifest
 
 class ParsedBookStorageTest {
 
@@ -79,5 +81,36 @@ class ParsedBookStorageTest {
         File(src, "${ParsedBookStorage.ASSETS_DIR}/pdf_page_001.png").writeBytes(byteArrayOf(1))
         assertTrue(ParsedBookStorage.shouldReplaceBundle(dst, src))
         assertFalse(ParsedBookStorage.shouldReplaceBundle(src, dst))
+    }
+
+    @Test
+    fun codeBundle_preservesSourceAndSkipsMarkdownImageProcessing() {
+        val dir = tmp.newFolder("code")
+        val source = """
+            # Vue source is not Markdown
+            ![not an image](book-asset://missing.png)
+            <template>
+              <img src="book-asset://page.png">
+            </template>
+        """.trimIndent()
+        val extracted = ExtractedBookText(body = source, toc = emptyList())
+
+        assertTrue(
+            ParsedBookStorage.writeBundle(
+                dir = dir,
+                extracted = extracted,
+                coverBytes = null,
+                importFormat = ImportedBookFormat.CODE,
+            ),
+        )
+
+        assertEquals(source, ParsedBookStorage.readBundle(dir, ImportedBookFormat.CODE)?.body)
+        assertTrue(ParsedBookStorage.isCompleteBundle(dir, ImportedBookFormat.CODE.storedKey))
+        val blockIndex = JSONObject(
+            File(dir, DocumentArtifactManifest.BLOCK_INDEX_FILE).readText(),
+        )
+        assertEquals("Code", blockIndex.getString("format"))
+        assertEquals(1, blockIndex.getJSONArray("blocks").length())
+        assertEquals("CodeBlock", blockIndex.getJSONArray("blocks").getJSONObject(0).getString("kind"))
     }
 }

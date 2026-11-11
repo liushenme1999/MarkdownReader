@@ -637,6 +637,7 @@ class BookshelfViewModel @Inject constructor(
                 dir = stagingBundle,
                 extracted = enrichedForStore,
                 coverBytes = enriched.coverImageBytes,
+                importFormat = format,
             )
             ok && ParsedBookStorage.isCompleteBundle(stagingBundle, format.storedKey)
         }
@@ -726,6 +727,9 @@ class BookshelfViewModel @Inject constructor(
         format: ImportedBookFormat,
         extracted: ExtractedBookText,
     ): ExtractedBookText {
+        if (format.isCode) {
+            return extracted
+        }
         if (format.usesReaderPlainBody) {
             return extracted.copy(body = MarkdownPreprocessor.stripLocalRelativeImages(extracted.body))
         }

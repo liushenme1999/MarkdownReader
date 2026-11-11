@@ -3,6 +3,7 @@ package space.liushenme.markdownreader.ui.screens.profile
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
+import space.liushenme.markdownreader.markdown.CodeHighlightTheme
 import space.liushenme.markdownreader.model.AppLanguage
 import space.liushenme.markdownreader.model.AppThemeMode
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
@@ -57,6 +58,12 @@ class ReadingSettingsViewModel @Inject constructor(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = ReaderSettingsRepository.DEFAULT_CODE_BLOCK_WRAP,
+    )
+
+    val codeHighlightTheme = readerSettingsRepository.codeHighlightTheme.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = CodeHighlightTheme.DEFAULT,
     )
 
     val hideSystemBars = readerSettingsRepository.hideSystemBars.stateIn(
@@ -132,6 +139,10 @@ class ReadingSettingsViewModel @Inject constructor(
 
     fun setCodeBlockWrap(wrap: Boolean) {
         viewModelScope.launch { readerSettingsRepository.setCodeBlockWrap(wrap) }
+    }
+
+    fun setCodeHighlightTheme(theme: CodeHighlightTheme) {
+        viewModelScope.launch { readerSettingsRepository.setCodeHighlightTheme(theme) }
     }
 
     fun setHideSystemBars(hide: Boolean) {

@@ -12,8 +12,23 @@ object DocumentBlockParser {
     private val htmlImage = Regex("""<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>""", RegexOption.IGNORE_CASE)
     private val diagramUri = Regex("""diagram://[A-Za-z0-9_-]+/[A-Za-z0-9._-]+""")
 
-    fun parse(content: String, format: DocumentFormat): List<DocumentBlock> {
+    fun parse(
+        content: String,
+        format: DocumentFormat,
+        codeLanguage: String? = null,
+    ): List<DocumentBlock> {
         if (content.isEmpty()) return emptyList()
+        if (format == DocumentFormat.Code) {
+            val range = SourceRange(0, content.length)
+            return listOf(
+                DocumentBlock.CodeBlock(
+                    id = blockId("code-document", range, content),
+                    range = range,
+                    source = content,
+                    language = codeLanguage,
+                ),
+            )
+        }
         if (format == DocumentFormat.Pdf) return parsePdf(content)
         if (format == DocumentFormat.PlainText) return parsePlainText(content)
         if (format == DocumentFormat.Html) return parsePlainText(content)

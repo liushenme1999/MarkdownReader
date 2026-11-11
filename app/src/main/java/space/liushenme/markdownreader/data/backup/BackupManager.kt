@@ -509,8 +509,7 @@ class BackupManager @Inject constructor(
         val map = linkedMapOf<String, Any?>()
         for ((key, value) in snapshot.asMap()) {
             val name = key.name
-            if (name in WebDavConfigRepository.WEBDAV_PREF_KEYS) continue
-            if (name in ReaderSettingsRepository.DEVICE_LOCAL_PREF_KEYS) continue
+            if (!isSharedPreferenceKeyBackedUp(name)) continue
             when (value) {
                 is String, is Int, is Long, is Float, is Double, is Boolean -> map[name] = value
                 is Set<*> -> map[name] = value.map { it.toString() }
@@ -907,8 +906,7 @@ class BackupManager @Inject constructor(
 
         dataStore.edit { prefs ->
             for ((name, value) in map) {
-                if (name in WebDavConfigRepository.WEBDAV_PREF_KEYS) continue
-                if (name in ReaderSettingsRepository.DEVICE_LOCAL_PREF_KEYS) continue
+                if (!isSharedPreferenceKeyBackedUp(name)) continue
                 when (value) {
                     is Boolean -> prefs[booleanPreferencesKey(name)] = value
                     is String -> prefs[stringPreferencesKey(name)] = value
@@ -1410,3 +1408,7 @@ class BackupManager @Inject constructor(
         private const val AVATAR_FILE_NAME = "profile_avatar.jpg"
     }
 }
+
+internal fun isSharedPreferenceKeyBackedUp(name: String): Boolean =
+    name !in WebDavConfigRepository.WEBDAV_PREF_KEYS &&
+        name !in ReaderSettingsRepository.DEVICE_LOCAL_PREF_KEYS

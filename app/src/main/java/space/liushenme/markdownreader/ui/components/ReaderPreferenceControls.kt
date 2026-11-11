@@ -39,11 +39,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import space.liushenme.markdownreader.R
+import space.liushenme.markdownreader.markdown.CodeHighlightTheme
 import space.liushenme.markdownreader.model.AppThemeMode
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
 import space.liushenme.markdownreader.ui.theme.MainNavTabSelectedTint
@@ -257,6 +260,145 @@ fun ReadingThemeCardOption(
             style = MaterialTheme.typography.labelSmall,
             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
             color = if (isSelected) accent else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+fun CodeHighlightThemeGrid(
+    themes: List<CodeHighlightTheme>,
+    selected: CodeHighlightTheme,
+    onSelect: (CodeHighlightTheme) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        themes.chunked(2).forEach { rowThemes ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                rowThemes.forEach { theme ->
+                    CodeHighlightThemeCardOption(
+                        theme = theme,
+                        isSelected = theme == selected,
+                        onClick = { onSelect(theme) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                repeat(2 - rowThemes.size) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CodeHighlightThemeCardOption(
+    theme: CodeHighlightTheme,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val palette = theme.palette
+    val accent = MainNavTabSelectedTint
+    val borderColor = if (isSelected) {
+        accent
+    } else {
+        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+    }
+    val previewShape = RoundedCornerShape(12.dp)
+    val previewStyle = MaterialTheme.typography.labelSmall.copy(
+        fontFamily = FontFamily.Monospace,
+        fontWeight = FontWeight.Medium,
+    )
+
+    Column(
+        modifier = modifier
+            .clip(previewShape)
+            .clickable(onClick = onClick)
+            .padding(vertical = 2.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1.55f)
+                .clip(previewShape)
+                .background(Color(palette.background))
+                .border(if (isSelected) 2.dp else 0.5.dp, borderColor, previewShape),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 9.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Row {
+                    Text("fun", style = previewStyle, color = Color(palette.keyword), maxLines = 1)
+                    Text(" ", style = previewStyle, color = Color(palette.foreground), maxLines = 1)
+                    Text("main", style = previewStyle, color = Color(palette.function), maxLines = 1)
+                    Text("() {", style = previewStyle, color = Color(palette.foreground), maxLines = 1)
+                }
+                Text(
+                    text = "// ${theme.displayName}",
+                    style = previewStyle,
+                    color = Color(palette.comment),
+                    maxLines = 1,
+                )
+                Row {
+                    Text("return", style = previewStyle, color = Color(palette.keyword), maxLines = 1)
+                    Text(" ", style = previewStyle, color = Color(palette.foreground), maxLines = 1)
+                    Text("\"ok\"", style = previewStyle, color = Color(palette.string), maxLines = 1)
+                    Text(" + 1", style = previewStyle, color = Color(palette.number), maxLines = 1)
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    listOf(
+                        palette.comment,
+                        palette.string,
+                        palette.keyword,
+                        palette.function,
+                        palette.type,
+                        palette.number,
+                    ).forEach { tokenColor ->
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(Color(tokenColor)),
+                        )
+                    }
+                }
+            }
+            if (isSelected) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(5.dp)
+                        .size(18.dp)
+                        .clip(CircleShape)
+                        .background(accent),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier.size(12.dp),
+                    )
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = theme.displayName,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (isSelected) accent else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
             maxLines = 1,
         )
     }

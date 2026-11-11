@@ -1,6 +1,5 @@
 package space.liushenme.markdownreader.ui.screens.reader
 
-import android.util.Log
 import android.text.Spanned
 import android.text.style.ClickableSpan
 import android.text.style.ImageSpan
@@ -42,12 +41,6 @@ internal data class ReaderHitTarget(
             kind == ReaderHitKind.TABLE_CELL ||
             kind == ReaderHitKind.LINK ||
             kind == ReaderHitKind.EXISTING_HIGHLIGHT
-}
-
-internal fun readerHitDbg(message: String) {
-    if (space.liushenme.markdownreader.BuildConfig.DEBUG) {
-        Log.d("ReaderHitDbg", message)
-    }
 }
 
 internal fun SafeReaderTextView.readerHitTargetAt(x: Float, y: Float): ReaderHitTarget =

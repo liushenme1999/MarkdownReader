@@ -71,10 +71,12 @@ import androidx.navigation.NavController
 import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.document.DocumentFormat
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
+import space.liushenme.markdownreader.importing.CodeFileLanguage
 import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.importing.HtmlDocumentSupport
 import space.liushenme.markdownreader.importing.ParsedBookStorage
 import space.liushenme.markdownreader.importing.PdfReaderContent
+import space.liushenme.markdownreader.markdown.CodeHighlightTheme
 import space.liushenme.markdownreader.markdown.MarkdownLinkDispatcher
 import space.liushenme.markdownreader.model.HighlightStyle
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
@@ -133,6 +135,7 @@ fun ReaderScreen(
     val readerPaddingDp = uiState.readerPaddingDp
     val readerLineSpacingMultiplier = uiState.readerLineSpacingMultiplier
     val codeBlockWrap = uiState.codeBlockWrap
+    val codeHighlightTheme = uiState.codeHighlightTheme
     val hideSystemBarsPref = uiState.hideSystemBars
     val loadError = uiState.loadError
     val pageTurnMode = uiState.pageTurnMode
@@ -143,14 +146,28 @@ fun ReaderScreen(
 
     val documentFormat = uiState.documentSnapshot?.document?.format
     val importFormat = book?.let { ImportedBookFormat.fromStored(it.importFormat) }
-    val isPdfBook = documentFormat == DocumentFormat.Pdf ||
-        importFormat?.isPdf == true ||
-        PdfReaderContent.looksLikePdfBody(content)
-    val renderPlainText = documentFormat == DocumentFormat.PlainText ||
-        importFormat?.usesReaderPlainBody == true
-    val renderHtml = documentFormat == DocumentFormat.Html ||
-        importFormat?.isHtml == true ||
-        HtmlDocumentSupport.looksLikeHtmlBody(content)
+    val isCodeBook = documentFormat == DocumentFormat.Code || importFormat?.isCode == true
+    val codeBlockLanguage = remember(isCodeBook, book?.gitRelativePath, book?.filePath) {
+        if (!isCodeBook) {
+            null
+        } else {
+            CodeFileLanguage.fromFileName(book?.gitRelativePath ?: book?.filePath)?.token ?: "text"
+        }
+    }
+    val isPdfBook = !isCodeBook && (
+        documentFormat == DocumentFormat.Pdf ||
+            importFormat?.isPdf == true ||
+            PdfReaderContent.looksLikePdfBody(content)
+        )
+    val renderPlainText = !isCodeBook && (
+        documentFormat == DocumentFormat.PlainText ||
+            importFormat?.usesReaderPlainBody == true
+        )
+    val renderHtml = !isCodeBook && (
+        documentFormat == DocumentFormat.Html ||
+            importFormat?.isHtml == true ||
+            HtmlDocumentSupport.looksLikeHtmlBody(content)
+        )
     val readerContent = remember(content, isPdfBook) {
         if (isPdfBook) PdfReaderContent.sanitizeStoredBody(content) else content
     }
@@ -176,7 +193,8 @@ fun ReaderScreen(
     var pdfJumpRequest by remember(readerContent, readerLoadEpoch) {
         mutableStateOf<PdfJumpRequest?>(null)
     }
-    val readerHorizontalPaddingDp = if (isPdfBook) 0 else readerPaddingDp
+    val readerHorizontalPaddingDp = if (isPdfBook || isCodeBook) 0 else readerPaddingDp
+    val readerBodyPaddingDp = if (isCodeBook) 0 else readerPaddingDp
     val readerBodyLineSpacing = if (isPdfBook) 1f else readerLineSpacingMultiplier
 
     var showReaderSettingsSheet by remember { mutableStateOf(false) }
@@ -219,12 +237,20 @@ fun ReaderScreen(
 
     val structuredToc = uiState.structuredToc
 
-    val tocEntries = remember(readerContent, renderPlainText, structuredToc, isPdfBook, context) {
+    val tocEntries = remember(
+        readerContent,
+        renderPlainText,
+        structuredToc,
+        isPdfBook,
+        isCodeBook,
+        context,
+    ) {
         if (isPdfBook) {
             return@remember PdfReaderContent.tocEntriesFromBody(readerContent, context).map {
                 MarkdownTocEntry(level = it.level, title = it.title, sourceOffset = it.sourceOffset, rawTitle = it.rawTitle)
             }
         }
+        if (isCodeBook) return@remember emptyList()
         val stored = structuredToc.orEmpty()
         when {
             // ViewModel 打开时已按最终正文对齐过 sourceOffset；空则现场解析。
@@ -234,10 +260,10 @@ fun ReaderScreen(
             else -> emptyList()
         }
     }
-    val emptyTocMessage = if (renderPlainText) {
-        stringResource(R.string.reader_toc_empty_plain_text)
-    } else {
-        stringResource(R.string.reader_toc_empty_markdown)
+    val emptyTocMessage = when {
+        isCodeBook -> stringResource(R.string.reader_toc_empty_code)
+        renderPlainText -> stringResource(R.string.reader_toc_empty_plain_text)
+        else -> stringResource(R.string.reader_toc_empty_markdown)
     }
     val readingTitleFallback = stringResource(R.string.reader_title_reading)
     val snackbarBookmarkAdded = stringResource(R.string.snackbar_bookmark_added)
@@ -359,6 +385,8 @@ fun ReaderScreen(
             themeName = currentTheme.contentSignature(),
             fontSize = fontSize,
             codeBlockWrap = codeBlockWrap,
+            codeHighlightTheme = codeHighlightTheme,
+            codeBlockLanguage = codeBlockLanguage,
         )
         stashPendingSavedPositionSnap(
             readerTextView.value,
@@ -587,6 +615,7 @@ fun ReaderScreen(
                         sourceHint = sourceHint,
                         searchStart = sourceWindow.first,
                         searchEnd = sourceWindow.second,
+                    wholeSourceAsCodeBlock = isCodeBook,
                     )
                 }?.let { span ->
                     ResolvedSourceSelectionSpan(
@@ -837,6 +866,8 @@ fun ReaderScreen(
         currentTheme,
         fontSize,
         codeBlockWrap,
+        codeHighlightTheme,
+        codeBlockLanguage,
     ) {
         readerContentSignature(
             content = displayedContent,
@@ -844,6 +875,8 @@ fun ReaderScreen(
             themeName = currentTheme.contentSignature(),
             fontSize = fontSize,
             codeBlockWrap = codeBlockWrap,
+            codeHighlightTheme = codeHighlightTheme,
+            codeBlockLanguage = codeBlockLanguage,
         )
     }
 
@@ -886,6 +919,8 @@ fun ReaderScreen(
             themeSignature = currentTheme.contentSignature(),
             fontSize = fontSize,
             codeBlockWrap = codeBlockWrap,
+            codeHighlightTheme = codeHighlightTheme,
+            codeBlockLanguage = codeBlockLanguage,
         )
         viewModel.setFinishPromptEnabled(true)
         viewModel.onDocumentEndChanged(reachedEndForChar(charPos))
@@ -1473,7 +1508,24 @@ fun ReaderScreen(
     }
 
     val paperBaseColor = rememberPaperBaseColor(currentTheme)
-    val systemBarChromeColor = readingChromeShade(paperBaseColor)
+    val codeBackgroundColor = Color(codeHighlightTheme.palette.background)
+    val pageBaseColor = if (isCodeBook) codeBackgroundColor else paperBaseColor
+    val systemBarChromeColor = if (isCodeBook) {
+        // 纯代码页不保留阅读器页框或语言栏色的系统栏横带，整屏统一为代码主题背景。
+        codeBackgroundColor
+    } else {
+        readingChromeShade(paperBaseColor)
+    }
+    val readerChromeTheme = remember(isCodeBook, codeHighlightTheme, currentTheme) {
+        if (isCodeBook) {
+            ReadingTheme(
+                textColor = Color(codeHighlightTheme.palette.foreground),
+                backgroundColor = Color(codeHighlightTheme.palette.background),
+            )
+        } else {
+            currentTheme
+        }
+    }
 
     val view = LocalView.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -1486,7 +1538,7 @@ fun ReaderScreen(
     ShelfStyleSystemBarsEffect(
         backgroundColor = systemBarChromeColor,
         navigationBarColor = systemBarChromeColor,
-        iconContrastColor = paperBaseColor,
+        iconContrastColor = pageBaseColor,
         systemBarsVisible = !hideSystemBarsNow,
     )
     val persistVisibleProgressNow by rememberUpdatedState {
@@ -1574,6 +1626,8 @@ fun ReaderScreen(
         theme = currentTheme,
         paperColor = paperBaseColor,
         chromeColor = systemBarChromeColor,
+        codeBackgroundColor = codeBackgroundColor.takeIf { isCodeBook },
+        chromeTheme = readerChromeTheme,
         snackbarHostState = snackbarHostState,
         title = book?.title ?: readingTitleFallback,
         chapterTitle = readerChapterTitle,
@@ -1658,11 +1712,11 @@ fun ReaderScreen(
                             )
                         }
                         // 沉浸模式章节小标题常驻，不随大顶栏/底栏显隐改变布局（避免点击唤出工具栏时正文跳动）
-                        val showImmersiveChapterBar = immersiveReading && !isPdfBook
+                        val showImmersiveChapterBar = immersiveReading && !isPdfBook && !isCodeBook
                         val readerPaddingTopDp = if (showImmersiveChapterBar) {
                             minOf(ReaderChapterStripBodyTopPaddingDp, readerPaddingDp)
                         } else {
-                            readerPaddingDp
+                            readerBodyPaddingDp
                         }
 
                         // 始终同一 Column 槽位：章节条显隐不得切换「裸 ReaderHost / Column 包一层」，
@@ -1732,7 +1786,7 @@ fun ReaderScreen(
                                             renderPlainText = renderPlainText,
                                             theme = currentTheme,
                                             fontSize = fontSize,
-                                            readerPaddingDp = readerPaddingDp,
+                                            readerPaddingDp = readerBodyPaddingDp,
                                             readerPaddingHorizontalDp = readerHorizontalPaddingDp,
                                             readerPaddingTopDp = readerPaddingTopDp,
                                             readerLineSpacingMultiplier = readerBodyLineSpacing,
@@ -1856,6 +1910,8 @@ fun ReaderScreen(
                                             onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange,
                                             pdfFullWidthImages = isPdfBook,
                                             codeBlockWrap = codeBlockWrap,
+                                            codeHighlightTheme = codeHighlightTheme,
+                                            codeBlockLanguage = codeBlockLanguage,
                                             onOpenPositionReady = ::onReaderOpenPositionReady,
                                         )
                                     } else {
@@ -1866,7 +1922,7 @@ fun ReaderScreen(
                                             pagerState = pagerState,
                                             theme = currentTheme,
                                             fontSize = fontSize,
-                                            readerPaddingDp = readerPaddingDp,
+                                            readerPaddingDp = readerBodyPaddingDp,
                                             readerPaddingHorizontalDp = readerHorizontalPaddingDp,
                                             readerPaddingTopDp = readerPaddingTopDp,
                                             readerLineSpacingMultiplier = readerBodyLineSpacing,
@@ -1897,6 +1953,8 @@ fun ReaderScreen(
                                             },
                                             pdfFullWidthImages = isPdfBook,
                                             codeBlockWrap = codeBlockWrap,
+                                            codeHighlightTheme = codeHighlightTheme,
+                                            codeBlockLanguage = codeBlockLanguage,
                                             userScrollEnabled = !pdfPageZoomed,
                                         )
                                     }
@@ -1905,7 +1963,7 @@ fun ReaderScreen(
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxSize()
-                                                .background(paperBaseColor),
+                                                .background(pageBaseColor),
                                         )
                                     }
                                 }
@@ -1996,6 +2054,8 @@ fun ReaderScreen(
                 themeSignature = currentTheme.contentSignature(),
                 fontSize = fontSize,
                 codeBlockWrap = codeBlockWrap,
+                codeHighlightTheme = codeHighlightTheme,
+                codeBlockLanguage = codeBlockLanguage,
             )
         } else if (navigationPlan is ReaderNavigationPlan.PdfVertical) {
             pendingScrollRestoreGlobalChar = null
@@ -2280,6 +2340,8 @@ fun ReaderScreen(
                         themeSignature = currentTheme.contentSignature(),
                         fontSize = fontSize,
                         codeBlockWrap = codeBlockWrap,
+                        codeHighlightTheme = codeHighlightTheme,
+                        codeBlockLanguage = codeBlockLanguage,
                     )
                 } else if (navigationPlan is ReaderNavigationPlan.PdfVertical) {
                     pendingScrollRestoreGlobalChar = null

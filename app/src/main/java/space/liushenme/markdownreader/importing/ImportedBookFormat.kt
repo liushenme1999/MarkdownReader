@@ -7,13 +7,14 @@ enum class ImportedBookFormat(val storedKey: String) {
     MARKDOWN("markdown"),
     TXT("txt"),
     PDF("pdf"),
-    HTML("html");
+    HTML("html"),
+    CODE("code");
 
     val isPlainText: Boolean
         get() = this == MARKDOWN || this == TXT
 
     val hasBuiltInTextExtract: Boolean
-        get() = isPlainText || this == PDF || this == HTML
+        get() = isPlainText || this == PDF || this == HTML || this == CODE
 
     /** 阅读器是否用 TextView 纯文本渲染（非 Markwon）。 */
     val usesReaderPlainBody: Boolean
@@ -24,6 +25,9 @@ enum class ImportedBookFormat(val storedKey: String) {
 
     val isHtml: Boolean
         get() = this == HTML
+
+    val isCode: Boolean
+        get() = this == CODE
 
     companion object {
         /** 已移除支持的旧格式（数据库中可能仍存在）。 */

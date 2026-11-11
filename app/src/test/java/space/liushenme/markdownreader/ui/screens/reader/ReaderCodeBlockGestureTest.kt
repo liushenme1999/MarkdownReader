@@ -209,6 +209,66 @@ class ReaderCodeBlockGestureTest {
     }
 
     @Test
+    fun tapCenterOnCodeBlock_cancelsPendingSystemLongPress() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = true
+        ReaderCodeBlockSettings.viewportWidthPx = 400
+        val markwon: Markwon = ReaderMarkwonFactory.create(context)
+        val body = (1..40).joinToString("\n") { "code line $it content" }
+        val rendered = markwon.toMarkdown("```\n$body\n```")
+        val textView = TrackingSafeReaderTextView(context).apply {
+            textSize = 18f
+            setPadding(24, 24, 24, 24)
+        }
+        markwon.setParsedMarkdown(textView, rendered)
+        val parent = FrameLayout(context).apply { addView(textView) }
+        parent.measure(exactly(400), exactly(800))
+        parent.layout(0, 0, 400, 800)
+        textView.measure(exactly(400), exactly(700))
+        textView.layout(0, 0, 400, 700)
+        var centerTapped = 0
+        val selectionStates = mutableListOf<Boolean>()
+        textView.onReaderCenterTap = { centerTapped += 1 }
+        textView.onReaderTextSelectionActiveChange = { selectionStates += it }
+        bindReaderGesturesAndScroll(
+            textView = textView,
+            touchState = ReaderTouchState(),
+            slop = 8,
+            allowVerticalScroll = true,
+            onScroll = {},
+            onReadingVerticalScroll = {},
+            onSwipeRightBookmark = {},
+            onCenterTap = { centerTapped += 1 },
+        )
+
+        val x = textView.width / 2f
+        val y = textView.height / 2f
+        assertTrue(textView.scrollableCodeBlockSpanAt(x, y) != null)
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
+        val up = MotionEvent.obtain(0, 40, MotionEvent.ACTION_UP, x, y, 0)
+        try {
+            textView.dispatchTouchEvent(down)
+            val cancelledAfterDown = textView.cancelLongPressCalls
+            textView.dispatchTouchEvent(up)
+            assertTrue(
+                "ACTION_UP must cancel View's pending system long press",
+                textView.cancelLongPressCalls > cancelledAfterDown,
+            )
+        } finally {
+            down.recycle()
+            up.recycle()
+        }
+
+        assertEquals("center tap should only toggle chrome once", 1, centerTapped)
+        assertTrue("tap must not start a text selection", !textView.isInTextSelection())
+        assertTrue("tap must not render a text selection", !textView.hasVisibleTextSelection())
+        assertTrue(
+            "tap must not report selection activation, states=$selectionStates",
+            selectionStates.none { it },
+        )
+    }
+
+    @Test
     fun processTextExport_usesInnerCodeSelectionNotObjectReplacement() {
         val context = RuntimeEnvironment.getApplication()
         ReaderCodeBlockSettings.wrapEnabled = true
@@ -467,4 +527,15 @@ class ReaderCodeBlockGestureTest {
 
     private fun exactly(px: Int): Int =
         View.MeasureSpec.makeMeasureSpec(px, View.MeasureSpec.EXACTLY)
+
+    private class TrackingSafeReaderTextView(context: android.content.Context) :
+        SafeReaderTextView(context) {
+        var cancelLongPressCalls = 0
+            private set
+
+        override fun cancelLongPress() {
+            cancelLongPressCalls += 1
+            super.cancelLongPress()
+        }
+    }
 }

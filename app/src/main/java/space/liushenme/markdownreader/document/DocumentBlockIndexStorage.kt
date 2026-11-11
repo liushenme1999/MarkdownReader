@@ -5,8 +5,13 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 object DocumentBlockIndexStorage {
-    fun write(bundleDir: File, format: DocumentFormat, content: String): DocumentChunkIndex {
-        val blocks = DocumentBlockParser.parse(content, format)
+    fun write(
+        bundleDir: File,
+        format: DocumentFormat,
+        content: String,
+        codeLanguage: String? = null,
+    ): DocumentChunkIndex {
+        val blocks = DocumentBlockParser.parse(content, format, codeLanguage)
         val index = DocumentBlockParser.buildChunkIndex(content.length, blocks)
         val target = File(bundleDir, DocumentArtifactManifest.BLOCK_INDEX_FILE)
         val temporary = File(bundleDir, "${DocumentArtifactManifest.BLOCK_INDEX_FILE}.tmp")

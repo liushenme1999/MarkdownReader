@@ -4,6 +4,19 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [1.2.5] - 2026-11-12
+
+### 新功能
+
+- Git 项目支持预览 Python、Java/Kotlin、Vue、JavaScript/TypeScript、Web、配置、Shell、C/C++、Go、Rust、Ruby、PHP、Swift 等常见源码文件
+- 代码文件采用严格 UTF-8 / UTF-8 BOM 解码，支持 2 MB 以内的文件，原文不经过 Markdown 处理
+- 新增 `VS Light+`、`VS Dark+`、`Monokai`、`GitHub Light` 四套全局代码高亮主题，支持即时切换并持久化
+- 代码阅读页使用满屏主题背景，不再显示阅读纸底色与页面左右留白
+
+### 修复
+
+- 修复小米手机上轻点代码正文后工具栏闪现又消失的问题
+
 ## [1.2.4] - 2026-10-28
 
 ### 新功能
@@ -346,7 +359,8 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.4...HEAD
+[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.5...HEAD
+[1.2.5]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.4...v1.2.5
 [1.2.4]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.1...v1.2.2

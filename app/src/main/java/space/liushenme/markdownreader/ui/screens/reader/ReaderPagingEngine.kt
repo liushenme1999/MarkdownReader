@@ -77,6 +77,7 @@ import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.importing.PdfReaderContent
 import space.liushenme.markdownreader.markdown.DiagramSchemeHandler
+import space.liushenme.markdownreader.markdown.CodeHighlightTheme
 import io.noties.markwon.image.AsyncDrawable
 import io.noties.markwon.image.AsyncDrawableSpan
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
@@ -2505,6 +2506,8 @@ internal fun jumpToGlobalCharInPager(
     themeSignature: String,
     fontSize: Int,
     codeBlockWrap: Boolean,
+    codeHighlightTheme: CodeHighlightTheme = CodeHighlightTheme.DEFAULT,
+    codeBlockLanguage: String? = null,
 ) {
     if (pageSpecs.isEmpty()) {
         onProgress()
@@ -2529,6 +2532,8 @@ internal fun jumpToGlobalCharInPager(
             themeName = themeSignature,
             fontSize = fontSize,
             codeBlockWrap = codeBlockWrap,
+            codeHighlightTheme = codeHighlightTheme,
+            codeBlockLanguage = codeBlockLanguage,
         )
     } else {
         null

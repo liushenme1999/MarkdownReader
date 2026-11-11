@@ -78,7 +78,9 @@ import androidx.navigation.NavController
 import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.importing.ImportedBookFormat
+import space.liushenme.markdownreader.markdown.CodeHighlightTheme
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
+import space.liushenme.markdownreader.ui.components.CodeHighlightThemeGrid
 import space.liushenme.markdownreader.ui.components.ReaderPageTurnModeOption
 import space.liushenme.markdownreader.ui.components.ReaderSettingsGroupCard
 import space.liushenme.markdownreader.ui.components.ReaderSettingsSectionTitle
@@ -180,6 +182,7 @@ internal fun ReaderSettingsSheet(
     readerPaddingDp: Int,
     readerLineSpacingMultiplier: Float,
     codeBlockWrap: Boolean,
+    codeHighlightTheme: CodeHighlightTheme,
     hideSystemBars: Boolean,
     pageTurnMode: ReaderPageTurnMode,
     onSelectStyle: (Int) -> Unit,
@@ -191,6 +194,7 @@ internal fun ReaderSettingsSheet(
     onPaddingDpChange: (Int) -> Unit,
     onLineSpacingChange: (Float) -> Unit,
     onCodeBlockWrapChange: (Boolean) -> Unit,
+    onCodeHighlightThemeChange: (CodeHighlightTheme) -> Unit,
     onHideSystemBarsChange: (Boolean) -> Unit,
     onPageTurnModeChange: (ReaderPageTurnMode) -> Unit,
     onDismiss: () -> Unit,
@@ -225,6 +229,29 @@ internal fun ReaderSettingsSheet(
                         onResetAll = onResetAllStyles,
                         modifier = Modifier.padding(vertical = 8.dp),
                     )
+                }
+            }
+
+            Column {
+                ReaderSettingsSectionTitle(
+                    stringResource(R.string.reading_settings_section_code_appearance),
+                )
+                ReaderSettingsGroupCard {
+                    Column(
+                        modifier = Modifier.padding(vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.reading_settings_code_appearance_summary),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                        )
+                        CodeHighlightThemeGrid(
+                            themes = CodeHighlightTheme.all,
+                            selected = codeHighlightTheme,
+                            onSelect = onCodeHighlightThemeChange,
+                        )
+                    }
                 }
             }
 

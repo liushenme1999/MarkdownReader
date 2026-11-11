@@ -28,10 +28,12 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import space.liushenme.markdownreader.R
+import space.liushenme.markdownreader.markdown.CodeHighlightTheme
 import space.liushenme.markdownreader.model.AppLanguage
 import space.liushenme.markdownreader.model.AppThemeMode
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
 import space.liushenme.markdownreader.ui.components.AppThemeModeOption
+import space.liushenme.markdownreader.ui.components.CodeHighlightThemeGrid
 import space.liushenme.markdownreader.ui.components.ReaderPageTurnModeOption
 import space.liushenme.markdownreader.ui.components.ReaderSettingsChoiceOption
 import space.liushenme.markdownreader.ui.components.ReaderSettingsGroupCard
@@ -56,6 +58,7 @@ fun ReadingSettingsScreen(
     val readerPaddingDp by viewModel.readerPaddingDp.collectAsState()
     val lineSpacing by viewModel.readerLineSpacingMultiplier.collectAsState()
     val codeBlockWrap by viewModel.codeBlockWrap.collectAsState()
+    val codeHighlightTheme by viewModel.codeHighlightTheme.collectAsState()
     val hideSystemBars by viewModel.hideSystemBars.collectAsState()
     val showTocInLandscape by viewModel.showTocInLandscape.collectAsState()
     val pageTurnMode by viewModel.pageTurnMode.collectAsState()
@@ -141,6 +144,29 @@ fun ReadingSettingsScreen(
                         onResetAll = viewModel::resetAllReadingStyles,
                         modifier = Modifier.padding(vertical = 8.dp),
                     )
+                }
+            }
+
+            Column {
+                ReaderSettingsSectionTitle(
+                    stringResource(R.string.reading_settings_section_code_appearance),
+                )
+                ReaderSettingsGroupCard {
+                    Column(
+                        modifier = Modifier.padding(vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.reading_settings_code_appearance_summary),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                        )
+                        CodeHighlightThemeGrid(
+                            themes = CodeHighlightTheme.all,
+                            selected = codeHighlightTheme,
+                            onSelect = viewModel::setCodeHighlightTheme,
+                        )
+                    }
                 }
             }
 

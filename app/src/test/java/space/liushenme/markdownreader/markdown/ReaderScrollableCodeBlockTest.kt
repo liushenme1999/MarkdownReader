@@ -1,10 +1,12 @@
 package space.liushenme.markdownreader.markdown
 
 import android.graphics.Paint
+import android.graphics.drawable.GradientDrawable
 import android.text.style.ReplacementSpan
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -12,6 +14,8 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import space.liushenme.markdownreader.ui.screens.reader.readerContentSignature
+import space.liushenme.markdownreader.ui.screens.reader.SafeReaderTextView
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
@@ -143,8 +147,190 @@ class ReaderScrollableCodeBlockTest {
         assertEquals("Python", ReaderCodeBlockLanguage.label("python"))
         assertEquals("JavaScript", ReaderCodeBlockLanguage.label("js {.line-numbers}"))
         assertEquals("Java", ReaderCodeBlockLanguage.label("java"))
+        assertEquals("Vue", ReaderCodeBlockLanguage.label("vue"))
+        assertEquals("HTML", ReaderCodeBlockLanguage.label("html"))
+        assertEquals("CSS", ReaderCodeBlockLanguage.label("css"))
         assertEquals("", ReaderCodeBlockLanguage.label(null))
         assertEquals("", ReaderCodeBlockLanguage.label("  "))
+    }
+
+    @Test
+    fun allThemes_renderTheirOwnCodeBlockPalette() {
+        val context = RuntimeEnvironment.getApplication()
+        val source = "```kotlin\nfun greet(name: String) = \"Hello, \${'$'}name\"\n```"
+        val sampledBackgrounds = mutableSetOf<Int>()
+
+        CodeHighlightTheme.all.forEach { theme ->
+            val markwon = ReaderMarkwonFactory.create(context, codeHighlightTheme = theme)
+            val rendered = markwon.toMarkdown(source)
+            val span = rendered.getSpans(
+                0,
+                rendered.length,
+                ReaderScrollableCodeBlockSpan::class.java,
+            ).single()
+
+            assertEquals(theme, span.codeHighlightTheme)
+            assertEquals(theme.palette.foreground, span.codeHighlightTheme.palette.foreground)
+
+            val background = span.background as GradientDrawable
+            val sampled = background.color?.defaultColor
+            assertEquals(theme.palette.background, sampled)
+            sampledBackgrounds += sampled ?: error("Missing code block background color")
+        }
+
+        assertEquals(3, sampledBackgrounds.size)
+    }
+
+    @Test
+    fun codeDocument_usesSeamlessFullScreenSurfaceWhileMarkdownKeepsCardChrome() {
+        val context = RuntimeEnvironment.getApplication()
+        val markdown = "```python\nprint('hello')\n```"
+
+        val cardRendered = ReaderMarkwonFactory.create(context).toMarkdown(markdown)
+        val cardSpan = cardRendered.getSpans(
+            0,
+            cardRendered.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+        val documentRendered = ReaderMarkwonFactory.create(
+            context,
+            fullScreenCodeDocument = true,
+        ).toMarkdown(markdown)
+        val documentSpan = documentRendered.getSpans(
+            0,
+            documentRendered.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+
+        assertFalse(cardSpan.fullScreenCodeDocument)
+        assertTrue(documentSpan.fullScreenCodeDocument)
+        assertTrue((cardSpan.background as GradientDrawable).cornerRadius > 0f)
+        assertEquals(0f, (documentSpan.background as GradientDrawable).cornerRadius)
+    }
+
+    @Test
+    fun fullScreenCodeDocument_measuredLineFitsAllCodeAtDefaultReaderLineSpacing() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.viewportWidthPx = 1000
+        val source = """
+            {
+              "name": "full-screen code",
+              "enabled": true,
+              "count": 42,
+              "nested": { "last": "line" }
+            }
+        """.trimIndent()
+        val rendered = ReaderMarkwonFactory.create(
+            context,
+            fullScreenCodeDocument = true,
+        ).toMarkdown(ReaderCodeBlockMarkdown.wrap(source, "json"))
+        val span = rendered.getSpans(
+            0,
+            rendered.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+        val textView = SafeReaderTextView(context).apply {
+            setText(rendered, android.widget.TextView.BufferType.SPANNABLE)
+            textSize = 16f
+            setPadding(0, 0, 0, 0)
+            setLineSpacing(0f, 1.5f)
+        }
+
+        textView.measure(
+            android.view.View.MeasureSpec.makeMeasureSpec(
+                1000,
+                android.view.View.MeasureSpec.EXACTLY,
+            ),
+            android.view.View.MeasureSpec.makeMeasureSpec(
+                4000,
+                android.view.View.MeasureSpec.AT_MOST,
+            ),
+        )
+        textView.layout(0, 0, 1000, 4000)
+
+        val layout = textView.layout ?: error("layout missing")
+        val measuredLineHeight = layout.getLineBottom(0) - layout.getLineTop(0)
+        val desiredHeight = span.requiredHeightForTest(textView.paint)
+
+        assertTrue(
+            "measured line=$measuredLineHeight, desired=$desiredHeight",
+            measuredLineHeight >= desiredHeight,
+        )
+    }
+
+    @Test
+    fun themeChange_rebuildsMarkwonAndRenderSignature() {
+        val context = RuntimeEnvironment.getApplication()
+        val markdown = "```json\n{\"enabled\": true, \"count\": 2}\n```"
+        val lightRendered = ReaderMarkwonFactory.create(
+            context,
+            codeHighlightTheme = CodeHighlightTheme.VS_LIGHT_PLUS,
+        ).toMarkdown(markdown)
+        val lightSpan = lightRendered.getSpans(
+            0,
+            lightRendered.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+        val darkRendered = ReaderMarkwonFactory.create(
+            context,
+            codeHighlightTheme = CodeHighlightTheme.VS_DARK_PLUS,
+        ).toMarkdown(markdown)
+        val darkSpan = darkRendered.getSpans(
+            0,
+            darkRendered.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+
+        assertEquals(CodeHighlightTheme.VS_LIGHT_PLUS, lightSpan.codeHighlightTheme)
+        assertEquals(CodeHighlightTheme.VS_DARK_PLUS, darkSpan.codeHighlightTheme)
+        assertNotEquals(
+            lightSpan.codeHighlightTheme.palette.background,
+            darkSpan.codeHighlightTheme.palette.background,
+        )
+
+        val lightSignature = readerContentSignature(
+            content = markdown,
+            renderPlainText = false,
+            themeName = "Paper",
+            fontSize = 16,
+            codeHighlightTheme = CodeHighlightTheme.VS_LIGHT_PLUS,
+        )
+        val darkSignature = readerContentSignature(
+            content = markdown,
+            renderPlainText = false,
+            themeName = "Paper",
+            fontSize = 16,
+            codeHighlightTheme = CodeHighlightTheme.VS_DARK_PLUS,
+        )
+        assertNotEquals(lightSignature, darkSignature)
+        assertTrue(lightSignature.contains("_syntax=VS_LIGHT_PLUS"))
+        assertTrue(darkSignature.contains("_syntax=VS_DARK_PLUS"))
+    }
+
+    @Test
+    fun wrappedVueSource_rendersAsOneCodeBlockWithoutMarkdownInterpretation() {
+        val context = RuntimeEnvironment.getApplication()
+        val source = """
+            # not a heading
+            | not | a table |
+            <template>
+              <button>{{ label }}</button>
+            </template>
+            <script setup>
+            const fence = ```````
+            </script>
+        """.trimIndent()
+        val rendered = ReaderMarkwonFactory.create(context).toMarkdown(
+            ReaderCodeBlockMarkdown.wrap(source, "vue"),
+        )
+        val spans = rendered.getSpans(0, rendered.length, ReaderScrollableCodeBlockSpan::class.java)
+
+        assertEquals(1, spans.size)
+        assertEquals("Vue", spans.single().languageLabel)
+        assertTrue(spans.single().rawCode.contains("# not a heading"))
+        assertTrue(spans.single().rawCode.contains("| not | a table |"))
+        assertTrue(spans.single().rawCode.contains("<template>"))
+        assertTrue(spans.single().rawCode.contains("```````"))
     }
 
     @Test

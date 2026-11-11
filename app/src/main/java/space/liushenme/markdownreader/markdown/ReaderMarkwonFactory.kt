@@ -23,6 +23,8 @@ object ReaderMarkwonFactory {
     fun create(
         context: Context,
         paperColor: Color = ReadingTheme.Paper.backgroundColor,
+        codeHighlightTheme: CodeHighlightTheme = CodeHighlightTheme.DEFAULT,
+        fullScreenCodeDocument: Boolean = false,
     ): Markwon {
         val appContext = context.applicationContext
         val paperColorArgb = paperColor.toArgb()
@@ -41,7 +43,14 @@ object ReaderMarkwonFactory {
                     paperColorArgb = paperColorArgb,
                 ).forEach(::usePlugin)
             }
-            .usePlugin(ReaderCodeStylePlugin.create(appContext, paperColorArgb))
+            .usePlugin(
+                ReaderCodeStylePlugin.create(
+                    context = appContext,
+                    paperColorArgb = paperColorArgb,
+                    codeHighlightTheme = codeHighlightTheme,
+                    fullScreenCodeDocument = fullScreenCodeDocument,
+                ),
+            )
             // 在 JLatex 的 `$$...$$` 行内解析之后，补充 `$...$`（勿用预处理转成 $$，否则会块级换行）
             .usePlugin(ReaderSingleDollarLatexPlugin.create())
             .usePlugin(ReaderSpacingPlugin.create(appContext))
@@ -66,7 +75,7 @@ object ReaderMarkwonFactory {
             .usePlugin(
                 object : AbstractMarkwonPlugin() {
                     override fun configureConfiguration(builder: MarkwonConfiguration.Builder) {
-                        builder.syntaxHighlight(ReaderSyntaxHighlight())
+                        builder.syntaxHighlight(ReaderSyntaxHighlight(codeHighlightTheme))
                         builder.linkResolver(ReaderLinkResolver())
                     }
                 },

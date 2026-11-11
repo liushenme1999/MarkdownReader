@@ -1,6 +1,7 @@
 package space.liushenme.markdownreader.git
 
 import java.io.File
+import space.liushenme.markdownreader.importing.CodeFileLanguage
 
 sealed class GitTreeNode {
     abstract val name: String
@@ -18,7 +19,7 @@ sealed class GitTreeNode {
         val format: DocFormat,
     ) : GitTreeNode()
 
-    enum class DocFormat { MARKDOWN, TXT }
+    enum class DocFormat { MARKDOWN, TXT, CODE }
 }
 
 /**
@@ -90,7 +91,11 @@ object GitWorkingTreeIndexer {
                 }
                 entry.isFile -> {
                     val ext = name.substringAfterLast('.', "").lowercase()
-                    val format = DOC_EXTENSIONS[ext] ?: continue
+                    val format = DOC_EXTENSIONS[ext] ?: if (CodeFileLanguage.isCodeFile(name)) {
+                        GitTreeNode.DocFormat.CODE
+                    } else {
+                        continue
+                    }
                     docs += GitTreeNode.Document(name = name, relativePath = rel, format = format)
                 }
             }

@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.width
@@ -17,9 +18,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScaffoldDefaults
@@ -48,6 +51,7 @@ import kotlinx.coroutines.flow.first
  * background, insets, scaffold and floating controls cannot alter its state.
  */
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 internal fun ReaderContainer(
     isPdf: Boolean,
     immersive: Boolean,
@@ -56,6 +60,8 @@ internal fun ReaderContainer(
     theme: ReadingTheme,
     paperColor: Color,
     chromeColor: Color,
+    codeBackgroundColor: Color? = null,
+    chromeTheme: ReadingTheme = theme,
     snackbarHostState: SnackbarHostState,
     title: String,
     chapterTitle: String?,
@@ -72,15 +78,17 @@ internal fun ReaderContainer(
     onReadingSettings: () -> Unit,
     content: @Composable BoxScope.() -> Unit,
 ) {
+    val pageSurfaceColor = codeBackgroundColor ?: if (isPdf) paperColor else Color.Transparent
+    val showsPaperBackground = !isPdf && codeBackgroundColor == null
     Box(Modifier.fillMaxSize()) {
-        if (!isPdf) {
+        if (showsPaperBackground) {
             ReaderPaperBackground(
                 theme = theme,
                 modifier = Modifier.fillMaxSize(),
             )
         }
         Scaffold(
-            containerColor = if (isPdf) paperColor else Color.Transparent,
+            containerColor = pageSurfaceColor,
             snackbarHost = { SnackbarHost(snackbarHostState) },
             contentWindowInsets = if (immersive) {
                 WindowInsets(0, 0, 0, 0)
@@ -99,7 +107,7 @@ internal fun ReaderContainer(
                             title = title,
                             chapterTitle = chapterTitle,
                             onNavigateBack = onNavigateBack,
-                            theme = theme,
+                            theme = chromeTheme,
                         )
                     }
                 }
@@ -109,7 +117,7 @@ internal fun ReaderContainer(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .then(if (isPdf) Modifier.background(paperColor) else Modifier),
+                    .background(pageSurfaceColor),
             ) {
                 if (immersive && !isPdf && !hideSystemBars) {
                     ShelfStyleStatusBarBackdrop(
@@ -124,14 +132,23 @@ internal fun ReaderContainer(
                         .fillMaxSize()
                         .padding(readerContentPadding)
                         .then(
-                            if (immersive && !hideSystemBars) {
-                                if (isPdf) {
-                                    Modifier.statusBarsPadding().navigationBarsPadding()
-                                } else {
-                                    Modifier.navigationBarsPadding()
+                            when {
+                                immersive && codeBackgroundColor != null ->
+                                    Modifier
+                                        // 代码页需要真正满屏，但系统栏短暂出现时，
+                                        // 代码块标题和复制按钮仍须避开状态栏。这里使用
+                                        // 当前可见 inset：隐藏时为 0，不留下永久空白；
+                                        // 显示或过渡出现时自动下移，不再由功能栏状态决定。
+                                        .windowInsetsPadding(WindowInsets.statusBars)
+                                        .windowInsetsPadding(WindowInsets.navigationBars)
+                                immersive && !hideSystemBars -> {
+                                    if (isPdf || codeBackgroundColor != null) {
+                                        Modifier.statusBarsPadding().navigationBarsPadding()
+                                    } else {
+                                        Modifier.navigationBarsPadding()
+                                    }
                                 }
-                            } else {
-                                Modifier
+                                else -> Modifier
                             },
                         ),
                 ) {
@@ -161,7 +178,7 @@ internal fun ReaderContainer(
                     visible = chromeVisible,
                     title = title,
                     chapterTitle = chapterTitle,
-                    theme = theme,
+                    theme = chromeTheme,
                     backgroundColor = chromeColor,
                     onNavigateBack = onNavigateBack,
                     onToc = onToc,

@@ -19,6 +19,7 @@ import space.liushenme.markdownreader.document.DocumentSnapshot
 import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.importing.PdfReaderContent
 import space.liushenme.markdownreader.markdown.MarkdownInlineHtml
+import space.liushenme.markdownreader.markdown.CodeHighlightTheme
 import space.liushenme.markdownreader.model.HighlightStyle
 import space.liushenme.markdownreader.ui.screens.reader.anchor.captureTextAnchor
 import space.liushenme.markdownreader.ui.screens.reader.anchor.sourceSpanForRenderedQuote
@@ -131,6 +132,14 @@ class ReaderViewModel @Inject constructor(
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = ReaderSettingsRepository.DEFAULT_CODE_BLOCK_WRAP,
         )
+
+    val codeHighlightTheme: StateFlow<CodeHighlightTheme> =
+        readerSettingsRepository.codeHighlightTheme
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = CodeHighlightTheme.DEFAULT,
+            )
 
     val hideSystemBars: StateFlow<Boolean> = readerSettingsRepository.hideSystemBars
         .stateIn(
@@ -280,6 +289,7 @@ class ReaderViewModel @Inject constructor(
         val pageMode: ReaderPageTurnMode,
         val highlightColor: Int,
         val highlightStyle: HighlightStyle,
+        val codeHighlightTheme: CodeHighlightTheme,
     )
 
     private data class RuntimeState(
@@ -325,8 +335,17 @@ class ReaderViewModel @Inject constructor(
             pageTurnMode,
             lastHighlightColorArgb,
             lastHighlightStyle,
-        ) { base, pageMode, color, style ->
-            InteractionState(base.first, base.second, base.third, pageMode, color, style)
+            codeHighlightTheme,
+        ) { base, pageMode, color, style, codeTheme ->
+            InteractionState(
+                base.first,
+                base.second,
+                base.third,
+                pageMode,
+                color,
+                style,
+                codeTheme,
+            )
         },
         combine(
             _readingProgress,
@@ -371,6 +390,7 @@ class ReaderViewModel @Inject constructor(
             pageTurnMode = interaction.pageMode,
             lastHighlightColorArgb = interaction.highlightColor,
             lastHighlightStyle = interaction.highlightStyle,
+            codeHighlightTheme = interaction.codeHighlightTheme,
             showMarkFinishedPrompt = runtime.finishPrompt,
         )
     }.stateIn(
@@ -994,16 +1014,24 @@ class ReaderViewModel @Inject constructor(
     private fun anchorFor(content: String, start: Int, end: Int) =
         _book.value?.let { book ->
             val format = ImportedBookFormat.fromStored(book.importFormat)
-            if (format.isPdf || PdfReaderContent.looksLikePdfBody(content)) return@let null
-            val toc = _structuredToc.value?.takeIf { it.isNotEmpty() }
-                ?: if (format.usesReaderPlainBody) {
-                    parsePlainTextToc(content)
-                } else {
-                    parseMarkdownToc(content)
-                }
+            if (!format.isCode &&
+                (format.isPdf || PdfReaderContent.looksLikePdfBody(content))
+            ) {
+                return@let null
+            }
+            val toc = if (format.isCode) {
+                emptyList()
+            } else {
+                _structuredToc.value?.takeIf { it.isNotEmpty() }
+                    ?: if (format.usesReaderPlainBody) {
+                        parsePlainTextToc(content)
+                    } else {
+                        parseMarkdownToc(content)
+                    }
+            }
             captureTextAnchor(
                 document = content,
-                plainText = format.usesReaderPlainBody,
+                plainText = format.usesReaderPlainBody || format.isCode,
                 start = start,
                 end = end,
                 toc = toc,
@@ -1069,6 +1097,12 @@ class ReaderViewModel @Inject constructor(
     fun setCodeBlockWrap(enabled: Boolean) {
         viewModelScope.launch {
             readerSettingsRepository.setCodeBlockWrap(enabled)
+        }
+    }
+
+    fun setCodeHighlightTheme(theme: CodeHighlightTheme) {
+        viewModelScope.launch {
+            readerSettingsRepository.setCodeHighlightTheme(theme)
         }
     }
 

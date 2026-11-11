@@ -79,6 +79,7 @@ import androidx.navigation.NavController
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
+import space.liushenme.markdownreader.markdown.CodeHighlightTheme
 import space.liushenme.markdownreader.ui.components.iconTintForDeleteStrip
 import space.liushenme.markdownreader.ui.theme.MarkdownReaderTheme
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
@@ -108,6 +109,7 @@ internal fun ReaderPagedMarkdownHost(
     pageTurnMode: ReaderPageTurnMode,
     pagerState: PagerState,
     theme: ReadingTheme,
+    codeHighlightTheme: CodeHighlightTheme = CodeHighlightTheme.DEFAULT,
     fontSize: Int,
     readerPaddingDp: Int,
     readerPaddingHorizontalDp: Int = readerPaddingDp,
@@ -134,6 +136,7 @@ internal fun ReaderPagedMarkdownHost(
     onPageTextViewReady: (Int, TextView) -> Unit,
     pdfFullWidthImages: Boolean = false,
     codeBlockWrap: Boolean = true,
+    codeBlockLanguage: String? = null,
     userScrollEnabled: Boolean = true,
 ) {
     val layoutDirection = LocalLayoutDirection.current
@@ -186,6 +189,7 @@ internal fun ReaderPagedMarkdownHost(
                 content = slice,
                 renderPlainText = renderPlainText,
                 theme = theme,
+                codeHighlightTheme = codeHighlightTheme,
                 fontSize = fontSize,
                 readerPaddingDp = readerPaddingDp,
                 readerPaddingHorizontalDp = readerPaddingHorizontalDp,
@@ -211,6 +215,7 @@ internal fun ReaderPagedMarkdownHost(
                 onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange,
                 pdfFullWidthImages = pdfFullWidthImages,
                 codeBlockWrap = codeBlockWrap,
+                codeBlockLanguage = codeBlockLanguage,
             )
         }
     }

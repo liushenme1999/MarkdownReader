@@ -107,6 +107,7 @@
     <string name="book_format_text">文字</string>
     <string name="book_format_pdf">PDF</string>
     <string name="book_format_html">HTML</string>
+    <string name="book_format_code">程式碼</string>
     <string name="bookshelf_importing">正在匯入</string>
     <string name="bookshelf_importing_progress">正在匯入 %1$d/%2$d（%3$d%%）</string>
     <string name="bookshelf_importing_wait">匯入完成後可閱讀</string>
@@ -159,7 +160,7 @@
     <string name="git_project_delete_cd">刪除專案</string>
     <string name="git_project_delete_title">刪除 Git 專案</string>
     <string name="git_project_delete_message">確定刪除「%1$s」嗎？將移除本機倉庫副本及相關閱讀記錄。</string>
-    <string name="git_project_empty_docs">未找到 Markdown 或 TXT 文件</string>
+    <string name="git_project_empty_docs">未找到支援文件或常見程式碼檔案</string>
     <string name="git_project_folder_cd">資料夾</string>
     <string name="git_project_file_cd">文件</string>
     <string name="git_project_continue_reading">繼續閱讀</string>
@@ -188,6 +189,8 @@
     <string name="toast_git_branch_switch_failed">切換分支失敗：%1$s</string>
     <string name="git_project_pulling_title">正在拉取更新…</string>
     <string name="git_project_switching_branch_title">正在切換分支…</string>
+    <string name="git_code_file_too_large">檔案過大：程式碼檔案不能超過 2 MB</string>
+    <string name="git_code_file_encoding_unsupported">檔案編碼不支援：僅支援 UTF-8 / UTF-8 BOM</string>
     <string name="toast_import_unsupported_format">不支援 EPUB、DOC、DOCX、MOBI、AZW3，請使用 Markdown、TXT 或 PDF。</string>
     <string name="toast_import_parse_failed">未能解析出正文，請確認檔案未損壞。</string>
     <string name="toast_import_failed">匯入失敗：%1$s</string>
@@ -209,6 +212,7 @@
     <string name="snackbar_bookmark_removed">已取消書籤</string>
     <string name="reader_toc_empty_plain_text">未識別到章節。請將章節標題單獨成行，例如：\n第一章 …、第1節 …、Chapter 1 …</string>
     <string name="reader_toc_empty_markdown">未識別到標題。請使用 Markdown ATX 語法，例如：\n# 一級標題\n## 二級標題</string>
+    <string name="reader_toc_empty_code">程式碼檔案不支援目錄</string>
     <string name="reader_diagram_preview_cd">圖片預覽</string>
     <string name="reader_diagram_zoom_hint">雙指縮放 / 拖動檢視</string>
     <string name="reader_diagram_close_cd">關閉圖片預覽</string>
@@ -247,6 +251,8 @@
     <string name="reader_line_spacing_value">%1$.2f 倍</string>
     <string name="reader_code_block_wrap">程式碼區塊自動換行</string>
     <string name="reader_code_block_wrap_summary">關閉後，長程式碼可在區塊內左右滑動檢視</string>
+    <string name="reading_settings_section_code_appearance">程式碼外觀</string>
+    <string name="reading_settings_code_appearance_summary">語法主題同時套用於 Git 原始碼與 Markdown 程式碼區塊，選擇後立即生效</string>
     <string name="reader_hide_system_bars">閱讀時隱藏系統列</string>
     <string name="reader_hide_system_bars_summary">沉浸閱讀時隱藏頂部狀態列與底部小白條，點螢幕喚出功能列時再顯示。適用於 Markdown、TXT 與 PDF。</string>
     <string name="reader_show_toc_in_landscape">橫向顯示目錄欄</string>

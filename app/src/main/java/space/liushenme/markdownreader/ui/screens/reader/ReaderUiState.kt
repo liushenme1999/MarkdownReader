@@ -4,6 +4,7 @@ import space.liushenme.markdownreader.data.local.entity.BookEntity
 import space.liushenme.markdownreader.data.local.entity.BookmarkEntity
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.document.DocumentSnapshot
+import space.liushenme.markdownreader.markdown.CodeHighlightTheme
 import space.liushenme.markdownreader.model.HighlightStyle
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
 import space.liushenme.markdownreader.ui.theme.ReadingStyleState
@@ -41,6 +42,7 @@ data class ReaderUiState(
     val readerPaddingDp: Int = 32,
     val readerLineSpacingMultiplier: Float = 1.5f,
     val codeBlockWrap: Boolean = true,
+    val codeHighlightTheme: CodeHighlightTheme = CodeHighlightTheme.DEFAULT,
     val hideSystemBars: Boolean = true,
     val showTocInLandscape: Boolean = true,
     val pageTurnMode: ReaderPageTurnMode = ReaderPageTurnMode.VerticalScroll,

@@ -107,6 +107,7 @@ import kotlin.math.roundToInt
  * chrome animation and layout details from mixing with document restoration.
  */
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 internal fun ReaderChrome(
     visible: Boolean,
     title: String,
@@ -150,7 +151,10 @@ internal fun ReaderChrome(
                     Spacer(
                         Modifier
                             .fillMaxWidth()
-                            .windowInsetsTopHeight(WindowInsets.statusBars),
+                            // 沉浸模式会主动隐藏系统栏；唤出功能栏时必须按真实状态栏
+                            // 高度留白，否则透明状态栏图标会与标题重叠。HyperOS
+                            // 偶尔会把稳定 inset 报成 0，因此再以系统资源兜底。
+                            .height(stableStatusBarTopInset()),
                     )
                     ReaderTopAppBar(
                         title = title,
@@ -287,6 +291,7 @@ internal fun ReaderImmersiveChapterTitleBar(
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 internal fun ReaderImmersiveBottomBar(
     modifier: Modifier = Modifier,
     theme: ReadingTheme,
@@ -336,10 +341,59 @@ internal fun ReaderImmersiveBottomBar(
             Spacer(
                 Modifier
                     .fillMaxWidth()
-                    .windowInsetsBottomHeight(WindowInsets.navigationBars)
+                    .height(stableNavigationBarBottomInset())
             )
         }
     }
+}
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun stableStatusBarTopInset(): Dp {
+    val density = LocalDensity.current
+    val context = LocalContext.current
+    val composeInset = WindowInsets.statusBarsIgnoringVisibility
+        .asPaddingValues()
+        .calculateTopPadding()
+    val cutoutInset = WindowInsets.displayCutout
+        .asPaddingValues()
+        .calculateTopPadding()
+    val resourceInset = remember(context, density) {
+        val resourceId = context.resources.getIdentifier(
+            "status_bar_height",
+            "dimen",
+            "android",
+        )
+        if (resourceId == 0) {
+            0.dp
+        } else {
+            with(density) { context.resources.getDimensionPixelSize(resourceId).toDp() }
+        }
+    }
+    return maxOf(composeInset, cutoutInset, resourceInset)
+}
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun stableNavigationBarBottomInset(): Dp {
+    val density = LocalDensity.current
+    val context = LocalContext.current
+    val composeInset = WindowInsets.navigationBarsIgnoringVisibility
+        .asPaddingValues()
+        .calculateBottomPadding()
+    val resourceInset = remember(context, density) {
+        val resourceId = context.resources.getIdentifier(
+            "navigation_bar_height",
+            "dimen",
+            "android",
+        )
+        if (resourceId == 0) {
+            0.dp
+        } else {
+            with(density) { context.resources.getDimensionPixelSize(resourceId).toDp() }
+        }
+    }
+    return maxOf(composeInset, resourceInset)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

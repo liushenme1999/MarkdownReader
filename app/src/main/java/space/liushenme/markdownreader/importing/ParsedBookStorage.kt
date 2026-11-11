@@ -43,6 +43,7 @@ object ParsedBookStorage {
         dir: File,
         extracted: ExtractedBookText,
         coverBytes: ByteArray?,
+        importFormat: ImportedBookFormat = ImportedBookFormat.MARKDOWN,
     ): Boolean {
         return runCatching {
             dir.mkdirs()
@@ -63,7 +64,7 @@ object ParsedBookStorage {
                     File(assetsDir, safeName).writeBytes(bytes)
                 }
             }
-            writeDerivedMetadata(dir, extracted.body)
+            writeDerivedMetadata(dir, extracted.body, importFormat)
             true
         }.getOrDefault(false)
     }
@@ -97,7 +98,10 @@ object ParsedBookStorage {
         return installed
     }
 
-    fun readBundle(dir: File): ExtractedBookText? {
+    fun readBundle(
+        dir: File,
+        importFormat: ImportedBookFormat = ImportedBookFormat.MARKDOWN,
+    ): ExtractedBookText? {
         val bodyFile = File(dir, BODY_FILE)
         if (!bodyFile.isFile) return null
         when (DocumentArtifactManifest.validation(dir)) {
@@ -108,6 +112,12 @@ object ParsedBookStorage {
         }
         val rawBody = runCatching { bodyFile.readText(StandardCharsets.UTF_8) }.getOrNull()
             ?: return null
+        if (importFormat.isCode) {
+            if (DocumentArtifactManifest.validation(dir) == DocumentArtifactManifest.Validation.MissingManifest) {
+                runCatching { writeDerivedMetadata(dir, rawBody, importFormat) }
+            }
+            return ExtractedBookText(body = rawBody, toc = emptyList(), coverImageBytes = null)
+        }
         loadDiagramPayloads(dir)
         var body = materializeAssetUrls(rawBody, dir)
         body = MarkdownPreprocessor.stripLocalRelativeImages(body)
@@ -120,7 +130,7 @@ object ParsedBookStorage {
         // materialize 会把 book-asset:// 换成更长的 file://，旧 toc.json 偏移会整体错位。
         val toc = BookTocEnricher.alignToBody(body, storedToc)
         if (DocumentArtifactManifest.validation(dir) == DocumentArtifactManifest.Validation.MissingManifest) {
-            runCatching { writeDerivedMetadata(dir, rawBody) }
+            runCatching { writeDerivedMetadata(dir, rawBody, importFormat) }
         }
         return ExtractedBookText(body = body, toc = toc, coverImageBytes = null)
     }
@@ -130,16 +140,20 @@ object ParsedBookStorage {
         val body = runCatching { File(dir, BODY_FILE).readText(StandardCharsets.UTF_8) }.getOrNull()
             ?: return false
         return runCatching {
-            writeDerivedMetadata(dir, body)
+            writeDerivedMetadata(dir, body, ImportedBookFormat.MARKDOWN)
             true
         }.getOrDefault(false)
     }
 
-    private fun writeDerivedMetadata(dir: File, rawBody: String) {
-        val format = if (PdfReaderContent.looksLikePdfBody(rawBody)) {
-            DocumentFormat.Pdf
-        } else {
-            DocumentFormat.Markdown
+    private fun writeDerivedMetadata(
+        dir: File,
+        rawBody: String,
+        importFormat: ImportedBookFormat,
+    ) {
+        val format = when {
+            importFormat.isCode -> DocumentFormat.Code
+            PdfReaderContent.looksLikePdfBody(rawBody) -> DocumentFormat.Pdf
+            else -> DocumentFormat.Markdown
         }
         DocumentBlockIndexStorage.write(dir, format, rawBody)
         DocumentArtifactManifest.write(dir)
@@ -193,8 +207,9 @@ object ParsedBookStorage {
         val body = runCatching { bodyFile.readText(StandardCharsets.UTF_8) }.getOrNull()
             ?: return false
         if (body.isBlank()) return false
-        val treatAsPdf = ImportedBookFormat.fromStored(importFormat).isPdf ||
-            PdfReaderContent.looksLikePdfBody(body)
+        val storedFormat = ImportedBookFormat.fromStored(importFormat)
+        val treatAsPdf = storedFormat.isPdf ||
+            (!storedFormat.isCode && PdfReaderContent.looksLikePdfBody(body))
         return if (treatAsPdf) hasLocalPdfPageAssets(dir, body) else true
     }
 

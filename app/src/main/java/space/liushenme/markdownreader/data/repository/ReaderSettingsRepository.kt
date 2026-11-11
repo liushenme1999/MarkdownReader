@@ -16,6 +16,7 @@ import space.liushenme.markdownreader.model.BookshelfLayoutMode
 import space.liushenme.markdownreader.model.GitProjectRecentReadCount
 import space.liushenme.markdownreader.model.HighlightStyle
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
+import space.liushenme.markdownreader.markdown.CodeHighlightTheme
 import androidx.compose.ui.graphics.toArgb
 import space.liushenme.markdownreader.ui.theme.ReadingStyleState
 import space.liushenme.markdownreader.ui.theme.ReadingTheme
@@ -74,6 +75,11 @@ class ReaderSettingsRepository @Inject constructor(
     /** 围栏/缩进代码块是否自动换行；关闭后代码块可左右滑动。默认开启。 */
     val codeBlockWrap: Flow<Boolean> = dataStore.data.map { prefs ->
         prefs[KEY_CODE_BLOCK_WRAP] ?: DEFAULT_CODE_BLOCK_WRAP
+    }
+
+    /** 全局代码高亮主题；缺失或未知值回退到 VS Light+。 */
+    val codeHighlightTheme: Flow<CodeHighlightTheme> = dataStore.data.map { prefs ->
+        CodeHighlightTheme.fromStored(prefs[KEY_CODE_HIGHLIGHT_THEME])
     }
 
     /** 沉浸阅读时隐藏状态栏与底部导航条；唤出功能栏时再显示。默认开启。 */
@@ -206,6 +212,12 @@ class ReaderSettingsRepository @Inject constructor(
         }
     }
 
+    suspend fun setCodeHighlightTheme(theme: CodeHighlightTheme) {
+        dataStore.edit { prefs ->
+            prefs[KEY_CODE_HIGHLIGHT_THEME] = theme.stableId
+        }
+    }
+
     suspend fun setHideSystemBars(hide: Boolean) {
         dataStore.edit { prefs ->
             prefs[KEY_HIDE_SYSTEM_BARS] = hide
@@ -294,6 +306,8 @@ class ReaderSettingsRepository @Inject constructor(
         private val KEY_READER_PADDING_DP = intPreferencesKey("reader_reader_padding_dp")
         private val KEY_LINE_SPACING_MULT = floatPreferencesKey("reader_line_spacing_multiplier")
         private val KEY_CODE_BLOCK_WRAP = booleanPreferencesKey("reader_code_block_wrap")
+        private val KEY_CODE_HIGHLIGHT_THEME =
+            stringPreferencesKey("reader_code_highlight_theme")
         private val KEY_HIDE_SYSTEM_BARS = booleanPreferencesKey("reader_hide_system_bars")
         private val KEY_SHOW_TOC_IN_LANDSCAPE = booleanPreferencesKey("reader_show_toc_in_landscape")
         private val KEY_LAST_HIGHLIGHT_COLOR = intPreferencesKey("reader_last_highlight_color")
