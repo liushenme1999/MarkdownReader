@@ -7,11 +7,13 @@ import android.graphics.RectF
 import android.graphics.drawable.Drawable
 import android.text.Layout
 import android.text.SpannableString
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.TextUtils
 import android.text.style.ReplacementSpan
 import android.text.style.ForegroundColorSpan
+import android.text.style.LineHeightSpan
 import io.noties.markwon.core.MarkwonTheme
 import io.noties.markwon.utils.SpanUtils
 import kotlin.math.max
@@ -40,7 +42,7 @@ internal class ReaderScrollableCodeBlockSpan(
     private val wrapEnabled: Boolean,
     private val density: Float,
     initialSyntaxHighlightRanges: List<CodeSyntaxRange> = emptyList(),
-) : ReplacementSpan() {
+) : ReplacementSpan(), LineHeightSpan {
 
     private val content: CharSequence = normalizeReaderCodeContent(content)
     val rawCode: String = normalizeReaderCodeContent(rawCode).toString()
@@ -65,6 +67,7 @@ internal class ReaderScrollableCodeBlockSpan(
     private var layoutGeneration: Int = 0
     private var syntaxGeneration: Int = 0
     private var styledSyntaxLayout: StyledSyntaxLayout? = null
+    private var measuredHeight: Int = 0
     private var syntaxLineMap: IntArray? = null
     private var syntaxLineMapLayoutGeneration = -1
     private var syntaxLineMapSyntaxGeneration = -1
@@ -81,6 +84,7 @@ internal class ReaderScrollableCodeBlockSpan(
 
     private var drawnLeft = 0f
     private var drawnTop = 0f
+    internal var lastDrawnHeightForTest = 0
     private var copyLeft = 0f
     private var copyTop = 0f
     private var copyRight = 0f
@@ -578,6 +582,41 @@ internal class ReaderScrollableCodeBlockSpan(
 
     internal fun requiredHeightForTest(paint: Paint): Int = chromeHeight(ensureLayout(paint), paint)
 
+    /**
+     * The line containing a code card also contains its trailing newline. That newline's default
+     * font descent is merged after [getSize], so metrics set there cannot describe the complete
+     * row. Resolve the final row height after all span metrics have been collected instead.
+     *
+     * StaticLayout applies the TextView line-spacing multiplier after this callback, except for
+     * a final line without a trailing newline. Compensate only for the case where that multiplier
+     * will actually be applied; otherwise the card would be smaller than its own code layout.
+     */
+    override fun chooseHeight(
+        text: CharSequence,
+        start: Int,
+        end: Int,
+        spanstartv: Int,
+        lineHeight: Int,
+        fm: Paint.FontMetricsInt,
+    ) {
+        val desiredHeight = measuredHeight.takeIf { it > 0 } ?: return
+        val spanned = text as? Spanned ?: return
+        val codeStart = spanned.getSpanStart(this)
+        if (codeStart < start || codeStart >= end) return
+        val isLastLine = end == text.length &&
+            (text.isEmpty() || (text[text.length - 1] != '\n' && text[text.length - 1] != '\r'))
+        val multiplier = if (isLastLine) 1f else ReaderTableSpacing.lineSpacingMultiplier
+        val metricsHeight = if (multiplier > 1.001f) {
+            (desiredHeight / multiplier + 0.5f).toInt().coerceAtLeast(1)
+        } else {
+            desiredHeight
+        }
+        fm.ascent = -metricsHeight
+        fm.descent = 0
+        fm.top = fm.ascent
+        fm.bottom = 0
+    }
+
     fun highlightRangesForTest(): List<CodeBlockHighlightRange> = highlightRanges.toList()
 
     internal fun contentSliceForTest(start: Int, end: Int): String =
@@ -670,15 +709,16 @@ internal class ReaderScrollableCodeBlockSpan(
         fm: Paint.FontMetricsInt?,
     ): Int {
         val layout = ensureLayout(paint)
+        val viewport = resolvedViewportWidth()
+        lastViewportWidth = viewport
+        syncScrollX()
         if (fm != null) {
-            fm.ascent = -chromeHeight(layout, paint)
+            measuredHeight = chromeHeight(layout, paint)
+            fm.ascent = -measuredHeight
             fm.descent = 0
             fm.top = fm.ascent
             fm.bottom = 0
         }
-        val viewport = resolvedViewportWidth()
-        lastViewportWidth = viewport
-        syncScrollX()
         return viewport
     }
 
@@ -734,6 +774,7 @@ internal class ReaderScrollableCodeBlockSpan(
         val clipRight = x + lastViewportWidth
         drawnLeft = x
         drawnTop = top.toFloat()
+        lastDrawnHeightForTest = bottom - top
         val bg = background.mutate()
         bg.setBounds(x.toInt(), top, clipRight.toInt().coerceAtLeast(x.toInt() + 1), bottom)
         bg.draw(canvas)

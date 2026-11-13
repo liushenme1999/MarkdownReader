@@ -644,6 +644,93 @@ class ReaderScrollableCodeBlockTest {
     }
 
     @Test
+    fun markdownCodeBlock_outerReaderLineSpacingDoesNotExpandCardHeight() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = false
+        ReaderCodeBlockSettings.viewportWidthPx = 1000
+        val markdown = """
+            ```python
+            from hello_agents.evaluation import GAIADataset, GAIAEvaluator
+
+            dataset = GAIADataset(level=1)
+            items = dataset.load()
+            evaluator = GAIAEvaluator(dataset=dataset, level=1)
+            ```
+
+            普通段落。
+        """.trimIndent()
+        val rendered = ReaderMarkwonFactory.create(context).toMarkdown(markdown)
+        val span = rendered.getSpans(
+            0,
+            rendered.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+        val textView = SafeReaderTextView(context).apply {
+            setText(rendered, TextView.BufferType.SPANNABLE)
+            textSize = 16f
+            setPadding(0, 0, 0, 0)
+            ReaderTableSpacing.lineSpacingMultiplier = 1.5f
+            setLineSpacing(0f, 1.5f)
+        }
+
+        textView.measure(
+            android.view.View.MeasureSpec.makeMeasureSpec(
+                1000,
+                android.view.View.MeasureSpec.EXACTLY,
+            ),
+            android.view.View.MeasureSpec.makeMeasureSpec(
+                4000,
+                android.view.View.MeasureSpec.AT_MOST,
+            ),
+        )
+        textView.layout(0, 0, 1000, 4000)
+
+        val layout = textView.layout ?: error("layout missing")
+        val line = layout.getLineForOffset(rendered.getSpanStart(span))
+        val measuredLineHeight = layout.getLineBottom(line) - layout.getLineTop(line)
+        val desiredHeight = span.requiredHeightForTest(textView.paint)
+        val bitmap = Bitmap.createBitmap(
+            1000,
+            layout.getLineBottom(line).coerceAtLeast(1),
+            Bitmap.Config.ARGB_8888,
+        )
+        try {
+            span.draw(
+                canvas = Canvas(bitmap),
+                text = rendered,
+                start = rendered.getSpanStart(span),
+                end = rendered.getSpanEnd(span),
+                x = 0f,
+                top = layout.getLineTop(line),
+                y = layout.getLineBaseline(line),
+                bottom = layout.getLineBottom(line),
+                paint = textView.paint,
+            )
+        } finally {
+            bitmap.recycle()
+        }
+
+        assertTrue(
+            "outer 1.5x line spacing must not expand code card: " +
+                "measured=$measuredLineHeight, desired=$desiredHeight",
+            kotlin.math.abs(measuredLineHeight - desiredHeight) <= 2,
+        )
+        assertEquals(
+            "the painted card must use the measured row bounds",
+            measuredLineHeight,
+            span.lastDrawnHeightForTest,
+        )
+        val trailingLineHeights = (line + 1 until layout.lineCount).map { index ->
+            layout.getLineBottom(index) - layout.getLineTop(index)
+        }
+        assertTrue(
+            "a blank line after the code card must not inherit its height: " +
+                "desired=$desiredHeight, trailing=$trailingLineHeights",
+            trailingLineHeights.all { it < desiredHeight },
+        )
+    }
+
+    @Test
     fun fullScreenRenderer_bypassesMarkdownAndKeepsLightweightSyntaxRanges() {
         val context = RuntimeEnvironment.getApplication()
         ReaderCodeBlockSettings.wrapEnabled = true
