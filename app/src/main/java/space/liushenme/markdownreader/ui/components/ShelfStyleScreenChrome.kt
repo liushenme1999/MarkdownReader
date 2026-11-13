@@ -89,7 +89,14 @@ fun ShelfStyleSystemBarsEffect(
 
     SideEffect { apply() }
 
-    DisposableEffect(lifecycleOwner, barArgb, navArgb, useLightBarIcons, applyNavigationBar, systemBarsVisible) {
+    DisposableEffect(
+        lifecycleOwner,
+        barArgb,
+        navArgb,
+        useLightBarIcons,
+        applyNavigationBar,
+        systemBarsVisible,
+    ) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) apply()
         }

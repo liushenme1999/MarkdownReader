@@ -4,6 +4,14 @@ import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import io.noties.markwon.syntax.SyntaxHighlight
+import java.util.concurrent.ConcurrentHashMap
+
+/** A colored source range that can be painted without allocating a text span per token. */
+internal data class CodeSyntaxRange(
+    val start: Int,
+    val end: Int,
+    val color: Int,
+)
 
 /**
  * Lightweight regex highlighter for fenced/indented blocks.
@@ -17,19 +25,38 @@ internal class ReaderSyntaxHighlight(
 ) : SyntaxHighlight {
 
     override fun highlight(info: String?, code: String): CharSequence {
-        val spec = specFor(normalizeLanguage(info)) ?: return code
-        val spannable = SpannableString(code)
-        if (code.isEmpty()) return spannable
+        if (code.isEmpty()) return SpannableString(code)
+        val ranges = highlightRanges(info, code)
+        if (ranges.isEmpty()) return code
+        return SpannableString(code).apply {
+            ranges.forEach { range ->
+                setSpan(
+                    ForegroundColorSpan(range.color),
+                    range.start,
+                    range.end,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                )
+            }
+        }
+    }
 
+    /**
+     * Returns plain range data for full-screen code. Large source files avoid thousands of
+     * [ForegroundColorSpan] insertions, which are costly inside Android's SpanSet.
+     */
+    fun highlightRanges(info: String?, code: String): List<CodeSyntaxRange> {
+        if (code.isEmpty()) return emptyList()
+        val spec = specFor(normalizeLanguage(info)) ?: return emptyList()
+        val ranges = mutableListOf<CodeSyntaxRange>()
         val occupied = BooleanArray(code.length)
-        applyProtectedTokens(code, spannable, occupied, spec)
-        applyRules(code, spannable, occupied, spec.rules)
-        return spannable
+        applyProtectedTokens(code, ranges, occupied, spec)
+        applyRules(code, ranges, occupied, spec.rules)
+        return mergeAdjacentRanges(ranges.sortedBy { it.start })
     }
 
     private fun applyProtectedTokens(
         code: String,
-        spannable: SpannableString,
+        ranges: MutableList<CodeSyntaxRange>,
         occupied: BooleanArray,
         spec: LanguageSpec,
     ) {
@@ -51,13 +78,13 @@ internal class ReaderSyntaxHighlight(
 
         for (candidate in candidates) {
             if (!occupied.isFree(candidate.start, candidate.end)) continue
-            color(spannable, occupied, candidate.start, candidate.end, candidate.kind)
+            color(ranges, occupied, candidate.start, candidate.end, candidate.kind)
         }
     }
 
     private fun applyRules(
         code: String,
-        spannable: SpannableString,
+        ranges: MutableList<CodeSyntaxRange>,
         occupied: BooleanArray,
         rules: List<TokenRule>,
     ) {
@@ -69,26 +96,35 @@ internal class ReaderSyntaxHighlight(
                 val start = range.first
                 val end = range.last + 1
                 if (!occupied.isFree(start, end)) return@forEach
-                color(spannable, occupied, start, end, rule.kind)
+                color(ranges, occupied, start, end, rule.kind)
             }
         }
     }
 
     private fun color(
-        spannable: SpannableString,
+        ranges: MutableList<CodeSyntaxRange>,
         occupied: BooleanArray,
         start: Int,
         end: Int,
         kind: TokenKind,
     ) {
         if (!occupied.isFree(start, end)) return
-        spannable.setSpan(
-            ForegroundColorSpan(colorFor(kind)),
-            start,
-            end,
-            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
-        )
+        ranges += CodeSyntaxRange(start, end, colorFor(kind))
         occupied.fill(true, start, end)
+    }
+
+    private fun mergeAdjacentRanges(ranges: List<CodeSyntaxRange>): List<CodeSyntaxRange> {
+        if (ranges.size < 2) return ranges
+        val merged = ArrayList<CodeSyntaxRange>(ranges.size)
+        for (range in ranges) {
+            val previous = merged.lastOrNull()
+            if (previous != null && previous.end == range.start && previous.color == range.color) {
+                merged[merged.lastIndex] = previous.copy(end = range.end)
+            } else {
+                merged += range
+            }
+        }
+        return merged
     }
 
     private fun colorFor(kind: TokenKind): Int {
@@ -126,7 +162,11 @@ internal class ReaderSyntaxHighlight(
             .orEmpty()
     }
 
-    private fun specFor(language: String): LanguageSpec? = when (language) {
+    private fun specFor(language: String): LanguageSpec? =
+        SPEC_CACHE.getOrPut(language) { buildSpec(language) ?: UNKNOWN_SPEC }
+            .takeUnless { it === UNKNOWN_SPEC }
+
+    private fun buildSpec(language: String): LanguageSpec? = when (language) {
         "py", "pyw", "python" -> pythonSpec()
         "rb", "ruby" -> rubySpec()
         "java", "kt", "kts", "kotlin" -> jvmSpec()
@@ -698,5 +738,10 @@ internal class ReaderSyntaxHighlight(
         VARIABLE,
         OPERATOR,
         FOREGROUND,
+    }
+
+    private companion object {
+        val SPEC_CACHE = ConcurrentHashMap<String, LanguageSpec>()
+        val UNKNOWN_SPEC = LanguageSpec(emptyList(), emptyList())
     }
 }

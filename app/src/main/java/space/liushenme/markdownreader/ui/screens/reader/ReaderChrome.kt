@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -79,6 +80,9 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.importing.ImportedBookFormat
+import space.liushenme.markdownreader.markdown.CodeDefinition
+import space.liushenme.markdownreader.markdown.CodeHighlightTheme
+import space.liushenme.markdownreader.markdown.CodeOutline
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
 import space.liushenme.markdownreader.ui.components.MarkdownInlineHtmlText
 import space.liushenme.markdownreader.ui.components.iconTintForDeleteStrip
@@ -243,6 +247,62 @@ internal fun chapterEntryForTitleBar(
     }
     return pinned ?: currentChapterEntryForViewport(tocEntries, topChar, bottomChar)
 }
+
+/**
+ * VS Code-style sticky scroll for full-screen code documents.
+ *
+ * Every row is an original declaration line without its source line number. The extra start
+ * inset keeps text clear of the large curved corners used by some Xiaomi devices.
+ */
+@Composable
+internal fun ReaderCodeBreadcrumbBar(
+    outline: CodeOutline?,
+    lineState: IntState,
+    codeHighlightTheme: CodeHighlightTheme,
+    modifier: Modifier = Modifier,
+) {
+    val line = lineState.intValue
+    val definitions = remember(outline, line) {
+        outline?.pathAtLine(line).orEmpty()
+    }
+    if (definitions.isEmpty()) return
+
+    val palette = codeHighlightTheme.palette
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(Color(palette.headerBackground))
+            .windowInsetsPadding(
+                WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal),
+            ),
+    ) {
+        definitions.takeLast(MAX_STICKY_CODE_DEFINITIONS).forEach { definition ->
+            Text(
+                text = definition.text,
+                color = Color(palette.foreground),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        start = 44.dp + (definition.depth * 12).dp,
+                        end = 24.dp,
+                        top = 5.dp,
+                        bottom = 4.dp,
+                    ),
+            )
+        }
+        HorizontalDivider(
+            thickness = 1.dp,
+            color = Color(palette.divider),
+        )
+    }
+}
+
+private const val MAX_STICKY_CODE_DEFINITIONS = 3
 
 @Composable
 internal fun ReaderImmersiveChapterTitleBar(

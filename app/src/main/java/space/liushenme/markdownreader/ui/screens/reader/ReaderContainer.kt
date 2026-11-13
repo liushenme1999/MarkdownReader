@@ -119,7 +119,7 @@ internal fun ReaderContainer(
                     .fillMaxSize()
                     .background(pageSurfaceColor),
             ) {
-                if (immersive && !isPdf && !hideSystemBars) {
+                if (immersive && !isPdf && (codeBackgroundColor != null || !hideSystemBars)) {
                     ShelfStyleStatusBarBackdrop(
                         backgroundColor = chromeColor,
                         modifier = Modifier

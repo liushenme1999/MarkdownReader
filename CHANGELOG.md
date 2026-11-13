@@ -4,6 +4,19 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [1.2.6] - 2026-11-13
+
+### 新功能
+
+- Git 源码文件新增 VS Code 风格粘性面包屑，滚动进入类或函数时在顶部持续显示当前定义层级
+- 纯代码阅读页移除语言标签和复制按钮栏，为源码和定义层级提供完整阅读空间
+- 纯代码阅读页使用主题色铺满全屏，不再显示阅读纸底色、页面留白或代码块圆角边界
+
+### 优化
+
+- 粘性定义栏增加左侧安全间距，避免小米等大圆角屏幕遮挡代码定义
+- 大型源码文件改为仅绘制可见文本分块，移除位图缓存上传，显著降低连续滑动时的掉帧和空白带
+
 ## [1.2.5] - 2026-11-12
 
 ### 新功能
@@ -359,7 +372,8 @@
 - PDF 页面栅格化导入
 - GitHub Actions CI（Lint、Debug/Release 构建、单元测试）
 
-[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.5...HEAD
+[Unreleased]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.6...HEAD
+[1.2.6]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.5...v1.2.6
 [1.2.5]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.4...v1.2.5
 [1.2.4]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/liushenme1999/MarkdownReader/compare/v1.2.2...v1.2.3

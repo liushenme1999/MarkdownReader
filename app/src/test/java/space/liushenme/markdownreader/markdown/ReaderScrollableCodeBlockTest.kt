@@ -1,8 +1,14 @@
 package space.liushenme.markdownreader.markdown
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.drawable.GradientDrawable
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.text.style.ReplacementSpan
+import android.widget.TextView
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -14,23 +20,29 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import space.liushenme.markdownreader.ui.screens.reader.readerContentSignature
 import space.liushenme.markdownreader.ui.screens.reader.SafeReaderTextView
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ReaderScrollableCodeBlockTest {
 
     @Before
     fun setUp() {
         ReaderCodeBlockSettings.wrapEnabled = true
         ReaderCodeBlockSettings.viewportWidthPx = 0
+        ReaderCodeBlockSettings.viewportTopPx = 0
+        ReaderCodeBlockSettings.viewportHeightPx = 0
     }
 
     @After
     fun tearDown() {
         ReaderCodeBlockSettings.wrapEnabled = true
         ReaderCodeBlockSettings.viewportWidthPx = 0
+        ReaderCodeBlockSettings.viewportTopPx = 0
+        ReaderCodeBlockSettings.viewportHeightPx = 0
     }
 
     @Test
@@ -89,6 +101,294 @@ class ReaderScrollableCodeBlockTest {
         ReaderCodeBlockSettings.viewportWidthPx = 0
         span.prepareForTouch(paint, 240)
         assertTrue(span.canScrollHorizontally())
+    }
+
+    @Test
+    fun wrapOff_horizontalScrollBeyondOneTile_keepsEveryVisibleColumnPainted() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = false
+        ReaderCodeBlockSettings.viewportWidthPx = 240
+        val source = "MMMMMMMMMMMMMMMMMM".repeat(20)
+        val rendered = ReaderFullScreenCodeRenderer.render(
+            context = context,
+            content = source,
+            language = "text",
+            codeHighlightTheme = CodeHighlightTheme.VS_DARK_PLUS,
+        )
+        val span = rendered.getSpans(
+            0,
+            rendered.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+        val paint = Paint().apply {
+            textSize = 24f
+            isAntiAlias = true
+        }
+        span.prewarmLayout(paint, 240)
+        val ranges = ReaderFullScreenCodeRenderer.highlight(
+            span = span,
+            language = "text",
+            codeHighlightTheme = CodeHighlightTheme.VS_DARK_PLUS,
+        )
+        span.setSyntaxHighlightRanges(
+            ranges,
+            span.prepareStyledSyntaxLayout(paint, 240, ranges),
+        )
+        span.prepareForTouch(paint, 240)
+        assertTrue(span.scrollBy(180f))
+
+        val bitmap = Bitmap.createBitmap(240, 120, Bitmap.Config.ARGB_8888)
+        span.drawFullScreenByHost(
+            canvas = Canvas(bitmap),
+            x = 0f,
+            top = 0,
+            bottom = 120,
+            paint = paint,
+            viewportPx = 240,
+        )
+        val background = CodeHighlightTheme.VS_DARK_PLUS.palette.background
+        for (bucketStart in 0 until 240 step 20) {
+            var painted = 0
+            for (x in bucketStart until bucketStart + 20) {
+                for (y in 0 until 120) {
+                    if (bitmap.getPixel(x, y) != background) painted++
+                }
+            }
+            assertTrue(
+                "visible column bucket starting at $bucketStart should not be blank",
+                painted > 10,
+            )
+        }
+    }
+
+    @Test
+    fun wrappedFullScreenCode_chunksStartAndEndOnCompleteSourceLines() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = true
+        ReaderCodeBlockSettings.viewportWidthPx = 360
+        val source = buildString {
+            repeat(80) { index ->
+                appendLine(
+                    "    public int process$index(int input) { " +
+                        "return input + $index + anotherLargeExpression$index; }",
+                )
+            }
+            appendLine("}")
+        }.trimEnd()
+        val rendered = ReaderFullScreenCodeRenderer.render(
+            context = context,
+            content = source,
+            language = "java",
+            codeHighlightTheme = CodeHighlightTheme.VS_LIGHT_PLUS,
+        )
+        val span = rendered.getSpans(
+            0,
+            rendered.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+        val paint = Paint().apply { textSize = 42f }
+        span.prewarmLayout(paint, 360)
+        val ranges = ReaderFullScreenCodeRenderer.highlight(
+            span = span,
+            language = "java",
+            codeHighlightTheme = CodeHighlightTheme.VS_LIGHT_PLUS,
+        )
+        val styled = span.prepareStyledSyntaxLayout(paint, 360, ranges)
+
+        assertTrue("fixture must produce multiple chunks", styled.chunks.size > 1)
+        assertEquals(0, styled.chunks.first().firstLayoutLine)
+        styled.chunks.zipWithNext().forEach { (current, next) ->
+            assertEquals(
+                "chunks must cover the layout without a gap or overlap",
+                current.lastLayoutLine + 1,
+                next.firstLayoutLine,
+            )
+        }
+        styled.chunks.forEach { chunk ->
+            assertTrue(
+                "chunk must begin at a complete source line",
+                chunk.sourceStart == 0 || source[chunk.sourceStart - 1] == '\n',
+            )
+            val sourceEnd = if (chunk === styled.chunks.last()) {
+                source.length
+            } else {
+                styled.chunks[styled.chunks.indexOf(chunk) + 1].sourceStart
+            }
+            assertTrue(
+                "chunk must end at a complete source line boundary",
+                sourceEnd == source.length || source[sourceEnd - 1] == '\n',
+            )
+            assertEquals(
+                "chunk layout must cover exactly its mapped full-layout lines",
+                chunk.lastLayoutLine - chunk.firstLayoutLine + 1,
+                chunk.layout.lineCount,
+            )
+        }
+    }
+
+    @Test
+    fun fullScreenCode_scrollingAcrossChunks_keepsVisibleRowsPainted() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = true
+        ReaderCodeBlockSettings.viewportWidthPx = 360
+        val source = buildString {
+            appendLine("public final class LargeService {")
+            repeat(500) { index ->
+                appendLine("    public static final class Worker$index {")
+                appendLine("        public int process$index(int input) {")
+                appendLine("            return input + $index;")
+                appendLine("        }")
+                appendLine("    }")
+            }
+            appendLine("}")
+        }.trimEnd()
+        val rendered = ReaderFullScreenCodeRenderer.render(
+            context = context,
+            content = source,
+            language = "java",
+            codeHighlightTheme = CodeHighlightTheme.VS_LIGHT_PLUS,
+        )
+        val span = rendered.getSpans(
+            0,
+            rendered.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+        val paint = Paint().apply {
+            textSize = 24f
+            isAntiAlias = true
+        }
+        span.prewarmLayout(paint, 360)
+        val ranges = ReaderFullScreenCodeRenderer.highlight(
+            span = span,
+            language = "java",
+            codeHighlightTheme = CodeHighlightTheme.VS_LIGHT_PLUS,
+        )
+        val styled = span.prepareStyledSyntaxLayout(paint, 360, ranges)
+        span.setSyntaxHighlightRanges(ranges, styled)
+
+        val background = CodeHighlightTheme.VS_LIGHT_PLUS.palette.background
+        val width = 360
+        val height = 600
+        ReaderCodeBlockSettings.viewportHeightPx = height
+        listOf(0, 20_000, 60_000, 120_000).forEach { viewportTop ->
+            ReaderCodeBlockSettings.viewportTopPx = viewportTop
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            try {
+                val canvas = Canvas(bitmap)
+                canvas.translate(0f, -viewportTop.toFloat())
+                span.drawFullScreenByHost(
+                    canvas = canvas,
+                    x = 0f,
+                    top = 0,
+                    bottom = span.requiredHeightForTest(paint),
+                    paint = paint,
+                    viewportPx = width,
+                )
+                var painted = 0
+                for (x in 0 until width step 8) {
+                    for (y in 0 until height step 8) {
+                        if (bitmap.getPixel(x, y) != background) painted++
+                    }
+                }
+                assertTrue("viewportTop=$viewportTop should contain painted source", painted > 20)
+            } finally {
+                bitmap.recycle()
+            }
+        }
+    }
+
+    @Test
+    fun safeReaderTextView_scrolledFullScreenCode_paintsTheVisibleViewport() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = true
+        ReaderCodeBlockSettings.viewportWidthPx = 360
+        val source = buildString {
+            appendLine("public final class ScrolledLargeService {")
+            repeat(400) { index ->
+                appendLine("    public static final class Worker$index {")
+                appendLine("        public int process$index(int input) {")
+                appendLine("            return input + $index;")
+                appendLine("        }")
+                appendLine("    }")
+            }
+            appendLine("}")
+        }.trimEnd()
+        val rendered = ReaderFullScreenCodeRenderer.render(
+            context = context,
+            content = source,
+            language = "java",
+            codeHighlightTheme = CodeHighlightTheme.VS_DARK_PLUS,
+        )
+        val width = 360
+        val height = 600
+        val textView = ScrolledSafeReaderTextView(context).apply {
+            setText(rendered, TextView.BufferType.SPANNABLE)
+            textSize = 24f
+            setPadding(0, 0, 0, 0)
+            measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(
+                    width,
+                    android.view.View.MeasureSpec.EXACTLY,
+                ),
+                android.view.View.MeasureSpec.makeMeasureSpec(
+                    height,
+                    android.view.View.MeasureSpec.EXACTLY,
+                ),
+            )
+            layout(0, 0, width, height)
+            scrollTo(0, 24_000)
+        }
+        assertTrue("fixture must scroll through source", textView.scrollY > 0)
+
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        try {
+            bitmap.eraseColor(Color.MAGENTA)
+            textView.drawAtCurrentScrollForTest(Canvas(bitmap))
+            val background = CodeHighlightTheme.VS_DARK_PLUS.palette.background
+            var backgroundPixels = 0
+            var sourcePixels = 0
+            var sampledPixels = 0
+            for (x in 0 until width step 2) {
+                for (y in 0 until height step 2) {
+                    sampledPixels++
+                    if (bitmap.getPixel(x, y) == background) {
+                        backgroundPixels++
+                    } else if (bitmap.getPixel(x, y) != Color.MAGENTA) {
+                        sourcePixels++
+                    }
+                }
+            }
+
+            assertTrue(
+                "scrolled code should paint its themed surface, background=$backgroundPixels " +
+                    "of $sampledPixels sampled pixels",
+                backgroundPixels > sampledPixels * 0.6,
+            )
+            assertTrue(
+                "scrolled code should paint visible source glyphs, got $sourcePixels sampled pixels",
+                sourcePixels > 200,
+            )
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    /**
+     * Android delivers TextView.onDraw a canvas already translated by its scroll offset. Calling
+     * View.draw under Robolectric does not reproduce that contract, so mirror only the translation
+     * needed to exercise the host-drawn full-screen code clip.
+     */
+    private class ScrolledSafeReaderTextView(context: android.content.Context) :
+        SafeReaderTextView(context) {
+        fun drawAtCurrentScrollForTest(canvas: Canvas) {
+            val save = canvas.save()
+            try {
+                canvas.translate(-scrollX.toFloat(), -scrollY.toFloat())
+                onDraw(canvas)
+            } finally {
+                canvas.restoreToCount(save)
+            }
+        }
     }
 
     @Test
@@ -209,6 +509,91 @@ class ReaderScrollableCodeBlockTest {
     }
 
     @Test
+    fun codeDocument_hidesLanguageAndCopyHeaderWhileMarkdownKeepsIt() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = true
+        ReaderCodeBlockSettings.viewportWidthPx = 480
+        val markdown = "```python\nprint('hello')\n```"
+        val paint = Paint().apply { textSize = 40f }
+
+        val cardRendered = ReaderMarkwonFactory.create(context).toMarkdown(markdown)
+        val cardSpan = cardRendered.getSpans(
+            0,
+            cardRendered.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+        val documentRendered = ReaderMarkwonFactory.create(
+            context,
+            fullScreenCodeDocument = true,
+        ).toMarkdown(markdown)
+        val documentSpan = documentRendered.getSpans(
+            0,
+            documentRendered.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+
+        assertTrue(cardSpan.headerHeightPx(paint) > 0)
+        assertEquals(0, documentSpan.headerHeightPx(paint))
+        assertFalse(documentSpan.isOnCopyButton(0f, 0f))
+    }
+
+    @Test
+    fun fullScreenCodeDocument_mapsViewportYToSourceLineStart() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = true
+        ReaderCodeBlockSettings.viewportWidthPx = 480
+        val source = """
+            fun first() {
+                val a = 1
+            }
+            fun second() {
+                val b = 2
+            }
+        """.trimIndent()
+        val rendered = ReaderMarkwonFactory.create(
+            context,
+            fullScreenCodeDocument = true,
+        ).toMarkdown(ReaderCodeBlockMarkdown.wrap(source, "kotlin"))
+        val span = rendered.getSpans(
+            0,
+            rendered.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+        val paint = Paint().apply { textSize = 40f }
+        span.prepareForTouch(paint, 480)
+        span.getSize(paint, rendered, 0, 1, Paint.FontMetricsInt())
+
+        val targetLineStart = source.indexOf("fun second")
+        val targetLineTop = span.offsetTopInLine(targetLineStart, paint).toFloat()
+
+        assertEquals(
+            targetLineStart,
+            span.sourceOffsetAtLayoutY(
+                contentY = targetLineTop + 1f,
+                originTop = 0f,
+                paint = paint,
+            ),
+        )
+        assertEquals(
+            0,
+            span.sourceOffsetAtLayoutY(
+                contentY = -100f,
+                originTop = 0f,
+                paint = paint,
+            ),
+        )
+        val viewport = span.sourceViewportAtLayout(
+            contentTopY = targetLineTop + 1f,
+            contentBottomY = targetLineTop + 1000f,
+            originTop = 0f,
+            viewportPx = 480,
+            paint = paint,
+        )
+        assertEquals(targetLineStart, viewport?.top)
+        assertEquals(source.length, viewport?.bottom)
+    }
+
+    @Test
     fun fullScreenCodeDocument_measuredLineFitsAllCodeAtDefaultReaderLineSpacing() {
         val context = RuntimeEnvironment.getApplication()
         ReaderCodeBlockSettings.viewportWidthPx = 1000
@@ -255,6 +640,48 @@ class ReaderScrollableCodeBlockTest {
         assertTrue(
             "measured line=$measuredLineHeight, desired=$desiredHeight",
             measuredLineHeight >= desiredHeight,
+        )
+    }
+
+    @Test
+    fun fullScreenRenderer_bypassesMarkdownAndKeepsLightweightSyntaxRanges() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = true
+        ReaderCodeBlockSettings.viewportWidthPx = 480
+        val source = """
+            # not a heading
+            | not | a table |
+            <template>
+              <button class="primary">{{ label }}</button>
+            </template>
+            <script setup>
+            const fence = ```````
+            function greet(name) { return `hello ${'$'}{name}` }
+            </script>
+        """.trimIndent()
+
+        val rendered = ReaderFullScreenCodeRenderer.render(
+            context = context,
+            content = source,
+            language = "vue",
+            codeHighlightTheme = CodeHighlightTheme.VS_DARK_PLUS,
+        )
+        val span = rendered.getSpans(
+            0,
+            rendered.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+
+        assertEquals(1, rendered.length)
+        assertTrue(rendered is Spanned)
+        assertEquals(0, rendered.getSpans(0, rendered.length, ForegroundColorSpan::class.java).size)
+        assertTrue(span.fullScreenCodeDocument)
+        assertEquals("Vue", span.languageLabel)
+        assertEquals(source, span.rawCode)
+        assertEquals(CodeHighlightTheme.VS_DARK_PLUS, span.codeHighlightTheme)
+        assertEquals(
+            CodeHighlightTheme.VS_DARK_PLUS.palette.background,
+            (span.background as GradientDrawable).color?.defaultColor,
         )
     }
 

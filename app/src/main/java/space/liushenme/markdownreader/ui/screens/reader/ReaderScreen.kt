@@ -76,6 +76,8 @@ import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.importing.HtmlDocumentSupport
 import space.liushenme.markdownreader.importing.ParsedBookStorage
 import space.liushenme.markdownreader.importing.PdfReaderContent
+import space.liushenme.markdownreader.markdown.CodeOutline
+import space.liushenme.markdownreader.markdown.CodeOutlineParser
 import space.liushenme.markdownreader.markdown.CodeHighlightTheme
 import space.liushenme.markdownreader.markdown.MarkdownLinkDispatcher
 import space.liushenme.markdownreader.model.HighlightStyle
@@ -100,9 +102,11 @@ import io.noties.markwon.image.file.FileSchemeHandler
 import io.noties.markwon.inlineparser.MarkwonInlineParserPlugin
 import io.noties.markwon.linkify.LinkifyPlugin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -171,6 +175,18 @@ fun ReaderScreen(
     val readerContent = remember(content, isPdfBook) {
         if (isPdfBook) PdfReaderContent.sanitizeStoredBody(content) else content
     }
+    var codeOutline by remember(codeBlockLanguage) { mutableStateOf<CodeOutline?>(null) }
+    LaunchedEffect(readerContent, isCodeBook, codeBlockLanguage) {
+        codeOutline = if (isCodeBook) {
+            codeOutline = null
+            withContext(Dispatchers.Default) {
+                CodeOutlineParser.parse(readerContent, codeBlockLanguage)
+            }
+        } else {
+            null
+        }
+    }
+    val codeBreadcrumbLine = remember(bookId, readerContent) { mutableIntStateOf(1) }
     val pdfPages = remember(readerContent, isPdfBook, bookId) {
         if (!isPdfBook) {
             emptyList()
@@ -794,6 +810,36 @@ fun ReaderScreen(
         return displayWindowStartChar to displayWindowEndChar
     }
 
+    // These timestamps are read and written only by scroll callbacks. Keeping them out of
+    // Compose snapshot state avoids a snapshot write for every touch/scroll event.
+    val lastCodeBreadcrumbRefreshMs = remember(bookId, readerContent) { longArrayOf(0L) }
+    fun refreshCodeBreadcrumbLine(
+        force: Boolean = false,
+        knownGlobalSourceOffset: Int? = null,
+    ) {
+        val outline = codeOutline ?: return
+        val now = System.currentTimeMillis()
+        if (!force && now - lastCodeBreadcrumbRefreshMs[0] < 32L) return
+        lastCodeBreadcrumbRefreshMs[0] = now
+        val globalSourceOffset = (knownGlobalSourceOffset ?: run {
+            val windowStart = currentDisplayWindow().first
+            val localSourceOffset = if (pageTurnMode == ReaderPageTurnMode.VerticalScroll) {
+                (readerTextView.value as? SafeReaderTextView)
+                    ?.fullScreenCodeViewportSourceOffsets()
+                    ?.top
+                    ?: 0
+            } else {
+                0
+            }
+            windowStart + localSourceOffset
+        })
+            .coerceIn(0, (readerContent.length - 1).coerceAtLeast(0))
+        val line = outline.lineAtOffset(globalSourceOffset)
+        if (line != codeBreadcrumbLine.intValue) {
+            codeBreadcrumbLine.intValue = line
+        }
+    }
+
     fun currentChapterEntryNow(): MarkdownTocEntry? {
         if (isPdfBook || tocEntries.isEmpty()) return null
         val top = currentTopGlobalChar() ?: return null
@@ -836,12 +882,24 @@ fun ReaderScreen(
     }
 
     fun publishVisibleReadingProgress() {
-        val estimated = currentTopGlobalChar() ?: return
+        val codeViewport = if (isCodeBook && pageTurnMode == ReaderPageTurnMode.VerticalScroll) {
+            (readerTextView.value as? SafeReaderTextView)
+                ?.fullScreenCodeViewportSourceOffsets()
+        } else {
+            null
+        }
+        val estimated = codeViewport?.let {
+            (displayWindowStartChar + it.top).coerceIn(0, readerContent.length)
+        } ?: currentTopGlobalChar() ?: return
+        refreshCodeBreadcrumbLine(knownGlobalSourceOffset = estimated)
+        val bottom = codeViewport?.let {
+            (displayWindowStartChar + it.bottom).coerceIn(estimated, readerContent.length)
+        } ?: currentBottomGlobalChar()
         viewModel.updateVisibleReadingProgress(
             estimated,
             documentReachedEnd(),
-            currentBottomGlobalChar(),
-            currentChapterEntryNow()?.sourceOffset,
+            bottom,
+            if (isCodeBook) null else currentChapterEntryNow()?.sourceOffset,
         )
     }
 
@@ -928,7 +986,11 @@ fun ReaderScreen(
 
     LaunchedEffect(pagerState.currentPage, pageTurnMode, content, isPdfBook) {
         if (isPdfBook || pageTurnMode == ReaderPageTurnMode.VerticalScroll) return@LaunchedEffect
-        readerTextView.value = pageTextViews[pagerState.currentPage]
+        val tv = pageTextViews[pagerState.currentPage]
+        readerTextView.value = tv
+        if (isCodeBook) {
+            tv?.post { refreshCodeBreadcrumbLine(force = true) }
+        }
     }
 
     LaunchedEffect(pageTurnMode, pageSpecs, pagerState, totalChars) {
@@ -949,10 +1011,11 @@ fun ReaderScreen(
     val hideChromeScrollThresholdPx = remember(density) {
         with(density) { ReaderHideChromeScrollThreshold.roundToPx() }
     }
-    var scrollAccumForHideChrome by remember { mutableIntStateOf(0) }
-    var lastScrollProgressSaveMs by remember { mutableLongStateOf(0L) }
+    val scrollAccumForHideChrome = remember { intArrayOf(0) }
+    val lastScrollProgressSaveMs = remember { longArrayOf(0L) }
+    val lastCodeViewportPublishMs = remember { longArrayOf(0L) }
     /** 最近一次滚动保存的全书字符锚点；退出时 TextView 不可用则作 fallback。 */
-    var lastScrollTopGlobalChar by remember(readerContent) { mutableIntStateOf(-1) }
+    val lastScrollTopGlobalChar = remember(readerContent) { intArrayOf(-1) }
     /** 惰性扩窗防抖：连续滑动时合并为一次，避免边滑边整段重排 Markwon。 */
     var expandWindowDownToken by remember { mutableIntStateOf(0) }
     var expandWindowUpToken by remember { mutableIntStateOf(0) }
@@ -1006,13 +1069,14 @@ fun ReaderScreen(
         displayWindowEndChar,
         coverUntilPositionRestore,
         tocEntries,
+        codeOutline,
     ) {
         if (isPdfBook || coverUntilPositionRestore) return@LaunchedEffect
         val tv = readerTextView.value ?: return@LaunchedEffect
         repeat(10) {
             if (tv.layout != null && !tv.text.isNullOrEmpty()) {
                 val top = currentTopGlobalChar()
-                if (top != null) lastScrollTopGlobalChar = top
+                if (top != null) lastScrollTopGlobalChar[0] = top
                 publishVisibleReadingProgress()
                 return@LaunchedEffect
             }
@@ -1020,13 +1084,28 @@ fun ReaderScreen(
         }
         if (tv.layout != null) {
             val top = currentTopGlobalChar()
-            if (top != null) lastScrollTopGlobalChar = top
+            if (top != null) lastScrollTopGlobalChar[0] = top
             publishVisibleReadingProgress()
         }
     }
 
+    LaunchedEffect(
+        isCodeBook,
+        codeOutline,
+        readerContent,
+        readerLoadEpoch,
+        coverUntilPositionRestore,
+        readerTextView.value,
+    ) {
+        if (!isCodeBook || codeOutline == null || coverUntilPositionRestore) {
+            return@LaunchedEffect
+        }
+        val tv = readerTextView.value ?: return@LaunchedEffect
+        tv.post { refreshCodeBreadcrumbLine(force = true) }
+    }
+
     LaunchedEffect(showTopBar) {
-        scrollAccumForHideChrome = 0
+        scrollAccumForHideChrome[0] = 0
     }
 
     BackHandler(enabled = immersiveReading && showTopBar) {
@@ -1067,7 +1146,7 @@ fun ReaderScreen(
                 targetChar,
                 readerContent.length,
             )
-            lastScrollTopGlobalChar = targetChar
+            lastScrollTopGlobalChar[0] = targetChar
             return@LaunchedEffect
         }
         if (pageTurnMode != ReaderPageTurnMode.VerticalScroll) {
@@ -1101,7 +1180,7 @@ fun ReaderScreen(
             highlightId = null,
         )
         queueScrollRestore(targetChar)
-        lastScrollTopGlobalChar = targetChar
+        lastScrollTopGlobalChar[0] = targetChar
     }
 
     // 向下扩窗：与向上扩窗相同，按视口顶部字符锚点恢复，并等待 Markdown 渲染完成。
@@ -1549,7 +1628,7 @@ fun ReaderScreen(
             tv?.let { previewPlainTextFromTextViewTop(it) }
         }
         val topChar = currentTopGlobalChar()
-            ?: lastScrollTopGlobalChar.takeIf { it >= 0 }
+            ?: lastScrollTopGlobalChar[0].takeIf { it >= 0 }
         viewModel.dispatch(ReaderEvent.PersistVisibleProgress(topChar, preview))
     }
 
@@ -1666,7 +1745,7 @@ fun ReaderScreen(
                             htmlProgressSaveMs = now
                             val progressChar = (fraction * (readerContent.length - 1).coerceAtLeast(0))
                                 .roundToInt()
-                            lastScrollTopGlobalChar = progressChar
+                            lastScrollTopGlobalChar[0] = progressChar
                             viewModel.updateReadingProgressAtChar(
                                 progressChar,
                                 reachedEnd = fraction >= 0.999f,
@@ -1679,8 +1758,8 @@ fun ReaderScreen(
                         // 长按选区走系统复制/全选菜单，不在此弹出划线顶栏。
                         val onReaderVerticalScroll: (Int) -> Unit = { deltaPx ->
                             if (immersiveReading && showTopBar) {
-                                scrollAccumForHideChrome += deltaPx
-                                if (scrollAccumForHideChrome >= hideChromeScrollThresholdPx) {
+                                scrollAccumForHideChrome[0] += deltaPx
+                                if (scrollAccumForHideChrome[0] >= hideChromeScrollThresholdPx) {
                                     showTopBar = false
                                 }
                             }
@@ -1734,6 +1813,13 @@ fun ReaderScreen(
                                     reserveStatusBarInset = !hideSystemBarsPref,
                                 )
                             }
+                            if (isCodeBook) {
+                                ReaderCodeBreadcrumbBar(
+                                    outline = codeOutline,
+                                    lineState = codeBreadcrumbLine,
+                                    codeHighlightTheme = codeHighlightTheme,
+                                )
+                            }
                             key(bookId, if (isPdfBook) "pdf-continuous" else pageTurnMode) {
                                 Box(
                                     modifier = Modifier
@@ -1757,11 +1843,11 @@ fun ReaderScreen(
                                                     anchor.fractionInPage,
                                                     readerContent.length,
                                                 )
-                                                lastScrollTopGlobalChar = estimated
+                                                lastScrollTopGlobalChar[0] = estimated
                                                 viewModel.updateVisibleReadingProgress(estimated, atEnd)
                                                 val now = System.currentTimeMillis()
-                                                if (now - lastScrollProgressSaveMs >= 200L) {
-                                                    lastScrollProgressSaveMs = now
+                                                if (now - lastScrollProgressSaveMs[0] >= 200L) {
+                                                    lastScrollProgressSaveMs[0] = now
                                                     viewModel.updateReadingProgressAtChar(
                                                         estimated,
                                                         null,
@@ -1833,21 +1919,66 @@ fun ReaderScreen(
                                                     !windowExpandInFlight &&
                                                     readerTv?.shouldSuppressReaderScrollSideEffects() != true
                                                 ) {
-                                                    val estimated = currentTopGlobalChar()
-                                                    if (estimated != null) {
-                                                        lastScrollTopGlobalChar = estimated
-                                                        val atEnd = documentReachedEnd()
-                                                        viewModel.updateVisibleReadingProgress(
-                                                            estimated,
-                                                            atEnd,
-                                                            currentBottomGlobalChar(),
-                                                            currentChapterEntryNow()?.sourceOffset,
+                                                    val now = System.currentTimeMillis()
+                                                    val atEnd = documentReachedEnd()
+                                                    val publishViewport = !isCodeBook ||
+                                                        atEnd ||
+                                                        now - lastCodeViewportPublishMs[0] >= 64L
+                                                    val refreshBreadcrumb = codeOutline != null &&
+                                                        now - lastCodeBreadcrumbRefreshMs[0] >= 32L
+                                                    val saveProgress =
+                                                        readerTv?.allowReaderScrollSideEffects == true &&
+                                                            now - lastScrollProgressSaveMs[0] >= 200L
+                                                    // A scroll event often has no consumer due to the
+                                                    // 32/64/200 ms gates. Resolve the expensive code
+                                                    // viewport once, and only when one of them needs it.
+                                                    val needsVisibleChar =
+                                                        publishViewport || refreshBreadcrumb || saveProgress
+                                                    val codeViewport = if (
+                                                        needsVisibleChar &&
+                                                        isCodeBook &&
+                                                        pageTurnMode == ReaderPageTurnMode.VerticalScroll
+                                                    ) {
+                                                        readerTv?.fullScreenCodeViewportSourceOffsets()
+                                                    } else {
+                                                        null
+                                                    }
+                                                    val codeTop = codeViewport?.let {
+                                                        (displayWindowStartChar + it.top)
+                                                            .coerceIn(0, readerContent.length)
+                                                    }
+                                                    if (refreshBreadcrumb) {
+                                                        refreshCodeBreadcrumbLine(
+                                                            knownGlobalSourceOffset = codeTop,
                                                         )
-                                                        val now = System.currentTimeMillis()
-                                                        if (readerTv?.allowReaderScrollSideEffects == true &&
-                                                            now - lastScrollProgressSaveMs >= 200L
-                                                        ) {
-                                                            lastScrollProgressSaveMs = now
+                                                    }
+                                                    val estimated = codeTop ?: if (needsVisibleChar) {
+                                                        currentTopGlobalChar()
+                                                    } else {
+                                                        null
+                                                    }
+                                                    if (estimated != null) {
+                                                        if (publishViewport) {
+                                                            lastScrollTopGlobalChar[0] = estimated
+                                                            lastCodeViewportPublishMs[0] = now
+                                                            val bottom = codeViewport?.let {
+                                                                (displayWindowStartChar + it.bottom)
+                                                                    .coerceIn(estimated, readerContent.length)
+                                                            } ?: currentBottomGlobalChar()
+                                                            viewModel.updateVisibleReadingProgress(
+                                                                estimated,
+                                                                atEnd,
+                                                                bottom,
+                                                                if (isCodeBook) {
+                                                                    null
+                                                                } else {
+                                                                    currentChapterEntryNow()?.sourceOffset
+                                                                },
+                                                            )
+                                                        }
+                                                        if (saveProgress) {
+                                                            lastScrollTopGlobalChar[0] = estimated
+                                                            lastScrollProgressSaveMs[0] = now
                                                             val preview = if (isPdfBook) {
                                                                 null
                                                             } else {
@@ -2020,11 +2151,11 @@ fun ReaderScreen(
                 navigationPlan.fractionInPage,
             )
             coverUntilPositionRestore = true
-            lastScrollTopGlobalChar = navigationPlan.progressChar
+            lastScrollTopGlobalChar[0] = navigationPlan.progressChar
             viewModel.updateReadingProgressAtChar(
-                lastScrollTopGlobalChar,
+                lastScrollTopGlobalChar[0],
                 null,
-                reachedEndForChar(lastScrollTopGlobalChar),
+                reachedEndForChar(lastScrollTopGlobalChar[0]),
             )
             return
         }
@@ -2314,7 +2445,7 @@ fun ReaderScreen(
                     )
                     coverUntilPositionRestore = true
                     val pos = navigationPlan.progressChar
-                    lastScrollTopGlobalChar = pos
+                    lastScrollTopGlobalChar[0] = pos
                     viewModel.updateReadingProgressAtChar(pos, reachedEnd = reachedEndForChar(pos))
                 } else if (navigationPlan is ReaderNavigationPlan.Paged) {
                     jumpToGlobalCharInPager(

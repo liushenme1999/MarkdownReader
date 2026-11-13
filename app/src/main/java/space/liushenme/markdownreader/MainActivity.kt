@@ -46,6 +46,7 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
@@ -99,6 +100,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Establish edge-to-edge before Compose adds its content view. On
+        // HyperOS, toggling this after the AppCompat content hierarchy has
+        // measured leaves the status-bar inset as a persistent white band.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         pendingOpenUri = IncomingFileIntent.extractOpenableUri(intent)
         setContent {
             val themeMode by appSettingsViewModel.appThemeMode.collectAsStateWithLifecycle()

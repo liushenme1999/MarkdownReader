@@ -8,7 +8,7 @@
 | **包名** | `space.liushenme.markdownreader` |
 | **最低系统** | Android 7.0 (API 24) |
 | **目标 SDK** | 35 |
-| **当前版本** | 1.2.5 (versionCode 27) |
+| **当前版本** | 1.2.6 (versionCode 28) |
 | **仓库** | [github.com/liukejun1999/MarkdownReader](https://github.com/liushenme1999/MarkdownReader) |
 
 ## 安装包下载
@@ -17,7 +17,7 @@
 
 | 版本 | 下载 | 大小约 |
 |------|------|--------|
-| **1.2.5** | [MD._release_1.2.5.apk](https://github.com/liushenme1999/MarkdownReader/releases/download/v1.2.5/MD._release_1.2.5.apk) | 8.3 MB |
+| **1.2.6** | [MD._release_1.2.6.apk](https://github.com/liushenme1999/MarkdownReader/releases/download/v1.2.6/MD._release_1.2.6.apk) | 8.3 MB |
 
 安装说明：
 
@@ -49,6 +49,7 @@
 - 字体大小、页边距、行距调节（DataStore 持久化）
 - **PDF 连续阅读**：页内双指缩放 / 拖动，平移不超出纸张；大文件导入时书架显示进度，完成后再打开
 - **代码块自动换行**（默认开启）；关闭后超宽代码可横向滑动，并显示语言标签与复制按钮
+- Git 源码文件使用 VS Code 风格粘性面包屑，滚动到类/函数内部时持续显示当前定义层级
 - 阅读页顶栏随进度显示当前章节标题
 - 目录（TOC）跳转；导入时优先使用结构化目录
 - 书签、多色高亮、文本选择与笔记

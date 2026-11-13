@@ -17,6 +17,7 @@ import android.graphics.Rect
 import android.graphics.drawable.BitmapDrawable
 import android.os.Build
 import android.os.SystemClock
+import android.text.Layout
 import android.view.ActionMode
 import android.view.HapticFeedbackConstants
 import android.view.Menu
@@ -107,11 +108,12 @@ import space.liushenme.markdownreader.markdown.MarkdownAnchorIndex
 import space.liushenme.markdownreader.markdown.ReaderMediaCache
 import space.liushenme.markdownreader.markdown.PreparedMarkdown
 import space.liushenme.markdownreader.markdown.ReaderCodeBlockSettings
-import space.liushenme.markdownreader.markdown.ReaderCodeBlockMarkdown
+import space.liushenme.markdownreader.markdown.ReaderFullScreenCodeRenderer
 import space.liushenme.markdownreader.markdown.ReaderMarkwonFactory
 import space.liushenme.markdownreader.markdown.ReaderScrollableCodeBlockSpan
 import space.liushenme.markdownreader.markdown.CodeBlockHighlightRange
 import space.liushenme.markdownreader.markdown.CodeHighlightTheme
+import space.liushenme.markdownreader.markdown.CodeSourceViewport
 import space.liushenme.markdownreader.markdown.ReaderTableSpacing
 import space.liushenme.markdownreader.ui.screens.reader.anchor.sourceSpanForRenderedQuote
 import ru.noties.jlatexmath.JLatexMathDrawable
@@ -347,30 +349,128 @@ internal fun applyMarkdownContent(
     (textView as? SafeReaderTextView)?.clearOpenPositionReadySignal()
     // prepareMarkdown / rewriteCachedUrls / toMarkdown 全部进后台，避免进页主线程卡顿。
     val appContext = textView.context.applicationContext
+    val measuredViewport = (textView.width - textView.paddingLeft - textView.paddingRight)
+        .takeIf { it > 0 }
+        ?: appContext.resources.displayMetrics.widthPixels
     val renderT0 = android.os.SystemClock.uptimeMillis()
     readerOpenDbg(
         "markwonQueue contentLen=${content.length} syntax=${codeHighlightTheme.stableId} " +
             "sigTail=${renderSig.takeLast(48)}",
     )
+    // Snapshot the exact TextView paint on the main thread. The replacement span builds its large
+    // inner StaticLayout with this paint, then reuses that layout after setText.
+    val codeLayoutPaint = if (codeBlockLanguage != null) Paint(textView.paint) else null
     readerMarkwonRenderExecutor.execute {
-        val tPrep0 = android.os.SystemClock.uptimeMillis()
-        val prepared: PreparedMarkdown
-        val markdown: String
-        if (codeBlockLanguage == null) {
-            prepared = runCatching { ReaderMarkwonFactory.prepareMarkdown(content, appContext) }
-                .getOrElse { PreparedMarkdown(text = content, anchorIndex = MarkdownAnchorIndex()) }
-            markdown = ReaderMediaCache.rewriteCachedReferences(appContext, prepared.text)
-        } else {
-            // 代码正文保持逐字不变，仅给当前显示窗口加围栏，避免污染源码偏移和分页。
-            prepared = PreparedMarkdown(text = content, anchorIndex = MarkdownAnchorIndex())
-            markdown = ReaderCodeBlockMarkdown.wrap(content, codeBlockLanguage)
+        ReaderCodeBlockSettings.wrapEnabled = codeBlockWrap
+        if (measuredViewport > 0) {
+            ReaderCodeBlockSettings.viewportWidthPx = measuredViewport
         }
+
+        if (codeBlockLanguage != null) {
+            val renderCodeT0 = android.os.SystemClock.uptimeMillis()
+            val prepared = runCatching {
+                ReaderFullScreenCodeRenderer.prepare(
+                    context = appContext,
+                    content = content,
+                    language = codeBlockLanguage,
+                    codeHighlightTheme = codeHighlightTheme,
+                    layoutPaint = codeLayoutPaint,
+                    viewportWidthPx = measuredViewport,
+                )
+            }.getOrElse {
+                readerOpenDbg("fullScreenCodePrepare failed ${it.javaClass.simpleName}")
+                null
+            }
+            val prepareCodeMs = android.os.SystemClock.uptimeMillis() - renderCodeT0
+            readerOpenDbg(
+                "fullScreenCodePrepare total=${prepareCodeMs}ms sourceLen=${content.length}",
+            )
+            val rendered = prepared?.text ?: android.text.SpannableString(content)
+            textView.post {
+                if (textView.getTag(TAG_READER_RENDER_SIG) != renderSig) {
+                    readerOpenDbg("fullScreenCodePost skip staleSig")
+                    return@post
+                }
+                textView.setTag(R.id.markdown_anchor_index, MarkdownAnchorIndex())
+                refreshStashedExpandAnchorBeforeContentSwap(textView)
+                val tSet0 = android.os.SystemClock.uptimeMillis()
+                textView.setText(rendered, TextView.BufferType.SPANNABLE)
+                readerOpenDbg("fullScreenCodeSetText +${android.os.SystemClock.uptimeMillis() - tSet0}ms")
+                finishMarkdownRender()
+                readerOpenDbg(
+                    "fullScreenCodeDone wall=${android.os.SystemClock.uptimeMillis() - renderT0}ms",
+                )
+            }
+            if (prepared != null) {
+                // Publish the plain source first. Regex highlighting then updates only colors on
+                // the already laid-out span, keeping a large file interactive during this pass.
+                val highlightT0 = android.os.SystemClock.uptimeMillis()
+                val ranges = runCatching {
+                    ReaderFullScreenCodeRenderer.highlight(
+                        span = prepared.span,
+                        language = codeBlockLanguage,
+                        codeHighlightTheme = codeHighlightTheme,
+                    )
+                }.getOrElse {
+                    readerOpenDbg("fullScreenCodeHighlight failed ${it.javaClass.simpleName}")
+                    emptyList()
+                }
+                readerOpenDbg(
+                    "fullScreenCodeHighlight total=${android.os.SystemClock.uptimeMillis() - highlightT0}ms " +
+                        "ranges=${ranges.size}",
+                )
+                val styledLayoutT0 = android.os.SystemClock.uptimeMillis()
+                val styledLayout = runCatching {
+                    codeLayoutPaint?.let { layoutPaint ->
+                        prepared.span.prepareStyledSyntaxLayout(
+                            basePaint = layoutPaint,
+                            viewportPx = measuredViewport,
+                            ranges = ranges,
+                        )
+                    }
+                }.getOrElse {
+                    readerOpenDbg("fullScreenCodeStyledLayout failed ${it.javaClass.simpleName}")
+                    null
+                }
+                readerOpenDbg(
+                    "fullScreenCodeStyledLayout total=" +
+                        "${android.os.SystemClock.uptimeMillis() - styledLayoutT0}ms " +
+                        "spans=${ranges.size}",
+                )
+                textView.post {
+                    if (textView.getTag(TAG_READER_RENDER_SIG) != renderSig) {
+                        readerOpenDbg("fullScreenCodeHighlightPost skip staleSig")
+                        return@post
+                    }
+                    val spans = textView.text as? Spanned
+                    val attached = spans?.getSpans(
+                        0,
+                        spans.length,
+                        ReaderScrollableCodeBlockSpan::class.java,
+                    )?.contains(prepared.span) == true
+                    if (!attached) {
+                        readerOpenDbg("fullScreenCodeHighlightPost skip detached")
+                        return@post
+                    }
+                    prepared.span.setSyntaxHighlightRanges(ranges, styledLayout)
+                    (textView as? SafeReaderTextView)
+                        ?.redrawFullScreenCodeSpan(prepared.span)
+                        ?: textView.invalidate()
+                    readerOpenDbg(
+                        "fullScreenCodeHighlightApplied wall=" +
+                            "${android.os.SystemClock.uptimeMillis() - renderT0}ms",
+                    )
+                }
+            }
+            return@execute
+        }
+
+        val tPrep0 = android.os.SystemClock.uptimeMillis()
+        val prepared = runCatching { ReaderMarkwonFactory.prepareMarkdown(content, appContext) }
+            .getOrElse { PreparedMarkdown(text = content, anchorIndex = MarkdownAnchorIndex()) }
+        val markdown = ReaderMediaCache.rewriteCachedReferences(appContext, prepared.text)
         val tPrep1 = android.os.SystemClock.uptimeMillis()
         val rendered: CharSequence = synchronized(markwonRenderLock) {
-            ReaderCodeBlockSettings.wrapEnabled = codeBlockWrap
-            val viewport = (textView.width - textView.paddingLeft - textView.paddingRight)
-                .coerceAtLeast(0)
-            if (viewport > 0) ReaderCodeBlockSettings.viewportWidthPx = viewport
             runCatching { markwon.toMarkdown(markdown) }.getOrNull() ?: content
         }
         val tMd1 = android.os.SystemClock.uptimeMillis()
@@ -459,6 +559,7 @@ internal fun MarkdownReaderView(
     val touchState = remember { ReaderTouchState() }
     val slop = ViewConfiguration.get(context).scaledTouchSlop
     val latestOpenPositionReady by rememberUpdatedState(onOpenPositionReady)
+    val latestOnScroll by rememberUpdatedState(onScroll)
     val themeSignature = theme.contentSignature()
 
     Box(modifier = modifier) {
@@ -530,7 +631,7 @@ internal fun MarkdownReaderView(
                     touchState = touchState,
                     slop = slop,
                     allowVerticalScroll = allowVerticalScroll,
-                    onScroll = onScroll,
+                    onScroll = { latestOnScroll(it) },
                     onReadingVerticalScroll = onReadingVerticalScroll,
                     onSwipeRightBookmark = onSwipeRightBookmark,
                     onSwipeDownBookmark = onSwipeDownBookmark,
@@ -660,7 +761,7 @@ internal fun MarkdownReaderView(
                 touchState = touchState,
                 slop = slop,
                 allowVerticalScroll = allowVerticalScroll,
-                onScroll = onScroll,
+                onScroll = { latestOnScroll(it) },
                 onReadingVerticalScroll = onReadingVerticalScroll,
                 onSwipeRightBookmark = onSwipeRightBookmark,
                 onSwipeDownBookmark = onSwipeDownBookmark,
@@ -725,13 +826,28 @@ internal fun bindReaderGesturesAndScroll(
     onCenterTap: () -> Unit,
     onDiagramTap: (android.graphics.Bitmap) -> Unit = {},
 ) {
+    var lastFullScreenCodeScrollMs = Long.MIN_VALUE
+    fun notifyReaderScroll(tv: TextView, force: Boolean = false) {
+        val safe = tv as? SafeReaderTextView
+        if (safe?.isFullScreenCodeDocument() == true) {
+            val now = android.os.SystemClock.uptimeMillis()
+            if (!force && now - lastFullScreenCodeScrollMs < 32L) return
+            lastFullScreenCodeScrollMs = now
+            // ReaderScreen resolves the source viewport from the host span. Its float argument is
+            // the normal Markdown top-character progress and is unused for code documents.
+            onScroll(0f)
+        } else {
+            onScroll(localCharProgressAtScrollTop(tv))
+        }
+    }
+
     textView.setOnScrollChangeListener { v, _, scrollY, _, oldScrollY ->
         if (!allowVerticalScroll) return@setOnScrollChangeListener
         if (scrollY != oldScrollY) {
             onReadingVerticalScroll(kotlin.math.abs(scrollY - oldScrollY))
         }
         val tv = v as? TextView ?: return@setOnScrollChangeListener
-        onScroll(localCharProgressAtScrollTop(tv))
+        notifyReaderScroll(tv)
     }
 
     (textView as? SafeReaderTextView)?.onReaderCenterTap = onCenterTap
@@ -791,12 +907,12 @@ internal fun bindReaderGesturesAndScroll(
                         // 用户真正开始拖动即放弃目录置顶意图（程序触发的 scrollTo 不经此路径，故安全）。
                         clearReaderScrollToTop(tv)
                         // 纵向拖动一开始就走 onScroll：清除跳转补滚，并在顶部/底部无 scrollY 变化时仍能扩窗。
-                        onScroll(localCharProgressAtScrollTop(tv))
+                        notifyReaderScroll(tv)
                     } else if (tv.isUserVerticalScrollDrag()) {
                         val atTopPullingPrev = tv.scrollY <= 0 && dy > slop
                         val atBottomPullingNext = isReaderTextViewAtScrollBottom(tv) && dy < -slop
                         if (atTopPullingPrev || atBottomPullingNext) {
-                            onScroll(localCharProgressAtScrollTop(tv))
+                            notifyReaderScroll(tv)
                         }
                     }
                 }
@@ -829,7 +945,7 @@ internal fun bindReaderGesturesAndScroll(
                 val wasVerticalDrag = (tv as? SafeReaderTextView)?.isUserVerticalScrollDrag() == true
                 if (allowVerticalScroll && wasVerticalDrag) {
                     clearPendingScrollCharOffset(tv)
-                    onScroll(localCharProgressAtScrollTop(tv))
+                    if (tv != null) notifyReaderScroll(tv, force = true)
                 }
                 val blockBookmarkSwipe = touchState.blockBookmarkSwipeGesture ||
                     touchState.codeScrolling ||
@@ -1020,6 +1136,21 @@ internal open class SafeReaderTextView(context: Context) : TextView(context) {
     var onReaderCenterTap: (() -> Unit)? = null
     /** 同一轮 Markdown 渲染只通知一次揭罩，避免 onLayout 重复 bump restore。 */
     private var openPositionSignaledForRender: Any? = null
+    /**
+     * 全屏代码的 ReplacementSpan 只画当前可视行。TextView 纵向滚动时，硬件渲染可能只平移
+     * 已缓存的行显示列表而不重新调用 span.draw，结果首屏之后出现空白；因此滚动中必须显式
+     * 请求重绘。这里只在正文对象变化时扫描一次 span，避免每个滚动帧做 SpanSet 查询。
+     */
+    private var codeViewportStateText: CharSequence? = null
+    private var hasFullScreenCodeDocument = false
+    private var fullScreenCodeSpan: ReaderScrollableCodeBlockSpan? = null
+    private var cachedCodeViewportSpan: ReaderScrollableCodeBlockSpan? = null
+    private var cachedCodeViewportLayout: Layout? = null
+    private var cachedCodeViewportScrollY = Int.MIN_VALUE
+    private var cachedCodeViewportHeight = -1
+    private var cachedCodeViewportWidth = -1
+    private var cachedCodeViewportOriginY = Float.NaN
+    private var cachedCodeViewport: CodeSourceViewport? = null
 
     fun registerDraftHighlight(highlightId: Long) {
         if (highlightId < 0L) activeDraftHighlightIds += highlightId
@@ -1060,15 +1191,88 @@ internal open class SafeReaderTextView(context: Context) : TextView(context) {
 
     override fun onDraw(canvas: Canvas) {
         ReaderTableSpacing.lineSpacingMultiplier = lineSpacingMultiplier
+        publishCodeBlockViewport()
+        refreshCodeViewportRedrawState()
         // 纯色底画在文字下；下划线画在文字上。不用 LineBackgroundSpan，避免 ParagraphStyle 卡死布局。
         drawReaderHighlightDecorations(this, canvas, underText = true)
         drawReaderSelectionBackground(canvas)
         drawReaderTableSelection(canvas)
-        super.onDraw(canvas)
+        // A full-screen source document is one object-replacement character. Its host-drawn
+        // implementation already paints every visible row, so TextView's cached text line would
+        // only add an empty replacement glyph pass on each scroll frame.
+        val drewFullScreenCode = if (hasFullScreenCodeDocument) {
+            // Some MIUI hardware-rendered interop layers do not clip a host-drawn
+            // ReplacementSpan to the AndroidView bounds. Keep the full-screen code strictly
+            // inside its own TextView so a sticky definition bar above it cannot be overpainted.
+            val save = canvas.save()
+            try {
+                // onDraw receives a canvas already translated by the TextView's scroll offset.
+                // Clip in that same content coordinate space; clipping at 0..height makes the
+                // visible region empty as soon as a large source document scrolls.
+                canvas.clipRect(
+                    scrollX.toFloat(),
+                    scrollY.toFloat(),
+                    (scrollX + width).toFloat(),
+                    (scrollY + height).toFloat(),
+                )
+                drawFullScreenCodeDocument(canvas)
+            } finally {
+                canvas.restoreToCount(save)
+            }
+        } else {
+            false
+        }
+        if (!drewFullScreenCode) {
+            super.onDraw(canvas)
+        }
         // 行内公式的底色画在 ReplacementSpan 里，会盖住先画的选区；公式画完后再补一层。
         drawInlineFormulaSelectionOverlay(canvas)
         drawReaderHighlightDecorations(this, canvas, underText = false)
         drawReaderSelectionHandles(canvas)
+    }
+
+    /**
+     * ReplacementSpan gets the full laid-out document as its canvas clip on some devices, so
+     * publish the actual on-screen viewport for full-screen code blocks.
+     */
+    private fun publishCodeBlockViewport() {
+        ReaderCodeBlockSettings.viewportTopPx =
+            (scrollY - totalPaddingTop).coerceAtLeast(0)
+        ReaderCodeBlockSettings.viewportHeightPx =
+            (height - totalPaddingTop - totalPaddingBottom).coerceAtLeast(0)
+    }
+
+    private fun refreshCodeViewportRedrawState() {
+        val currentText = text ?: return
+        if (currentText === codeViewportStateText) return
+        codeViewportStateText = currentText
+        fullScreenCodeSpan = (currentText as? Spanned)
+            ?.getSpans(0, currentText.length, ReaderScrollableCodeBlockSpan::class.java)
+            ?.firstOrNull { it.fullScreenCodeDocument }
+        hasFullScreenCodeDocument = fullScreenCodeSpan != null
+    }
+
+    /**
+     * TextView caches the TextLine that owns a ReplacementSpan. The cache survives vertical
+     * scrolling and can leave most of a large code file blank. Painting the code in the host
+     * View's own display list makes scroll invalidation deterministic and avoids span reattachment.
+     */
+    private fun drawFullScreenCodeDocument(canvas: Canvas): Boolean {
+        val span = fullScreenCodeSpan ?: return false
+        val textLayout = layout ?: return false
+        val spanned = text as? Spanned ?: return false
+        val start = spanned.getSpanStart(span)
+        if (start < 0) return false
+        val line = textLayout.getLineForOffset(start)
+        span.drawFullScreenByHost(
+            canvas = canvas,
+            x = textLayout.getLineLeft(line),
+            top = textLayout.getLineTop(line),
+            bottom = textLayout.getLineBottom(line),
+            paint = paint,
+            viewportPx = codeBlockViewportWidth(),
+        )
+        return true
     }
 
     /** 引用计数：多个并发异步渲染各自递增，仅全部完成后才解除抑制。 */
@@ -1823,6 +2027,12 @@ internal open class SafeReaderTextView(context: Context) : TextView(context) {
 
     fun isCodeBlockScrolling(): Boolean = codeScrolling
 
+    /** Whole-file source reader, represented by one host-drawn replacement span. */
+    internal fun isFullScreenCodeDocument(): Boolean {
+        refreshCodeViewportRedrawState()
+        return hasFullScreenCodeDocument
+    }
+
     fun diagramBitmapAt(x: Float, y: Float): android.graphics.Bitmap? {
         return previewableBitmapAt(x, y)
     }
@@ -1863,8 +2073,72 @@ internal open class SafeReaderTextView(context: Context) : TextView(context) {
         return null
     }
 
+    /**
+     * Source character at the top of a full-screen code document.
+     *
+     * The whole file is rendered as one ReplacementSpan, so normal TextView line lookup only
+     * finds the replacement character. Ask the span's inner StaticLayout instead.
+     */
+    internal fun fullScreenCodeSourceOffsetAtViewportTop(): Int? {
+        return fullScreenCodeViewportSourceOffsets()?.top
+    }
+
+    /**
+     * One layout lookup for both visible code edges.
+     *
+     * Scroll handlers need the top offset for the sticky outline and the bottom offset for
+     * reading progress. Resolving them separately repeatedly reached into the same inner
+     * StaticLayout and was a measurable source of frame-time jank in large source files.
+     */
+    internal fun fullScreenCodeViewportSourceOffsets(): CodeSourceViewport? {
+        val spanned = text as? Spanned ?: return null
+        val span = fullScreenCodeSpan
+            ?: spanned
+                .getSpans(0, spanned.length, ReaderScrollableCodeBlockSpan::class.java)
+                .firstOrNull { it.fullScreenCodeDocument }
+            ?: return null
+        val origin = codeSpanOrigin(span) ?: return null
+        val viewportTop = (scrollY - totalPaddingTop).toFloat()
+        val viewportHeight = (height - totalPaddingTop - totalPaddingBottom).coerceAtLeast(0)
+        val viewportWidth = codeBlockViewportWidth()
+        val cached = cachedCodeViewport
+        if (cached != null &&
+            cachedCodeViewportSpan === span &&
+            cachedCodeViewportLayout === layout &&
+            cachedCodeViewportScrollY == scrollY &&
+            cachedCodeViewportHeight == height &&
+            cachedCodeViewportWidth == viewportWidth &&
+            cachedCodeViewportOriginY == origin.second
+        ) {
+            return cached
+        }
+        val sourceViewport = span.sourceViewportAtLayout(
+            contentTopY = viewportTop,
+            contentBottomY = viewportTop + viewportHeight,
+            originTop = origin.second,
+            viewportPx = viewportWidth,
+            paint = paint,
+        )
+        cachedCodeViewportSpan = span
+        cachedCodeViewportLayout = layout
+        cachedCodeViewportScrollY = scrollY
+        cachedCodeViewportHeight = height
+        cachedCodeViewportWidth = viewportWidth
+        cachedCodeViewportOriginY = origin.second
+        cachedCodeViewport = sourceViewport
+        return sourceViewport
+    }
+
     private fun codeBlockViewportWidth(): Int =
         (width - totalPaddingLeft - totalPaddingRight).coerceAtLeast(0)
+
+    /** Invalidates the host-drawn full-screen source without reattaching its ReplacementSpan. */
+    internal fun redrawFullScreenCodeSpan(expected: ReaderScrollableCodeBlockSpan? = null) {
+        refreshCodeViewportRedrawState()
+        val span = fullScreenCodeSpan ?: return
+        if (expected != null && span !== expected) return
+        invalidate()
+    }
 
     private fun codeSpanOrigin(span: ReaderScrollableCodeBlockSpan): Pair<Float, Float>? {
         val layout = layout ?: return null
@@ -2139,21 +2413,8 @@ internal open class SafeReaderTextView(context: Context) : TextView(context) {
         return false
     }
 
-    /**
-     * TextView/StaticLayout 在部分硬件加速设备上会缓存行显示列表；仅 invalidate()
-     * 不一定重新调用可变 ReplacementSpan.draw。重复设置原 span 可通知 ChangeWatcher
-     * 该行内容已变化，从而让 scrollX 和滚动条在下一帧真正重绘。
-     */
+    /** 代码块自身持有横滑状态，View 失效即可重绘，避免每帧重设 span 触发整行重排。 */
     private fun invalidateMutableCodeBlockSpan(span: ReaderScrollableCodeBlockSpan) {
-        val body = text as? Spannable
-        if (body != null) {
-            val start = body.getSpanStart(span)
-            val end = body.getSpanEnd(span)
-            if (start >= 0 && end > start) {
-                val flags = body.getSpanFlags(span)
-                body.setSpan(span, start, end, flags)
-            }
-        }
         invalidate()
         postInvalidateOnAnimation()
     }
@@ -2609,10 +2870,25 @@ internal open class SafeReaderTextView(context: Context) : TextView(context) {
 
     override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
         super.onScrollChanged(l, t, oldl, oldt)
+        publishCodeBlockViewport()
+        refreshCodeViewportRedrawState()
+        if (t != oldt && hasFullScreenCodeDocument) {
+            // The host View paints the visible source rows itself. Standard View invalidation
+            // coalesces repeated scroll events into one display-list record per frame.
+            invalidate()
+        }
         if (l != oldl || t != oldt) {
             invalidateSelectionActionModeContentRect()
         }
         val now = android.os.SystemClock.uptimeMillis()
+        if (hasFullScreenCodeDocument) {
+            if (t != oldt) {
+                // The source has no text lines that can reflow inside the span. A settle callback
+                // and a character-line anchor would only add work while the host repaints rows.
+                lastInteractiveScrollUptimeMs = now
+            }
+            return
+        }
         // 拖动或惯性滚动期间延续抑制窗口，避免松手后 fling 仍与 maintain scrollTo 争抢。
         val inInteractiveWindow = pointerDown || isVerticalScrollDrag ||
             now - lastInteractiveScrollUptimeMs < 160L
@@ -2695,7 +2971,8 @@ internal open class SafeReaderTextView(context: Context) : TextView(context) {
     }
 
     override fun scrollTo(x: Int, y: Int) {
-        if (allowVerticalScroll) super.scrollTo(x, y) else super.scrollTo(x, 0)
+        val targetY = if (allowVerticalScroll) y else 0
+        super.scrollTo(x, targetY)
     }
 
     override fun bringPointIntoView(offset: Int): Boolean {
@@ -3310,7 +3587,7 @@ internal open class SafeReaderTextView(context: Context) : TextView(context) {
         return null
     }
 
-        override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 // Code-block overflow gestures need the concrete span even when a

@@ -44,8 +44,8 @@ android {
         applicationId = "space.liushenme.markdownreader"
         minSdk = 24
         targetSdk = 35
-        versionCode = 27
-        versionName = "1.2.5"
+        versionCode = 28
+        versionName = "1.2.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -171,7 +171,14 @@ listOf("debug", "release").forEach { buildType ->
                 val targetApk = directory.resolve(targetName)
                 val defaultApk = directory.resolve(defaultName)
                 when {
-                    targetApk.isFile && defaultApk.isFile -> defaultApk.delete()
+                    targetApk.isFile && defaultApk.isFile -> {
+                        check(targetApk.delete()) {
+                            "Failed to replace ${targetApk.name} in ${directory.path}"
+                        }
+                        check(defaultApk.renameTo(targetApk)) {
+                            "Failed to rename ${defaultApk.name} to $targetName in ${directory.path}"
+                        }
+                    }
                     !targetApk.isFile && defaultApk.isFile -> {
                         check(defaultApk.renameTo(targetApk)) {
                             "Failed to rename ${defaultApk.name} to $targetName in ${directory.path}"
