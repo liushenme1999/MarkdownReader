@@ -94,7 +94,7 @@ internal object ReaderCodeStylePlugin {
             padH = (12f * density + 0.5f).toInt(),
             padV = (8f * density + 0.5f).toInt(),
             content = highlighted,
-            rawCode = code.trimEnd('\n', '\r'),
+            rawCode = code,
             languageInfo = info,
             wrapEnabled = ReaderCodeBlockSettings.wrapEnabled,
             density = density,

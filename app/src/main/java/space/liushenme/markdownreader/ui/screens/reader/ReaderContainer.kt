@@ -135,12 +135,14 @@ internal fun ReaderContainer(
                             when {
                                 immersive && codeBackgroundColor != null ->
                                     Modifier
-                                        // 代码页需要真正满屏，但系统栏短暂出现时，
-                                        // 代码块标题和复制按钮仍须避开状态栏。这里使用
-                                        // 当前可见 inset：隐藏时为 0，不留下永久空白；
-                                        // 显示或过渡出现时自动下移，不再由功能栏状态决定。
-                                        .windowInsetsPadding(WindowInsets.statusBars)
-                                        .windowInsetsPadding(WindowInsets.navigationBars)
+                                        // 菜单显隐会同步切换系统栏可见性。代码页正文必须使用
+                                        // 忽略可见性的固定安全区，否则每次唤出/关闭菜单都会
+                                        // 改变正文测量尺寸，造成整页上下抖动。系统栏区域仍由
+                                        // 代码主题背景铺满，不会露出阅读纸面底色。
+                                        .padding(
+                                            top = stableStatusBarTopInset(),
+                                            bottom = stableNavigationBarBottomInset(),
+                                        )
                                 immersive && !hideSystemBars -> {
                                     if (isPdf || codeBackgroundColor != null) {
                                         Modifier.statusBarsPadding().navigationBarsPadding()

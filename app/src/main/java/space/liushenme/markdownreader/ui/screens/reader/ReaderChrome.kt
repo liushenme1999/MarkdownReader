@@ -409,7 +409,7 @@ internal fun ReaderImmersiveBottomBar(
 
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
-private fun stableStatusBarTopInset(): Dp {
+internal fun stableStatusBarTopInset(): Dp {
     val density = LocalDensity.current
     val context = LocalContext.current
     val composeInset = WindowInsets.statusBarsIgnoringVisibility
@@ -435,7 +435,7 @@ private fun stableStatusBarTopInset(): Dp {
 
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
-private fun stableNavigationBarBottomInset(): Dp {
+internal fun stableNavigationBarBottomInset(): Dp {
     val density = LocalDensity.current
     val context = LocalContext.current
     val composeInset = WindowInsets.navigationBarsIgnoringVisibility

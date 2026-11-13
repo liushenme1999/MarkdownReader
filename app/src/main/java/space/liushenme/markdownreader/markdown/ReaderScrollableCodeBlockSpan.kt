@@ -35,14 +35,15 @@ internal class ReaderScrollableCodeBlockSpan(
     private val padH: Int,
     private val padV: Int,
     content: CharSequence,
-    val rawCode: String,
+    rawCode: String,
     languageInfo: String?,
     private val wrapEnabled: Boolean,
     private val density: Float,
     initialSyntaxHighlightRanges: List<CodeSyntaxRange> = emptyList(),
 ) : ReplacementSpan() {
 
-    private val content: CharSequence = normalizeContent(content)
+    private val content: CharSequence = normalizeReaderCodeContent(content)
+    val rawCode: String = normalizeReaderCodeContent(rawCode).toString()
     private val hasBidiText: Boolean = hasBidiDirection(content)
     val languageLabel: String = ReaderCodeBlockLanguage.label(languageInfo)
 
@@ -1531,13 +1532,6 @@ internal class ReaderScrollableCodeBlockSpan(
         }
     }
 
-    private fun normalizeContent(code: CharSequence): CharSequence {
-        var end = code.length
-        while (end > 0 && (code[end - 1] == '\n' || code[end - 1] == '\r')) end--
-        if (end <= 0) return " "
-        return if (end == code.length) code else code.subSequence(0, end)
-    }
-
     /** Returns the source offset of every logical line, including a non-empty final line. */
     private fun sourceLineStarts(code: CharSequence): IntArray {
         val starts = ArrayList<Int>()
@@ -1590,6 +1584,44 @@ internal class ReaderScrollableCodeBlockSpan(
         internal val layout: StaticLayout,
     )
 
+}
+
+/**
+ * Removes layout-only trailing blank lines from a code block.
+ *
+ * CommonMark keeps whitespace-only lines immediately before a closing fence in the block
+ * literal. Rendering those rows adds visible empty height below the source. Only the trailing
+ * whitespace-only rows are removed: leading indentation, internal blank lines and whitespace at
+ * the end of the last non-blank source line remain untouched.
+ */
+internal fun normalizeReaderCodeContent(code: CharSequence): CharSequence {
+    var end = code.length
+    while (end > 0 && (code[end - 1] == '\n' || code[end - 1] == '\r')) {
+        end--
+    }
+
+    while (end > 0) {
+        var lineStart = end - 1
+        while (lineStart >= 0 && code[lineStart] != '\n' && code[lineStart] != '\r') {
+            lineStart--
+        }
+        var blank = true
+        for (index in lineStart + 1 until end) {
+            if (!code[index].isWhitespace()) {
+                blank = false
+                break
+            }
+        }
+        if (!blank) break
+
+        end = lineStart
+        while (end > 0 && (code[end - 1] == '\n' || code[end - 1] == '\r')) {
+            end--
+        }
+    }
+
+    if (end <= 0) return " "
+    return if (end == code.length) code else code.subSequence(0, end)
 }
 
 internal data class CodeBlockHighlightRange(

@@ -32,7 +32,7 @@ internal object ReaderFullScreenCodeRenderer {
         layoutPaint: Paint? = null,
         viewportWidthPx: Int = 0,
     ): Prepared {
-        val normalized = content.trimEnd('\n', '\r')
+        val normalized = normalizeReaderCodeContent(content).toString().ifEmpty { " " }
         val metrics = context.resources.displayMetrics
         val density = metrics.density
         val background = GradientDrawable().apply {
@@ -47,7 +47,7 @@ internal object ReaderFullScreenCodeRenderer {
             fullScreenCodeDocument = true,
             padH = (12f * density + 0.5f).toInt(),
             padV = (8f * density + 0.5f).toInt(),
-            content = normalized.ifEmpty { " " },
+            content = normalized,
             rawCode = normalized,
             languageInfo = language,
             wrapEnabled = ReaderCodeBlockSettings.wrapEnabled,

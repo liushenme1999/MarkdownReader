@@ -836,4 +836,36 @@ class ReaderScrollableCodeBlockTest {
         assertTrue("normalized code should still be found", range != null)
         assertEquals("val  value = 1", span.contentSliceForTest(range!!.first, range.last + 1))
     }
+
+    @Test
+    fun trailingBlankCodeLines_doNotAddVisibleRowsBelowSource() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = true
+        ReaderCodeBlockSettings.viewportWidthPx = 400
+        val markwon = ReaderMarkwonFactory.create(context)
+        val paint = Paint().apply { textSize = 40f }
+
+        val withoutTrailingBlanks = markwon.toMarkdown("```kotlin\nval value = 1\n```")
+        val withoutTrailingSpan = withoutTrailingBlanks.getSpans(
+            0,
+            withoutTrailingBlanks.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+        val expectedHeight = withoutTrailingSpan.requiredHeightForTest(paint)
+
+        listOf(
+            "```kotlin\nval value = 1\n\n```",
+            "```kotlin\nval value = 1\n   \n\t\n```",
+        ).forEach { markdown ->
+            val rendered = markwon.toMarkdown(markdown)
+            val span = rendered.getSpans(
+                0,
+                rendered.length,
+                ReaderScrollableCodeBlockSpan::class.java,
+            ).single()
+            assertEquals("val value = 1", span.contentSliceForTest(0, span.codeLength()))
+            assertEquals("val value = 1", span.rawCode)
+            assertEquals(expectedHeight, span.requiredHeightForTest(paint))
+        }
+    }
 }
