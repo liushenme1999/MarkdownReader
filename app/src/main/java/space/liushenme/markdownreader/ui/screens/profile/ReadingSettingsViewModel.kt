@@ -60,6 +60,12 @@ class ReadingSettingsViewModel @Inject constructor(
         initialValue = ReaderSettingsRepository.DEFAULT_CODE_BLOCK_WRAP,
     )
 
+    val codeLineNumbers = readerSettingsRepository.codeLineNumbers.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = ReaderSettingsRepository.DEFAULT_CODE_LINE_NUMBERS,
+    )
+
     val codeHighlightTheme = readerSettingsRepository.codeHighlightTheme.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -139,6 +145,10 @@ class ReadingSettingsViewModel @Inject constructor(
 
     fun setCodeBlockWrap(wrap: Boolean) {
         viewModelScope.launch { readerSettingsRepository.setCodeBlockWrap(wrap) }
+    }
+
+    fun setCodeLineNumbers(show: Boolean) {
+        viewModelScope.launch { readerSettingsRepository.setCodeLineNumbers(show) }
     }
 
     fun setCodeHighlightTheme(theme: CodeHighlightTheme) {

@@ -25,6 +25,12 @@ internal data class CodeSourceViewport(
     val bottom: Int,
 )
 
+/** Stable source anchor used when a full-screen code span is replaced by a restyled one. */
+internal data class CodeSourceAnchor(
+    val sourceOffset: Int,
+    val inLineOffsetPx: Float,
+)
+
 /**
  * 围栏/缩进代码块窗口：正文只占一个 `\uFFFC`。
  * 顶部语言标签 + 复制按钮；关闭换行且超宽时底部画横向滚动条。
@@ -42,11 +48,14 @@ internal class ReaderScrollableCodeBlockSpan(
     private val wrapEnabled: Boolean,
     private val density: Float,
     initialSyntaxHighlightRanges: List<CodeSyntaxRange> = emptyList(),
+    private val showLineNumbers: Boolean = false,
 ) : ReplacementSpan(), LineHeightSpan {
 
     private val content: CharSequence = normalizeReaderCodeContent(content)
     val rawCode: String = normalizeReaderCodeContent(rawCode).toString()
     private val hasBidiText: Boolean = hasBidiDirection(content)
+    private val logicalLineStarts: IntArray = sourceLineStarts(content)
+    private val showCodeLineNumbers: Boolean = fullScreenCodeDocument && showLineNumbers
     val languageLabel: String = ReaderCodeBlockLanguage.label(languageInfo)
 
     var scrollX: Int = 0
@@ -76,6 +85,9 @@ internal class ReaderScrollableCodeBlockSpan(
     private val scrollBarGap = (6f * density + 0.5f).toInt()
     private val copyIconSize = 16f * density
     private val copyHitW = (44f * density).toInt().coerceAtLeast(1)
+    private val lineNumberLeftPadPx = (10f * density + 0.5f).toInt()
+    private val lineNumberRightPadPx = (12f * density + 0.5f).toInt()
+    private val lineNumberDividerPx = (1f * density + 0.5f).toInt().coerceAtLeast(1)
     private val palette = codeHighlightTheme.palette
     private val chromeColor = palette.chrome
     private val dividerColor = palette.divider
@@ -85,6 +97,11 @@ internal class ReaderScrollableCodeBlockSpan(
     private var drawnLeft = 0f
     private var drawnTop = 0f
     internal var lastDrawnHeightForTest = 0
+    internal var lastScrollBarTopForTest = 0f
+    internal var lastScrollBarBottomForTest = 0f
+    internal var lastLineNumberGutterWidthForTest = 0
+    internal var lastLineNumberRightForTest = 0f
+    internal var lastDrawnLineNumbersForTest: List<Int> = emptyList()
     private var copyLeft = 0f
     private var copyTop = 0f
     private var copyRight = 0f
@@ -108,6 +125,8 @@ internal class ReaderScrollableCodeBlockSpan(
         strokeWidth = 3f
     }
     private val syntaxTextPaint = TextPaint(Paint.ANTI_ALIAS_FLAG)
+    private var cachedGutterTextSize: Float = -1f
+    private var cachedGutterWidth: Int = 0
 
     @Volatile
     private var syntaxHighlightRanges: List<CodeSyntaxRange> = initialSyntaxHighlightRanges
@@ -179,7 +198,8 @@ internal class ReaderScrollableCodeBlockSpan(
         val viewport = viewportPx.takeIf { it > 1 }
             ?: lastViewportWidth.takeIf { it > 1 }
             ?: ReaderCodeBlockSettings.viewportWidthPx
-        val wrapWidth = (viewport - padH * 2).coerceAtLeast(80)
+        val gutterWidth = lineNumberGutterWidth(codePaint)
+        val wrapWidth = (viewport - gutterWidth - padH * 2).coerceAtLeast(80)
         val fullLayout = cachedLayout
             ?: error("full-screen code layout must be prewarmed before chunk highlighting")
         val lineStarts = cachedLineStarts
@@ -192,7 +212,6 @@ internal class ReaderScrollableCodeBlockSpan(
         // chunk's line offset drifts and scrolling eventually exposes unpainted vertical gaps.
         // Keep chunk boundaries on complete source lines, then map those boundaries back to the
         // full layout for positioning.
-        val logicalLineStarts = sourceLineStarts(content)
         val chunks = ArrayList<StyledLayoutChunk>(
             (logicalLineStarts.size + STYLED_CHUNK_LINES - 1) / STYLED_CHUNK_LINES,
         )
@@ -254,7 +273,11 @@ internal class ReaderScrollableCodeBlockSpan(
             textSize = codePaint.textSize,
             color = codePaint.color,
             wrapWidth = if (wrapEnabled) wrapWidth else -1,
-            maxLineWidth = if (wrapEnabled) viewport.coerceAtLeast(1) else unwrappedWidth + padH * 2,
+            maxLineWidth = if (wrapEnabled) {
+                viewport.coerceAtLeast(1)
+            } else {
+                gutterWidth + unwrappedWidth + padH * 2
+            },
         )
     }
 
@@ -391,7 +414,7 @@ internal class ReaderScrollableCodeBlockSpan(
         val layout = ensureLayout(paint)
         if (layout.lineCount <= 0) return null
         val headerH = headerHeight(paint)
-        val localX = contentX - originLeft - padH + scrollX
+        val localX = contentX - originLeft - lineNumberGutterWidth(paint) - padH + scrollX
         var localY = contentY - originTop - headerH - padV
         if (clampToContent) {
             val maxY = (layout.height - 1).toFloat().coerceAtLeast(0f)
@@ -427,7 +450,7 @@ internal class ReaderScrollableCodeBlockSpan(
         if (!hasSelection()) return false
         val layout = ensureLayout(paint)
         val headerH = headerHeight(paint)
-        val localX = contentX - originLeft - padH + scrollX
+        val localX = contentX - originLeft - lineNumberGutterWidth(paint) - padH + scrollX
         val localY = contentY - originTop - headerH - padV
         if (localY < 0f) return false
         var hit = false
@@ -464,8 +487,9 @@ internal class ReaderScrollableCodeBlockSpan(
         forEachLineRange(layout, selectionStart, selectionEnd) { rangeLeft, rangeRight, baseline ->
             val lineTop = baseline - layout.paint.textSize
             val lineBottom = baseline + layout.paint.descent()
-            val contentL = originLeft + padH - scrollX + rangeLeft
-            val contentR = originLeft + padH - scrollX + rangeRight
+            val gutterWidth = lineNumberGutterWidth(paint)
+            val contentL = originLeft + gutterWidth + padH - scrollX + rangeLeft
+            val contentR = originLeft + gutterWidth + padH - scrollX + rangeRight
             val contentT = originTop + headerH + padV + lineTop
             val contentB = originTop + headerH + padV + lineBottom
             left = min(left, contentL)
@@ -522,7 +546,7 @@ internal class ReaderScrollableCodeBlockSpan(
         }
         val fontBottom = layout.getLineBaseline(line) + layout.paint.fontMetricsInt.descent
         val y = min(fontBottom, layout.getLineBottom(line)).toFloat()
-        val contentX = originLeft + padH - scrollX + x
+        val contentX = originLeft + lineNumberGutterWidth(paint) + padH - scrollX + x
         val contentY = originTop + headerHeight(paint) + padV + y
         return contentX to contentY
     }
@@ -545,6 +569,44 @@ internal class ReaderScrollableCodeBlockSpan(
         val line = layout.getLineForVertical(localY.toInt().coerceAtLeast(0))
             .coerceIn(0, layout.lineCount - 1)
         return layout.getLineStart(line)
+    }
+
+    /**
+     * Captures the source position under a host-layout Y coordinate. The in-line pixel offset
+     * keeps the viewport from jumping to the beginning of a wrapped line after restyling.
+     */
+    fun sourceAnchorAtLayoutY(
+        contentY: Float,
+        originTop: Float,
+        paint: Paint,
+    ): CodeSourceAnchor? {
+        val layout = ensureLayout(paint)
+        if (layout.lineCount <= 0) return null
+        val localY = contentY - originTop - headerHeight(paint) - padV
+        val line = layout.getLineForVertical(localY.toInt().coerceAtLeast(0))
+            .coerceIn(0, layout.lineCount - 1)
+        val lineTop = layout.getLineTop(line).toFloat()
+        return CodeSourceAnchor(
+            sourceOffset = layout.getLineStart(line),
+            inLineOffsetPx = (localY - lineTop).coerceAtLeast(0f),
+        )
+    }
+
+    /** Resolves an absolute host-layout Y coordinate for a previously captured source anchor. */
+    fun layoutYForSourceAnchor(
+        anchor: CodeSourceAnchor,
+        originTop: Float,
+        paint: Paint,
+    ): Float? {
+        val layout = ensureLayout(paint)
+        if (layout.lineCount <= 0 || content.isEmpty()) return null
+        val offset = anchor.sourceOffset.coerceIn(0, content.length - 1)
+        val line = layout.getLineForOffset(offset).coerceIn(0, layout.lineCount - 1)
+        val lineHeight = (layout.getLineBottom(line) - layout.getLineTop(line))
+            .coerceAtLeast(1)
+            .toFloat()
+        val inLine = anchor.inLineOffsetPx.coerceIn(0f, (lineHeight - 1f).coerceAtLeast(0f))
+        return originTop + headerHeight(paint) + padV + layout.getLineTop(line) + inLine
     }
 
     /**
@@ -580,7 +642,10 @@ internal class ReaderScrollableCodeBlockSpan(
         )
     }
 
-    internal fun requiredHeightForTest(paint: Paint): Int = chromeHeight(ensureLayout(paint), paint)
+    /** Complete host-layout height needed to paint this source document at its current width. */
+    internal fun contentHeight(paint: Paint): Int = chromeHeight(ensureLayout(paint), paint)
+
+    internal fun requiredHeightForTest(paint: Paint): Int = contentHeight(paint)
 
     /**
      * The line containing a code card also contains its trailing newline. That newline's default
@@ -663,6 +728,13 @@ internal class ReaderScrollableCodeBlockSpan(
         return true
     }
 
+    /** Restores horizontal code scrolling after a full-screen span is rebuilt. */
+    fun restoreScrollX(target: Int) {
+        val max = maxScrollX()
+        scrollXF = target.coerceIn(0, max).toFloat()
+        scrollX = scrollXF.toInt()
+    }
+
     /**
      * 拖选区时手指贴近代码框左右边缘（或已拖出可视区）应横滑的增量。
      * 向右为正（露出更靠右的代码），向左为负。
@@ -673,7 +745,7 @@ internal class ReaderScrollableCodeBlockSpan(
         viewportWidth: Int,
     ): Float {
         if (!canScrollHorizontally()) return 0f
-        val left = originLeft
+        val left = originLeft + cachedGutterWidth
         val right = originLeft + viewportWidth.coerceAtLeast(1)
         val edge = SELECTION_EDGE_DP * density
         val maxStep = SELECTION_EDGE_MAX_STEP_DP * density
@@ -772,6 +844,8 @@ internal class ReaderScrollableCodeBlockSpan(
         syncScrollX()
 
         val clipRight = x + lastViewportWidth
+        val gutterWidth = lineNumberGutterWidth(paint)
+        val codeClipLeft = x + gutterWidth
         drawnLeft = x
         drawnTop = top.toFloat()
         lastDrawnHeightForTest = bottom - top
@@ -792,11 +866,18 @@ internal class ReaderScrollableCodeBlockSpan(
 
         val codeTop = top + headerH + padV
         val barSpace = if (canScrollHorizontally()) scrollBarGap + scrollBarH else 0
-        val codeBottom = (bottom - barSpace).toFloat()
+        val stickyBottom = if (fullScreenCodeDocument &&
+            ReaderCodeBlockSettings.viewportHeightPx > 0
+        ) {
+            ReaderCodeBlockSettings.viewportTopPx + ReaderCodeBlockSettings.viewportHeightPx
+        } else {
+            bottom
+        }
+        val codeBottom = (stickyBottom - barSpace).toFloat()
 
         val save = canvas.save()
         try {
-            canvas.clipRect(x, codeTop.toFloat(), clipRight, codeBottom)
+            canvas.clipRect(codeClipLeft, codeTop.toFloat(), clipRight, codeBottom)
             val viewportHeight = ReaderCodeBlockSettings.viewportHeightPx
             val clip = canvas.clipBounds
             val visibleTopPx = if (fullScreenCodeDocument && viewportHeight > 0) {
@@ -813,7 +894,7 @@ internal class ReaderScrollableCodeBlockSpan(
             }
             val overlaySave = canvas.save()
             try {
-                canvas.translate(x + padH - scrollX, codeTop.toFloat())
+                canvas.translate(codeClipLeft + padH - scrollX, codeTop.toFloat())
                 drawHighlightRanges(canvas, layout)
                 if (hasSelection()) {
                     drawSelectionRange(
@@ -830,7 +911,7 @@ internal class ReaderScrollableCodeBlockSpan(
 
             val fallbackSave = canvas.save()
             try {
-                canvas.translate(x + padH - scrollX, codeTop.toFloat())
+                canvas.translate(codeClipLeft + padH - scrollX, codeTop.toFloat())
                 val styled = styledSyntaxLayout
                 if (fullScreenCodeDocument && styled != null && !hasBidiText) {
                     drawStyledCodeLayout(
@@ -858,8 +939,35 @@ internal class ReaderScrollableCodeBlockSpan(
             canvas.restoreToCount(save)
         }
 
+        drawLineNumbers(
+            canvas = canvas,
+            left = x,
+            right = codeClipLeft,
+            codeTop = codeTop.toFloat(),
+            codeBottom = codeBottom,
+            layout = layout,
+            basePaint = paint,
+            visibleTopPx = if (fullScreenCodeDocument && ReaderCodeBlockSettings.viewportHeightPx > 0) {
+                (ReaderCodeBlockSettings.viewportTopPx - codeTop)
+                    .coerceIn(0, layout.height)
+            } else {
+                (codeTop - codeTop).coerceAtLeast(0)
+            },
+            visibleBottomPx = if (fullScreenCodeDocument &&
+                ReaderCodeBlockSettings.viewportHeightPx > 0
+            ) {
+                (
+                    ReaderCodeBlockSettings.viewportTopPx +
+                        ReaderCodeBlockSettings.viewportHeightPx -
+                        codeTop
+                    ).coerceIn(0, layout.height)
+            } else {
+                (codeBottom - codeTop).toInt().coerceIn(0, layout.height)
+            },
+        )
+
         if (canScrollHorizontally()) {
-            drawScrollBar(canvas, x, clipRight, bottom.toFloat())
+            drawScrollBar(canvas, x, clipRight, stickyBottom.toFloat())
         }
     }
 
@@ -1025,6 +1133,8 @@ internal class ReaderScrollableCodeBlockSpan(
         val trackW = (trackR - trackL).coerceAtLeast(1f)
         val trackT = bottom - scrollBarGap - scrollBarH
         val trackB = trackT + scrollBarH
+        lastScrollBarTopForTest = trackT
+        lastScrollBarBottomForTest = trackB
         val radius = scrollBarH / 2f
         val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = trackColor }
         canvas.drawRoundRect(RectF(trackL, trackT, trackR, trackB), radius, radius, trackPaint)
@@ -1038,6 +1148,110 @@ internal class ReaderScrollableCodeBlockSpan(
         canvas.drawRoundRect(RectF(thumbL, trackT, thumbL + thumbW, trackB), radius, radius, thumbPaint)
     }
 
+    private fun drawLineNumbers(
+        canvas: Canvas,
+        left: Float,
+        right: Float,
+        codeTop: Float,
+        codeBottom: Float,
+        layout: StaticLayout,
+        basePaint: Paint,
+        visibleTopPx: Int,
+        visibleBottomPx: Int,
+    ) {
+        lastDrawnLineNumbersForTest = emptyList()
+        lastLineNumberGutterWidthForTest = 0
+        if (!showCodeLineNumbers || right <= left || layout.lineCount <= 0) return
+        val gutterWidth = lineNumberGutterWidth(basePaint)
+        lastLineNumberGutterWidthForTest = gutterWidth
+        lastLineNumberRightForTest = left + gutterWidth - lineNumberRightPadPx
+
+        val numberPaint = TextPaint(basePaint).also {
+            theme.applyCodeBlockTextStyle(it)
+            it.textSize = it.textSize * LINE_NUMBER_TEXT_SCALE
+            it.color = chromeColor
+            it.textAlign = Paint.Align.RIGHT
+            it.isAntiAlias = true
+        }
+        val firstLine = layout.getLineForVertical(visibleTopPx.coerceAtLeast(0))
+            .coerceIn(0, layout.lineCount - 1)
+        val lastLine = layout.getLineForVertical(
+            (visibleBottomPx - 1).coerceAtLeast(visibleTopPx),
+        ).coerceIn(firstLine, layout.lineCount - 1)
+        val starts = cachedLineStarts
+        val baselines = cachedLineBaselines
+        val dividerX = left + gutterWidth - lineNumberDividerPx
+        val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = dividerColor
+            strokeWidth = lineNumberDividerPx.toFloat()
+        }
+
+        val save = canvas.save()
+        try {
+            canvas.clipRect(left, codeTop, right, codeBottom)
+            canvas.drawLine(dividerX, codeTop, dividerX, codeBottom, dividerPaint)
+            val drawn = ArrayList<Int>()
+            for (line in firstLine..lastLine) {
+                val lineStart = starts?.getOrNull(line) ?: layout.getLineStart(line)
+                val logicalIndex = logicalLineIndexAt(lineStart)
+                if (logicalIndex < 0) continue
+                val lineNumber = logicalIndex + 1
+                val baseline = (
+                    baselines?.getOrNull(line)?.toFloat()
+                        ?: layout.getLineBaseline(line).toFloat()
+                    ) + codeTop
+                canvas.drawText(
+                    lineNumber.toString(),
+                    lastLineNumberRightForTest,
+                    baseline,
+                    numberPaint,
+                )
+                drawn += lineNumber
+            }
+            lastDrawnLineNumbersForTest = drawn
+        } finally {
+            canvas.restoreToCount(save)
+        }
+    }
+
+    private fun logicalLineIndexAt(offset: Int): Int {
+        var low = 0
+        var high = logicalLineStarts.lastIndex
+        while (low <= high) {
+            val mid = (low + high) ushr 1
+            val value = logicalLineStarts[mid]
+            when {
+                value < offset -> low = mid + 1
+                value > offset -> high = mid - 1
+                else -> return mid
+            }
+        }
+        return -1
+    }
+
+    @Synchronized
+    private fun lineNumberGutterWidth(basePaint: Paint): Int {
+        if (!showCodeLineNumbers) return 0
+        val codePaint = TextPaint(basePaint)
+        theme.applyCodeBlockTextStyle(codePaint)
+        val size = codePaint.textSize * LINE_NUMBER_TEXT_SCALE
+        if (cachedGutterWidth > 0 && kotlin.math.abs(cachedGutterTextSize - size) < 0.01f) {
+            return cachedGutterWidth
+        }
+        val digits = logicalLineStarts.size.coerceAtLeast(1).toString()
+        codePaint.textSize = size
+        val width = lineNumberLeftPadPx +
+            codePaint.measureText(digits).toInt() +
+            lineNumberRightPadPx +
+            lineNumberDividerPx
+        cachedGutterTextSize = size
+        cachedGutterWidth = width.coerceAtLeast(1)
+        return cachedGutterWidth
+    }
+
+    internal fun lineNumberGutterWidthForTest(paint: Paint): Int =
+        lineNumberGutterWidth(paint)
+
     @Synchronized
     private fun ensureLayout(paint: Paint): StaticLayout {
         val codePaint = TextPaint(paint)
@@ -1048,7 +1262,8 @@ internal class ReaderScrollableCodeBlockSpan(
             ReaderCodeBlockSettings.viewportWidthPx > 1 -> ReaderCodeBlockSettings.viewportWidthPx
             else -> 0
         }
-        val wrapWidth = (viewport - padH * 2).coerceAtLeast(80)
+        val gutterWidth = lineNumberGutterWidth(codePaint)
+        val wrapWidth = (viewport - gutterWidth - padH * 2).coerceAtLeast(80)
         val cached = cachedLayout
         if (cached != null &&
             cachedTextSize == codePaint.textSize &&
@@ -1075,7 +1290,7 @@ internal class ReaderScrollableCodeBlockSpan(
         maxLineWidth = if (wrapEnabled) {
             viewport.coerceAtLeast(1)
         } else {
-            unwrappedWidth + padH * 2
+            gutterWidth + unwrappedWidth + padH * 2
         }
         return layout
     }
@@ -1605,6 +1820,7 @@ internal class ReaderScrollableCodeBlockSpan(
         internal const val SELECTION_EDGE_DP = 36f
         internal const val SELECTION_EDGE_MAX_STEP_DP = 10f
         private const val STYLED_CHUNK_LINES = 16
+        private const val LINE_NUMBER_TEXT_SCALE = 0.88f
         private val EMPTY_LINE_MAP = IntArray(0)
     }
 

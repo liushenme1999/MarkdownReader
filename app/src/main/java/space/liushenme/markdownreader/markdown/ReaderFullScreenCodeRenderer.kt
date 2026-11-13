@@ -31,6 +31,7 @@ internal object ReaderFullScreenCodeRenderer {
         codeHighlightTheme: CodeHighlightTheme,
         layoutPaint: Paint? = null,
         viewportWidthPx: Int = 0,
+        showLineNumbers: Boolean = false,
     ): Prepared {
         val normalized = normalizeReaderCodeContent(content).toString().ifEmpty { " " }
         val metrics = context.resources.displayMetrics
@@ -52,6 +53,7 @@ internal object ReaderFullScreenCodeRenderer {
             languageInfo = language,
             wrapEnabled = ReaderCodeBlockSettings.wrapEnabled,
             density = density,
+            showLineNumbers = showLineNumbers,
         )
         if (layoutPaint != null && viewportWidthPx > 1) {
             span.prewarmLayout(layoutPaint, viewportWidthPx)
@@ -76,8 +78,15 @@ internal object ReaderFullScreenCodeRenderer {
         content: String,
         language: String,
         codeHighlightTheme: CodeHighlightTheme,
+        showLineNumbers: Boolean = false,
     ): Spanned {
-        val prepared = prepare(context, content, language, codeHighlightTheme)
+        val prepared = prepare(
+            context = context,
+            content = content,
+            language = language,
+            codeHighlightTheme = codeHighlightTheme,
+            showLineNumbers = showLineNumbers,
+        )
         prepared.span.setSyntaxHighlightRanges(
             highlight(prepared.span, language, codeHighlightTheme),
         )

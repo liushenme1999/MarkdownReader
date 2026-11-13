@@ -5,6 +5,8 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.drawable.GradientDrawable
+import android.text.SpannableString
+import android.text.StaticLayout
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.text.style.ReplacementSpan
@@ -21,6 +23,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import java.lang.reflect.Field
 import space.liushenme.markdownreader.ui.screens.reader.readerContentSignature
 import space.liushenme.markdownreader.ui.screens.reader.SafeReaderTextView
 
@@ -373,6 +376,180 @@ class ReaderScrollableCodeBlockTest {
         }
     }
 
+    @Test
+    fun replacingFullScreenCodeTheme_preservesSourceAndHorizontalViewport() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = false
+        ReaderCodeBlockSettings.viewportWidthPx = 360
+        val source = buildString {
+            appendLine("public final class LongThemedService {")
+            repeat(600) { index ->
+                appendLine(
+                    "    public int process$index(int input) { " +
+                        "return input + $index + longSuffix$index; }",
+                )
+            }
+            appendLine("}")
+        }.trimEnd()
+        val width = 360
+        val height = 600
+        val textView = SafeReaderTextView(context).apply {
+            textSize = 24f
+            setPadding(0, 0, 0, 0)
+            layoutParams = android.view.ViewGroup.LayoutParams(width, height)
+        }
+        fun layoutCurrentText() {
+            textView.measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(
+                    width,
+                    android.view.View.MeasureSpec.EXACTLY,
+                ),
+                android.view.View.MeasureSpec.makeMeasureSpec(
+                    height,
+                    android.view.View.MeasureSpec.EXACTLY,
+                ),
+            )
+            textView.layout(0, 0, width, height)
+        }
+
+        val light = ReaderFullScreenCodeRenderer.render(
+            context = context,
+            content = source,
+            language = "java",
+            codeHighlightTheme = CodeHighlightTheme.VS_LIGHT_PLUS,
+            showLineNumbers = true,
+        )
+        textView.setText(light, TextView.BufferType.SPANNABLE)
+        layoutCurrentText()
+        val oldSpan = light.getSpans(
+            0,
+            light.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+        oldSpan.prewarmLayout(textView.paint, width)
+        oldSpan.prepareForTouch(textView.paint, width)
+        assertTrue(oldSpan.scrollBy(120f))
+        textView.scrollTo(0, 12_000)
+
+        val restore = requireNotNull(textView.captureFullScreenCodeViewportForRestore())
+        assertTrue(restore.anchor.sourceOffset > 0)
+        assertEquals(oldSpan.scrollX, restore.horizontalScrollX)
+        textView.stashFullScreenCodeViewportRestore(restore)
+
+        val dark = ReaderFullScreenCodeRenderer.render(
+            context = context,
+            content = source,
+            language = "java",
+            codeHighlightTheme = CodeHighlightTheme.VS_DARK_PLUS,
+            showLineNumbers = true,
+        )
+        textView.setText(dark, TextView.BufferType.SPANNABLE)
+        textView.requestLayout()
+        layoutCurrentText()
+        if (textView.hasPendingFullScreenCodeViewportRestore) {
+            assertTrue(textView.applyFullScreenCodeViewportRestore())
+        }
+
+        val newSpan = dark.getSpans(
+            0,
+            dark.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+        assertTrue(
+            "theme replacement should retain a deep source viewport, scrollY=${textView.scrollY}",
+            textView.scrollY > 10_000,
+        )
+        newSpan.prepareForTouch(textView.paint, width)
+        assertTrue("new span should remain horizontally scrollable", newSpan.maxScrollX() > 120)
+        assertEquals(restore.horizontalScrollX, newSpan.scrollX)
+    }
+
+    @Test
+    fun replacingFullScreenCodeTheme_defersUntilTheReplacementLayoutIsComplete() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = false
+        ReaderCodeBlockSettings.viewportWidthPx = 360
+        val source = buildString {
+            appendLine("public final class DeferredThemeService {")
+            repeat(600) { index ->
+                appendLine("    public int process$index(int input) { return input + $index; }")
+            }
+            appendLine("}")
+        }.trimEnd()
+        val width = 360
+        val height = 600
+        val textView = SafeReaderTextView(context).apply {
+            textSize = 24f
+            setPadding(0, 0, 0, 0)
+            layoutParams = android.view.ViewGroup.LayoutParams(width, height)
+        }
+        fun layoutCurrentText() {
+            textView.measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(
+                    width,
+                    android.view.View.MeasureSpec.EXACTLY,
+                ),
+                android.view.View.MeasureSpec.makeMeasureSpec(
+                    height,
+                    android.view.View.MeasureSpec.EXACTLY,
+                ),
+            )
+            textView.layout(0, 0, width, height)
+        }
+
+        val light = ReaderFullScreenCodeRenderer.render(
+            context = context,
+            content = source,
+            language = "java",
+            codeHighlightTheme = CodeHighlightTheme.VS_LIGHT_PLUS,
+            showLineNumbers = true,
+        )
+        textView.setText(light, TextView.BufferType.SPANNABLE)
+        layoutCurrentText()
+        textView.scrollTo(0, 12_000)
+        val restore = requireNotNull(textView.captureFullScreenCodeViewportForRestore())
+        textView.stashFullScreenCodeViewportRestore(restore)
+
+        val dark = ReaderFullScreenCodeRenderer.render(
+            context = context,
+            content = source,
+            language = "java",
+            codeHighlightTheme = CodeHighlightTheme.VS_DARK_PLUS,
+            showLineNumbers = true,
+        )
+        textView.setText(dark, TextView.BufferType.SPANNABLE)
+
+        // TextView briefly publishes a much shorter layout after setText on MIUI. Recreate that
+        // state with matching text length so the restore code reaches its defer branch.
+        setTextViewLayout(
+            textView,
+            StaticLayout.Builder.obtain(
+                SpannableString("x".repeat(dark.length)),
+                0,
+                dark.length,
+                textView.paint,
+                1_000_000,
+            ).build(),
+        )
+        assertFalse(textView.applyFullScreenCodeViewportRestore())
+        assertTrue(
+            "a transient layout must not discard the captured source anchor",
+            textView.hasPendingFullScreenCodeViewportRestore,
+        )
+
+        textView.requestLayout()
+        layoutCurrentText()
+        if (textView.hasPendingFullScreenCodeViewportRestore) {
+            assertTrue(textView.applyFullScreenCodeViewportRestore())
+        }
+        assertFalse(textView.hasPendingFullScreenCodeViewportRestore)
+        assertTrue(
+            "deep source viewport should be restored after layout completes, " +
+                "scrollY=${textView.scrollY}",
+            textView.scrollY > 10_000,
+        )
+    }
+
     /**
      * Android delivers TextView.onDraw a canvas already translated by its scroll offset. Calling
      * View.draw under Robolectric does not reproduce that contract, so mirror only the translation
@@ -389,6 +566,12 @@ class ReaderScrollableCodeBlockTest {
                 canvas.restoreToCount(save)
             }
         }
+    }
+
+    private fun setTextViewLayout(textView: TextView, layout: android.text.Layout) {
+        val field: Field = TextView::class.java.getDeclaredField("mLayout")
+        field.isAccessible = true
+        field.set(textView, layout)
     }
 
     @Test
@@ -535,6 +718,191 @@ class ReaderScrollableCodeBlockTest {
         assertTrue(cardSpan.headerHeightPx(paint) > 0)
         assertEquals(0, documentSpan.headerHeightPx(paint))
         assertFalse(documentSpan.isOnCopyButton(0f, 0f))
+    }
+
+    @Test
+    fun codeDocument_lineNumbersCanBeShownAndHidden() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = true
+        ReaderCodeBlockSettings.viewportWidthPx = 480
+        ReaderCodeBlockSettings.viewportTopPx = 0
+        ReaderCodeBlockSettings.viewportHeightPx = 600
+        val source = "class Demo {\n    fun value() = 42\n}"
+        val paint = Paint().apply { textSize = 40f }
+
+        fun renderedSpan(showLineNumbers: Boolean): ReaderScrollableCodeBlockSpan {
+            val rendered = ReaderFullScreenCodeRenderer.render(
+                context = context,
+                content = source,
+                language = "kotlin",
+                codeHighlightTheme = CodeHighlightTheme.VS_LIGHT_PLUS,
+                showLineNumbers = showLineNumbers,
+            )
+            val span = rendered.getSpans(
+                0,
+                rendered.length,
+                ReaderScrollableCodeBlockSpan::class.java,
+            ).single()
+            span.prepareForTouch(paint, 480)
+            val bitmap = Bitmap.createBitmap(480, 600, Bitmap.Config.ARGB_8888)
+            try {
+                span.drawFullScreenByHost(
+                    canvas = Canvas(bitmap),
+                    x = 0f,
+                    top = 0,
+                    bottom = span.requiredHeightForTest(paint),
+                    paint = paint,
+                    viewportPx = 480,
+                )
+            } finally {
+                bitmap.recycle()
+            }
+            return span
+        }
+
+        val numbered = renderedSpan(showLineNumbers = true)
+        assertTrue(numbered.lineNumberGutterWidthForTest(paint) > 0)
+        assertEquals(listOf(1, 2, 3), numbered.lastDrawnLineNumbersForTest)
+        assertTrue(numbered.lastLineNumberRightForTest <= numbered.lineNumberGutterWidthForTest(paint))
+
+        val plain = renderedSpan(showLineNumbers = false)
+        assertEquals(0, plain.lineNumberGutterWidthForTest(paint))
+        assertTrue(plain.lastDrawnLineNumbersForTest.isEmpty())
+
+        assertNotEquals(
+            readerContentSignature(
+                content = source,
+                renderPlainText = true,
+                themeName = "Paper",
+                fontSize = 16,
+                codeLineNumbers = true,
+            ),
+            readerContentSignature(
+                content = source,
+                renderPlainText = true,
+                themeName = "Paper",
+                fontSize = 16,
+                codeLineNumbers = false,
+            ),
+        )
+    }
+
+    @Test
+    fun wrappedCodeDocument_doesNotRepeatLineNumberOnContinuationRows() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = true
+        ReaderCodeBlockSettings.viewportWidthPx = 240
+        ReaderCodeBlockSettings.viewportTopPx = 0
+        ReaderCodeBlockSettings.viewportHeightPx = 1_200
+        val source = buildString {
+            appendLine("val wrapped = \"" + "abcdefghij".repeat(12) + "\"")
+            append("val last = 1")
+        }
+        val rendered = ReaderFullScreenCodeRenderer.render(
+            context = context,
+            content = source,
+            language = "kotlin",
+            codeHighlightTheme = CodeHighlightTheme.VS_DARK_PLUS,
+            showLineNumbers = true,
+        )
+        val span = rendered.getSpans(
+            0,
+            rendered.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+        val paint = Paint().apply { textSize = 40f }
+        span.prepareForTouch(paint, 240)
+        val bitmap = Bitmap.createBitmap(240, 1_200, Bitmap.Config.ARGB_8888)
+        try {
+            span.drawFullScreenByHost(
+                canvas = Canvas(bitmap),
+                x = 0f,
+                top = 0,
+                bottom = span.requiredHeightForTest(paint),
+                paint = paint,
+                viewportPx = 240,
+            )
+        } finally {
+            bitmap.recycle()
+        }
+
+        assertEquals(listOf(1, 2), span.lastDrawnLineNumbersForTest)
+    }
+
+    @Test
+    fun markdownCodeBlock_neverShowsDocumentLineNumbers() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = true
+        ReaderCodeBlockSettings.viewportWidthPx = 480
+        val rendered = ReaderMarkwonFactory.create(context).toMarkdown(
+            "```kotlin\nfun value() = 42\n```",
+        )
+        val span = rendered.getSpans(
+            0,
+            rendered.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+        val paint = Paint().apply { textSize = 40f }
+        span.prepareForTouch(paint, 480)
+        span.getSize(paint, rendered, 0, 1, Paint.FontMetricsInt())
+
+        assertEquals(0, span.lineNumberGutterWidthForTest(paint))
+    }
+
+    @Test
+    fun fullScreenCode_stickyScrollBarUsesVisibleViewportBottom() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = false
+        ReaderCodeBlockSettings.viewportWidthPx = 240
+        val viewportTop = 5_000
+        val viewportHeight = 600
+        ReaderCodeBlockSettings.viewportTopPx = viewportTop
+        ReaderCodeBlockSettings.viewportHeightPx = viewportHeight
+        val source = buildString {
+            repeat(300) { index ->
+                appendLine("val value$index = \"" + "abcdefghij".repeat(12) + "\"")
+            }
+        }
+        val rendered = ReaderFullScreenCodeRenderer.render(
+            context = context,
+            content = source,
+            language = "kotlin",
+            codeHighlightTheme = CodeHighlightTheme.VS_DARK_PLUS,
+            showLineNumbers = true,
+        )
+        val span = rendered.getSpans(
+            0,
+            rendered.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+        val paint = Paint().apply { textSize = 40f }
+        span.prepareForTouch(paint, 240)
+        val documentHeight = span.requiredHeightForTest(paint)
+        val bitmap = Bitmap.createBitmap(240, viewportHeight, Bitmap.Config.ARGB_8888)
+        try {
+            span.drawFullScreenByHost(
+                canvas = Canvas(bitmap),
+                x = 0f,
+                top = 0,
+                bottom = documentHeight,
+                paint = paint,
+                viewportPx = 240,
+            )
+        } finally {
+            bitmap.recycle()
+        }
+
+        val viewportBottom = (viewportTop + viewportHeight).toFloat()
+        assertTrue(
+            "scrollbar should stay at the visible viewport bottom, " +
+                "bar=${span.lastScrollBarBottomForTest}, viewport=$viewportBottom",
+            span.lastScrollBarBottomForTest > viewportBottom - 20f &&
+                span.lastScrollBarBottomForTest <= viewportBottom,
+        )
+        assertTrue(
+            "scrollbar must not be painted after the entire source document",
+            span.lastScrollBarBottomForTest < documentHeight,
+        )
     }
 
     @Test

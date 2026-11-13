@@ -2508,6 +2508,7 @@ internal fun jumpToGlobalCharInPager(
     codeBlockWrap: Boolean,
     codeHighlightTheme: CodeHighlightTheme = CodeHighlightTheme.DEFAULT,
     codeBlockLanguage: String? = null,
+    codeLineNumbers: Boolean = true,
 ) {
     if (pageSpecs.isEmpty()) {
         onProgress()
@@ -2534,6 +2535,7 @@ internal fun jumpToGlobalCharInPager(
             codeBlockWrap = codeBlockWrap,
             codeHighlightTheme = codeHighlightTheme,
             codeBlockLanguage = codeBlockLanguage,
+            codeLineNumbers = codeLineNumbers,
         )
     } else {
         null

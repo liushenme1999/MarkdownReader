@@ -58,6 +58,7 @@ fun ReadingSettingsScreen(
     val readerPaddingDp by viewModel.readerPaddingDp.collectAsState()
     val lineSpacing by viewModel.readerLineSpacingMultiplier.collectAsState()
     val codeBlockWrap by viewModel.codeBlockWrap.collectAsState()
+    val codeLineNumbers by viewModel.codeLineNumbers.collectAsState()
     val codeHighlightTheme by viewModel.codeHighlightTheme.collectAsState()
     val hideSystemBars by viewModel.hideSystemBars.collectAsState()
     val showTocInLandscape by viewModel.showTocInLandscape.collectAsState()
@@ -165,6 +166,12 @@ fun ReadingSettingsScreen(
                             themes = CodeHighlightTheme.all,
                             selected = codeHighlightTheme,
                             onSelect = viewModel::setCodeHighlightTheme,
+                        )
+                        ReaderSettingsSwitchRow(
+                            title = stringResource(R.string.reader_code_line_numbers),
+                            summary = stringResource(R.string.reader_code_line_numbers_summary),
+                            checked = codeLineNumbers,
+                            onCheckedChange = viewModel::setCodeLineNumbers,
                         )
                     }
                 }

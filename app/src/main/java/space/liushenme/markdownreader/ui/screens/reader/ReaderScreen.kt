@@ -139,6 +139,7 @@ fun ReaderScreen(
     val readerPaddingDp = uiState.readerPaddingDp
     val readerLineSpacingMultiplier = uiState.readerLineSpacingMultiplier
     val codeBlockWrap = uiState.codeBlockWrap
+    val codeLineNumbers = uiState.codeLineNumbers
     val codeHighlightTheme = uiState.codeHighlightTheme
     val hideSystemBarsPref = uiState.hideSystemBars
     val loadError = uiState.loadError
@@ -403,6 +404,7 @@ fun ReaderScreen(
             codeBlockWrap = codeBlockWrap,
             codeHighlightTheme = codeHighlightTheme,
             codeBlockLanguage = codeBlockLanguage,
+            codeLineNumbers = codeLineNumbers,
         )
         stashPendingSavedPositionSnap(
             readerTextView.value,
@@ -924,6 +926,7 @@ fun ReaderScreen(
         currentTheme,
         fontSize,
         codeBlockWrap,
+        codeLineNumbers,
         codeHighlightTheme,
         codeBlockLanguage,
     ) {
@@ -935,6 +938,7 @@ fun ReaderScreen(
             codeBlockWrap = codeBlockWrap,
             codeHighlightTheme = codeHighlightTheme,
             codeBlockLanguage = codeBlockLanguage,
+            codeLineNumbers = codeLineNumbers,
         )
     }
 
@@ -979,6 +983,7 @@ fun ReaderScreen(
             codeBlockWrap = codeBlockWrap,
             codeHighlightTheme = codeHighlightTheme,
             codeBlockLanguage = codeBlockLanguage,
+            codeLineNumbers = codeLineNumbers,
         )
         viewModel.setFinishPromptEnabled(true)
         viewModel.onDocumentEndChanged(reachedEndForChar(charPos))
@@ -2043,6 +2048,7 @@ fun ReaderScreen(
                                             codeBlockWrap = codeBlockWrap,
                                             codeHighlightTheme = codeHighlightTheme,
                                             codeBlockLanguage = codeBlockLanguage,
+                                            codeLineNumbers = codeLineNumbers,
                                             onOpenPositionReady = ::onReaderOpenPositionReady,
                                         )
                                     } else {
@@ -2086,6 +2092,7 @@ fun ReaderScreen(
                                             codeBlockWrap = codeBlockWrap,
                                             codeHighlightTheme = codeHighlightTheme,
                                             codeBlockLanguage = codeBlockLanguage,
+                                            codeLineNumbers = codeLineNumbers,
                                             userScrollEnabled = !pdfPageZoomed,
                                         )
                                     }
@@ -2187,6 +2194,7 @@ fun ReaderScreen(
                 codeBlockWrap = codeBlockWrap,
                 codeHighlightTheme = codeHighlightTheme,
                 codeBlockLanguage = codeBlockLanguage,
+                codeLineNumbers = codeLineNumbers,
             )
         } else if (navigationPlan is ReaderNavigationPlan.PdfVertical) {
             pendingScrollRestoreGlobalChar = null
@@ -2473,6 +2481,7 @@ fun ReaderScreen(
                         codeBlockWrap = codeBlockWrap,
                         codeHighlightTheme = codeHighlightTheme,
                         codeBlockLanguage = codeBlockLanguage,
+                        codeLineNumbers = codeLineNumbers,
                     )
                 } else if (navigationPlan is ReaderNavigationPlan.PdfVertical) {
                     pendingScrollRestoreGlobalChar = null

@@ -77,6 +77,11 @@ class ReaderSettingsRepository @Inject constructor(
         prefs[KEY_CODE_BLOCK_WRAP] ?: DEFAULT_CODE_BLOCK_WRAP
     }
 
+    /** 纯代码文件左侧是否显示源码行号；默认开启。 */
+    val codeLineNumbers: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[KEY_CODE_LINE_NUMBERS] ?: DEFAULT_CODE_LINE_NUMBERS
+    }
+
     /** 全局代码高亮主题；缺失或未知值回退到 VS Light+。 */
     val codeHighlightTheme: Flow<CodeHighlightTheme> = dataStore.data.map { prefs ->
         CodeHighlightTheme.fromStored(prefs[KEY_CODE_HIGHLIGHT_THEME])
@@ -212,6 +217,12 @@ class ReaderSettingsRepository @Inject constructor(
         }
     }
 
+    suspend fun setCodeLineNumbers(show: Boolean) {
+        dataStore.edit { prefs ->
+            prefs[KEY_CODE_LINE_NUMBERS] = show
+        }
+    }
+
     suspend fun setCodeHighlightTheme(theme: CodeHighlightTheme) {
         dataStore.edit { prefs ->
             prefs[KEY_CODE_HIGHLIGHT_THEME] = theme.stableId
@@ -274,6 +285,7 @@ class ReaderSettingsRepository @Inject constructor(
         const val DEFAULT_PADDING_DP = 32
         const val DEFAULT_LINE_SPACING_MULT = 1.5f
         const val DEFAULT_CODE_BLOCK_WRAP = true
+        const val DEFAULT_CODE_LINE_NUMBERS = true
         const val DEFAULT_HIDE_SYSTEM_BARS = true
         const val DEFAULT_SHOW_TOC_IN_LANDSCAPE = true
         const val DEFAULT_HIGHLIGHT_COLOR_ARGB = 0xFFFFFF00.toInt()
@@ -306,6 +318,8 @@ class ReaderSettingsRepository @Inject constructor(
         private val KEY_READER_PADDING_DP = intPreferencesKey("reader_reader_padding_dp")
         private val KEY_LINE_SPACING_MULT = floatPreferencesKey("reader_line_spacing_multiplier")
         private val KEY_CODE_BLOCK_WRAP = booleanPreferencesKey("reader_code_block_wrap")
+        private val KEY_CODE_LINE_NUMBERS =
+            booleanPreferencesKey("reader_code_line_numbers")
         private val KEY_CODE_HIGHLIGHT_THEME =
             stringPreferencesKey("reader_code_highlight_theme")
         private val KEY_HIDE_SYSTEM_BARS = booleanPreferencesKey("reader_hide_system_bars")

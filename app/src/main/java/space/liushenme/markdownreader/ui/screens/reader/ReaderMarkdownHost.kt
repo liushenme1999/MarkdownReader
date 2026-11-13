@@ -137,6 +137,7 @@ internal fun ReaderPagedMarkdownHost(
     pdfFullWidthImages: Boolean = false,
     codeBlockWrap: Boolean = true,
     codeBlockLanguage: String? = null,
+    codeLineNumbers: Boolean = true,
     userScrollEnabled: Boolean = true,
 ) {
     val layoutDirection = LocalLayoutDirection.current
@@ -216,6 +217,7 @@ internal fun ReaderPagedMarkdownHost(
                 pdfFullWidthImages = pdfFullWidthImages,
                 codeBlockWrap = codeBlockWrap,
                 codeBlockLanguage = codeBlockLanguage,
+                codeLineNumbers = codeLineNumbers,
             )
         }
     }

@@ -133,6 +133,13 @@ class ReaderViewModel @Inject constructor(
             initialValue = ReaderSettingsRepository.DEFAULT_CODE_BLOCK_WRAP,
         )
 
+    val codeLineNumbers: StateFlow<Boolean> = readerSettingsRepository.codeLineNumbers
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = ReaderSettingsRepository.DEFAULT_CODE_LINE_NUMBERS,
+        )
+
     val codeHighlightTheme: StateFlow<CodeHighlightTheme> =
         readerSettingsRepository.codeHighlightTheme
             .stateIn(
@@ -284,12 +291,20 @@ class ReaderViewModel @Inject constructor(
 
     private data class InteractionState(
         val codeWrap: Boolean,
+        val codeLineNumbers: Boolean,
         val hideBars: Boolean,
         val showTocInLandscape: Boolean,
         val pageMode: ReaderPageTurnMode,
         val highlightColor: Int,
         val highlightStyle: HighlightStyle,
         val codeHighlightTheme: CodeHighlightTheme,
+    )
+
+    private data class CodeInteractionState(
+        val wrap: Boolean,
+        val lineNumbers: Boolean,
+        val hideBars: Boolean,
+        val showTocInLandscape: Boolean,
     )
 
     private data class RuntimeState(
@@ -329,8 +344,13 @@ class ReaderViewModel @Inject constructor(
             AppearanceState(styles, theme, size, padding, spacing)
         },
         combine(
-            combine(codeBlockWrap, hideSystemBars, showTocInLandscape) { wrap, hideBars, showToc ->
-                Triple(wrap, hideBars, showToc)
+            combine(
+                codeBlockWrap,
+                codeLineNumbers,
+                hideSystemBars,
+                showTocInLandscape,
+            ) { wrap, lineNumbers, hideBars, showToc ->
+                CodeInteractionState(wrap, lineNumbers, hideBars, showToc)
             },
             pageTurnMode,
             lastHighlightColorArgb,
@@ -338,9 +358,10 @@ class ReaderViewModel @Inject constructor(
             codeHighlightTheme,
         ) { base, pageMode, color, style, codeTheme ->
             InteractionState(
-                base.first,
-                base.second,
-                base.third,
+                base.wrap,
+                base.lineNumbers,
+                base.hideBars,
+                base.showTocInLandscape,
                 pageMode,
                 color,
                 style,
@@ -385,6 +406,7 @@ class ReaderViewModel @Inject constructor(
             readerPaddingDp = appearance.padding,
             readerLineSpacingMultiplier = appearance.lineSpacing,
             codeBlockWrap = interaction.codeWrap,
+            codeLineNumbers = interaction.codeLineNumbers,
             hideSystemBars = interaction.hideBars,
             showTocInLandscape = interaction.showTocInLandscape,
             pageTurnMode = interaction.pageMode,
@@ -1097,6 +1119,12 @@ class ReaderViewModel @Inject constructor(
     fun setCodeBlockWrap(enabled: Boolean) {
         viewModelScope.launch {
             readerSettingsRepository.setCodeBlockWrap(enabled)
+        }
+    }
+
+    fun setCodeLineNumbers(show: Boolean) {
+        viewModelScope.launch {
+            readerSettingsRepository.setCodeLineNumbers(show)
         }
     }
 

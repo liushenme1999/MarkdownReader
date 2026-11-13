@@ -424,6 +424,8 @@
     <string name="reading_settings_section_typography">字型與排版</string>
     <string name="reading_settings_section_display">閱讀畫面</string>
     <string name="reading_settings_section_page_turn">翻頁方式</string>
+    <string name="reader_code_line_numbers">顯示行號</string>
+    <string name="reader_code_line_numbers_summary">純程式碼檔案預覽時在左側顯示原始碼行號</string>
 
     <string name="statistics_title">閱讀統計</string>
     <string name="statistics_overview">閱讀總覽</string>

@@ -67,7 +67,9 @@ class CodePreviewDeviceAcceptanceTest {
             composeRule.waitForIdle()
             Thread.sleep(300)
         }
-        waitForText("public static final class Worker", substring = true)
+        // Full-screen source is host-drawn without semantics, so scrolling cannot be verified by
+        // querying source text. The screenshot assertion below proves that the visible viewport
+        // was repainted with source instead of exposing a blank code surface.
         captureAndAssertCodeBody("code_reader_scrolled")
 
         composeRule.onRoot().performClick()

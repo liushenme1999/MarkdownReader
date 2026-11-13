@@ -42,6 +42,7 @@ data class ReaderUiState(
     val readerPaddingDp: Int = 32,
     val readerLineSpacingMultiplier: Float = 1.5f,
     val codeBlockWrap: Boolean = true,
+    val codeLineNumbers: Boolean = true,
     val codeHighlightTheme: CodeHighlightTheme = CodeHighlightTheme.DEFAULT,
     val hideSystemBars: Boolean = true,
     val showTocInLandscape: Boolean = true,

@@ -113,6 +113,7 @@ import space.liushenme.markdownreader.markdown.ReaderMarkwonFactory
 import space.liushenme.markdownreader.markdown.ReaderScrollableCodeBlockSpan
 import space.liushenme.markdownreader.markdown.CodeBlockHighlightRange
 import space.liushenme.markdownreader.markdown.CodeHighlightTheme
+import space.liushenme.markdownreader.markdown.CodeSourceAnchor
 import space.liushenme.markdownreader.markdown.CodeSourceViewport
 import space.liushenme.markdownreader.markdown.ReaderTableSpacing
 import space.liushenme.markdownreader.ui.screens.reader.anchor.sourceSpanForRenderedQuote
@@ -155,9 +156,11 @@ internal fun readerContentSignature(
     codeBlockWrap: Boolean = true,
     codeHighlightTheme: CodeHighlightTheme = CodeHighlightTheme.DEFAULT,
     codeBlockLanguage: String? = null,
+    codeLineNumbers: Boolean = true,
 ): String =
     "${renderPlainText}_${content.length}_${content.hashCode()}_${themeName}_${fontSize}_w$codeBlockWrap" +
-        "_code=${codeBlockLanguage.orEmpty()}_syntax=${codeHighlightTheme.stableId}"
+        "_code=${codeBlockLanguage.orEmpty()}_syntax=${codeHighlightTheme.stableId}" +
+        "_lineNumbers=$codeLineNumbers"
 
 internal fun readerHighlightSignature(
     highlights: List<HighlightEntity>,
@@ -175,8 +178,9 @@ internal fun readerRenderSignature(
     codeBlockWrap: Boolean = true,
     codeHighlightTheme: CodeHighlightTheme = CodeHighlightTheme.DEFAULT,
     codeBlockLanguage: String? = null,
+    codeLineNumbers: Boolean = true,
 ): String =
-    "${readerContentSignature(content, renderPlainText, themeName, fontSize, codeBlockWrap, codeHighlightTheme, codeBlockLanguage)}" +
+    "${readerContentSignature(content, renderPlainText, themeName, fontSize, codeBlockWrap, codeHighlightTheme, codeBlockLanguage, codeLineNumbers)}" +
         "|${readerHighlightSignature(highlights)}"
 
 /** 把最新划线状态挂到 TextView，供异步 Markdown/纯文本渲染完成时读取（避免闭包捕获空列表）。 */
@@ -233,6 +237,7 @@ internal fun applyReaderTextContent(
     codeBlockWrap: Boolean = true,
     codeHighlightTheme: CodeHighlightTheme = CodeHighlightTheme.DEFAULT,
     codeBlockLanguage: String? = null,
+    codeLineNumbers: Boolean = true,
 ) {
     syncReaderPendingHighlights(
         textView = textView,
@@ -270,6 +275,7 @@ internal fun applyReaderTextContent(
             codeBlockWrap = codeBlockWrap,
             codeHighlightTheme = codeHighlightTheme,
             codeBlockLanguage = codeBlockLanguage,
+            codeLineNumbers = codeLineNumbers,
         )
         return
     }
@@ -298,6 +304,7 @@ internal fun applyMarkdownContent(
     codeBlockWrap: Boolean = true,
     codeHighlightTheme: CodeHighlightTheme = CodeHighlightTheme.DEFAULT,
     codeBlockLanguage: String? = null,
+    codeLineNumbers: Boolean = true,
 ) {
     fun finishMarkdownRender() {
         textView.setTag(R.id.reader_markdown_render_complete, renderSig)
@@ -376,6 +383,7 @@ internal fun applyMarkdownContent(
                     codeHighlightTheme = codeHighlightTheme,
                     layoutPaint = codeLayoutPaint,
                     viewportWidthPx = measuredViewport,
+                    showLineNumbers = codeLineNumbers,
                 )
             }.getOrElse {
                 readerOpenDbg("fullScreenCodePrepare failed ${it.javaClass.simpleName}")
@@ -393,6 +401,12 @@ internal fun applyMarkdownContent(
                 }
                 textView.setTag(R.id.markdown_anchor_index, MarkdownAnchorIndex())
                 refreshStashedExpandAnchorBeforeContentSwap(textView)
+                (textView as? SafeReaderTextView)
+                    ?.let { host ->
+                        host.captureFullScreenCodeViewportForRestore()?.let(
+                            host::stashFullScreenCodeViewportRestore,
+                        )
+                    }
                 val tSet0 = android.os.SystemClock.uptimeMillis()
                 textView.setText(rendered, TextView.BufferType.SPANNABLE)
                 readerOpenDbg("fullScreenCodeSetText +${android.os.SystemClock.uptimeMillis() - tSet0}ms")
@@ -535,6 +549,7 @@ internal fun MarkdownReaderView(
     pdfFullWidthImages: Boolean = false,
     codeBlockWrap: Boolean = true,
     codeBlockLanguage: String? = null,
+    codeLineNumbers: Boolean = true,
     onOpenPositionReady: () -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -599,6 +614,7 @@ internal fun MarkdownReaderView(
                     codeBlockWrap = codeBlockWrap,
                     codeHighlightTheme = codeHighlightTheme,
                     codeBlockLanguage = codeBlockLanguage,
+                    codeLineNumbers = codeLineNumbers,
                 )
                 syncReaderPendingHighlights(
                     textView = this,
@@ -620,6 +636,7 @@ internal fun MarkdownReaderView(
                     codeBlockWrap = codeBlockWrap,
                     codeHighlightTheme = codeHighlightTheme,
                     codeBlockLanguage = codeBlockLanguage,
+                    codeLineNumbers = codeLineNumbers,
                 )
 
                 this.onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange
@@ -664,6 +681,7 @@ internal fun MarkdownReaderView(
                 codeBlockWrap = codeBlockWrap,
                 codeHighlightTheme = codeHighlightTheme,
                 codeBlockLanguage = codeBlockLanguage,
+                codeLineNumbers = codeLineNumbers,
             )
             val highlightSig = readerHighlightSignature(highlights)
             val highlightColorArgb = theme.highlightColor.toArgb()
@@ -732,6 +750,7 @@ internal fun MarkdownReaderView(
                     codeBlockWrap = codeBlockWrap,
                     codeHighlightTheme = codeHighlightTheme,
                     codeBlockLanguage = codeBlockLanguage,
+                    codeLineNumbers = codeLineNumbers,
                 )
             } else if (highlightsChanged) {
                 val renderComplete = textView.getTag(R.id.reader_markdown_render_complete) as? String
@@ -1063,6 +1082,13 @@ internal fun shouldSkipBringPointIntoViewForVisibleTallLine(
     return lineBottom > scrollY && lineTop < scrollY + innerHeight
 }
 
+internal data class FullScreenCodeViewportRestore(
+    val anchor: CodeSourceAnchor,
+    val horizontalScrollX: Int,
+    val replacedSpan: ReaderScrollableCodeBlockSpan,
+    val replacedText: CharSequence,
+)
+
 /**
  * 阅读器 TextView：参考 Legado 自管触摸选区、文字高亮和首尾句柄；
  * 保留 textIsSelectable 仅用于无障碍，触摸路径不与系统 Editor 混用。
@@ -1151,6 +1177,7 @@ internal open class SafeReaderTextView(context: Context) : TextView(context) {
     private var cachedCodeViewportWidth = -1
     private var cachedCodeViewportOriginY = Float.NaN
     private var cachedCodeViewport: CodeSourceViewport? = null
+    private var pendingFullScreenCodeViewportRestore: FullScreenCodeViewportRestore? = null
 
     fun registerDraftHighlight(highlightId: Long) {
         if (highlightId < 0L) activeDraftHighlightIds += highlightId
@@ -2129,6 +2156,94 @@ internal open class SafeReaderTextView(context: Context) : TextView(context) {
         return sourceViewport
     }
 
+    /**
+     * Captures the full-screen code viewport before its span is replaced by a new theme or
+     * line-number configuration. The replacement span has a new inner layout, so a plain
+     * scrollY snapshot would land on an unrelated source line after reflow.
+     */
+    internal fun captureFullScreenCodeViewportForRestore(): FullScreenCodeViewportRestore? {
+        refreshCodeViewportRedrawState()
+        val span = fullScreenCodeSpan ?: return null
+        val currentText = text ?: return null
+        val origin = codeSpanOrigin(span) ?: return null
+        val viewportTop = (scrollY - totalPaddingTop).toFloat()
+        val anchor = span.sourceAnchorAtLayoutY(
+            contentY = viewportTop,
+            originTop = origin.second,
+            paint = paint,
+        ) ?: return null
+        readerOpenDbg(
+            "codeRestoreCapture scrollY=$scrollY anchor=${anchor.sourceOffset} " +
+                "lineOffset=${anchor.inLineOffsetPx.roundToInt()} horizontal=${span.scrollX} " +
+                "layoutHeight=${layout?.height ?: -1} contentHeight=${span.contentHeight(paint)}",
+        )
+        return FullScreenCodeViewportRestore(
+            anchor = anchor,
+            horizontalScrollX = span.scrollX,
+            replacedSpan = span,
+            replacedText = currentText,
+        )
+    }
+
+    internal fun stashFullScreenCodeViewportRestore(restore: FullScreenCodeViewportRestore) {
+        pendingFullScreenCodeViewportRestore = restore
+    }
+
+    internal val hasPendingFullScreenCodeViewportRestore: Boolean
+        get() = pendingFullScreenCodeViewportRestore != null
+
+    internal fun applyFullScreenCodeViewportRestore(): Boolean {
+        val restore = pendingFullScreenCodeViewportRestore ?: return false
+        refreshCodeViewportRedrawState()
+        val span = fullScreenCodeSpan
+        if (span == null) {
+            if (text !== restore.replacedText) {
+                pendingFullScreenCodeViewportRestore = null
+            }
+            return false
+        }
+        if (span === restore.replacedSpan) return false
+        val textLayout = layout ?: return false
+        if (textLayout.text.length != text?.length) return false
+        val origin = codeSpanOrigin(span) ?: return false
+        span.prepareForTouch(paint, codeBlockViewportWidth())
+        val contentHeight = span.contentHeight(paint)
+        if (textLayout.height < contentHeight) {
+            // TextView can publish a transient one-line layout after setText. Clamping the
+            // restored source anchor against that layout clears the only copy of the old
+            // viewport and leaves the reader at line 1 while the sticky outline stays stale.
+            readerOpenDbg(
+                "codeRestoreDefer layoutHeight=${textLayout.height} contentHeight=$contentHeight " +
+                    "scrollY=$scrollY anchor=${restore.anchor.sourceOffset}",
+            )
+            post {
+                if (pendingFullScreenCodeViewportRestore === restore) {
+                    applyFullScreenCodeViewportRestore()
+                }
+            }
+            return false
+        }
+        val innerY = span.layoutYForSourceAnchor(
+            anchor = restore.anchor,
+            originTop = origin.second,
+            paint = paint,
+        ) ?: return false
+        span.restoreScrollX(restore.horizontalScrollX)
+        val innerHeight = (height - totalPaddingTop - totalPaddingBottom).coerceAtLeast(0)
+        val maxScroll = (textLayout.height - innerHeight).coerceAtLeast(0)
+        val target = (totalPaddingTop + innerY).roundToInt().coerceIn(0, maxScroll)
+        pendingFullScreenCodeViewportRestore = null
+        readerOpenDbg(
+            "codeRestoreApply anchor=${restore.anchor.sourceOffset} innerY=${innerY.roundToInt()} " +
+                "target=$target before=$scrollY max=$maxScroll layoutHeight=${textLayout.height} " +
+                "contentHeight=$contentHeight horizontal=${span.scrollX}",
+        )
+        if (target != scrollY) {
+            super.scrollTo(scrollX, target)
+        }
+        return true
+    }
+
     private fun codeBlockViewportWidth(): Int =
         (width - totalPaddingLeft - totalPaddingRight).coerceAtLeast(0)
 
@@ -2982,6 +3097,7 @@ internal open class SafeReaderTextView(context: Context) : TextView(context) {
             }
             return
         }
+        if (applyFullScreenCodeViewportRestore()) return
         maintainViewportCharAnchorAfterLayout(snapTextLen, snapChar, snapInLineOffset)
     }
 

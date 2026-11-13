@@ -2,6 +2,7 @@ package space.liushenme.markdownreader.data.repository
 
 import android.content.Context
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -83,7 +84,30 @@ class ReaderSettingsRepositoryTest {
         )
     }
 
+    @Test
+    fun codeLineNumbers_defaultsToVisible() = runBlocking {
+        assertEquals(true, ReaderSettingsRepository.DEFAULT_CODE_LINE_NUMBERS)
+        assertTrue(repository.codeLineNumbers.first())
+    }
+
+    @Test
+    fun codeLineNumbers_persistsAndParticipatesInSharedBackup() = runBlocking {
+        repository.setCodeLineNumbers(false)
+
+        assertFalse(repository.codeLineNumbers.first())
+        assertFalse(ReaderSettingsRepository(context).codeLineNumbers.first())
+        assertFalse(CODE_LINE_NUMBERS_KEY in ReaderSettingsRepository.DEVICE_LOCAL_PREF_KEYS)
+        assertTrue(isSharedPreferenceKeyBackedUp(CODE_LINE_NUMBERS_KEY))
+        assertEquals(
+            false,
+            readerPreferencesDataStore(context).data.first()[
+                booleanPreferencesKey(CODE_LINE_NUMBERS_KEY)
+            ],
+        )
+    }
+
     private companion object {
         const val CODE_HIGHLIGHT_THEME_KEY = "reader_code_highlight_theme"
+        const val CODE_LINE_NUMBERS_KEY = "reader_code_line_numbers"
     }
 }

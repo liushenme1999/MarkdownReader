@@ -424,6 +424,8 @@
     <string name="reading_settings_section_typography">Typography</string>
     <string name="reading_settings_section_display">Reading screen</string>
     <string name="reading_settings_section_page_turn">Page turn</string>
+    <string name="reader_code_line_numbers">Show line numbers</string>
+    <string name="reader_code_line_numbers_summary">Show source line numbers on the left for standalone code files</string>
 
     <string name="statistics_title">Reading stats</string>
     <string name="statistics_overview">Overview</string>

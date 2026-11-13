@@ -182,6 +182,7 @@ internal fun ReaderSettingsSheet(
     readerPaddingDp: Int,
     readerLineSpacingMultiplier: Float,
     codeBlockWrap: Boolean,
+    codeLineNumbers: Boolean,
     codeHighlightTheme: CodeHighlightTheme,
     hideSystemBars: Boolean,
     pageTurnMode: ReaderPageTurnMode,
@@ -194,6 +195,7 @@ internal fun ReaderSettingsSheet(
     onPaddingDpChange: (Int) -> Unit,
     onLineSpacingChange: (Float) -> Unit,
     onCodeBlockWrapChange: (Boolean) -> Unit,
+    onCodeLineNumbersChange: (Boolean) -> Unit,
     onCodeHighlightThemeChange: (CodeHighlightTheme) -> Unit,
     onHideSystemBarsChange: (Boolean) -> Unit,
     onPageTurnModeChange: (ReaderPageTurnMode) -> Unit,
@@ -250,6 +252,12 @@ internal fun ReaderSettingsSheet(
                             themes = CodeHighlightTheme.all,
                             selected = codeHighlightTheme,
                             onSelect = onCodeHighlightThemeChange,
+                        )
+                        ReaderSettingsSwitchRow(
+                            title = stringResource(R.string.reader_code_line_numbers),
+                            summary = stringResource(R.string.reader_code_line_numbers_summary),
+                            checked = codeLineNumbers,
+                            onCheckedChange = onCodeLineNumbersChange,
                         )
                     }
                 }
