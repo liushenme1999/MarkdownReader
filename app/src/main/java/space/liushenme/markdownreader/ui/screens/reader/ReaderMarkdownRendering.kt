@@ -2413,8 +2413,23 @@ internal open class SafeReaderTextView(context: Context) : TextView(context) {
         return false
     }
 
-    /** 代码块自身持有横滑状态，View 失效即可重绘，避免每帧重设 span 触发整行重排。 */
+    /**
+     * TextView/StaticLayout 在部分硬件加速设备上会缓存 ReplacementSpan 所在行的显示列表；
+     * 仅 invalidate() 不一定重新调用 draw。普通 Markdown 代码块需重设原 span 通知
+     * ChangeWatcher 该行已变化。全屏代码由宿主 View 直接绘制，继续跳过重设以避免大文件重排。
+     */
     private fun invalidateMutableCodeBlockSpan(span: ReaderScrollableCodeBlockSpan) {
+        if (!span.fullScreenCodeDocument) {
+            val body = text as? Spannable
+            if (body != null) {
+                val start = body.getSpanStart(span)
+                val end = body.getSpanEnd(span)
+                if (start >= 0 && end > start) {
+                    val flags = body.getSpanFlags(span)
+                    body.setSpan(span, start, end, flags)
+                }
+            }
+        }
         invalidate()
         postInvalidateOnAnimation()
     }
