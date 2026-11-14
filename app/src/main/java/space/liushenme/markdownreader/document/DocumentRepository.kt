@@ -188,7 +188,11 @@ class DocumentRepository @Inject constructor(
             ImportedBookFormat.CODE -> DocumentFormat.Code
         }
         val codeLanguage = if (detectedFormat.isCode) {
-            CodeFileLanguage.fromFileName(latest.gitRelativePath ?: latest.filePath)?.token
+            // 本地导入的代码文件 filePath 是 content:// URI（没有扩展名），回退到书名推断语言。
+            (
+                CodeFileLanguage.fromFileName(latest.gitRelativePath ?: latest.filePath)
+                    ?: CodeFileLanguage.fromFileName(latest.title)
+                )?.token
         } else {
             null
         }

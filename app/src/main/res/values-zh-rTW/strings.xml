@@ -98,7 +98,7 @@
     <string name="bookshelf_toast_sync_uptodate">進度已是最新</string>
     <string name="bookshelf_toast_sync_failed">同步進度失敗：%1$s</string>
     <string name="bookshelf_empty_title">書架空空如也</string>
-    <string name="bookshelf_empty_subtitle">支援 Markdown、TXT、PDF，以及公開 GitHub 專案</string>
+    <string name="bookshelf_empty_subtitle">支援 Markdown、TXT、PDF、HTML、原始碼檔，以及公開 GitHub 專案</string>
     <string name="bookshelf_import">匯入</string>
     <string name="bookshelf_import_cd">匯入書籍</string>
     <string name="bookshelf_continue_reading">繼續閱讀</string>
@@ -133,7 +133,7 @@
     <string name="dialog_group_name_label">自訂分組</string>
     <string name="dialog_group_name_hint">選擇既有分組，或輸入新分組名稱；留空則取消分組</string>
     <string name="dialog_import_book_title">匯入書籍</string>
-    <string name="dialog_import_supported_formats">支援 Markdown、TXT、PDF，以及公開 GitHub 專案</string>
+    <string name="dialog_import_supported_formats">支援 Markdown、TXT、PDF、HTML、原始碼檔，以及公開 GitHub 專案</string>
     <string name="dialog_import_from_local">從本機匯入</string>
     <string name="dialog_import_from_url">從網址匯入</string>
     <string name="dialog_import_from_github">從 GitHub 匯入專案</string>
@@ -209,6 +209,7 @@
     <string name="reader_title_reading">閱讀中</string>
     <string name="reader_back_to_bookshelf">返回書架</string>
     <string name="snackbar_bookmark_added">已新增書籤</string>
+    <string name="snackbar_bookmark_swipe_hint">右滑已加書籤 · 在「書籤」列表可查看或跳轉</string>
     <string name="snackbar_bookmark_removed">已取消書籤</string>
     <string name="reader_toc_empty_plain_text">未識別到章節。請將章節標題單獨成行，例如：\n第一章 …、第1節 …、Chapter 1 …</string>
     <string name="reader_toc_empty_markdown">未識別到標題。請使用 Markdown ATX 語法，例如：\n# 一級標題\n## 二級標題</string>
@@ -334,6 +335,8 @@
     <string name="about_supported_formats">支援的檔案格式：</string>
     <string name="about_format_md">  - Markdown (.md)</string>
     <string name="about_format_txt">  - 文字檔 (.txt)</string>
+    <string name="about_format_html">  - 網頁檔 (.html / .htm)</string>
+    <string name="about_format_code">  - 原始碼檔 (.py / .js / .ts / .java 等)</string>
     <string name="about_format_pdf">  - PDF (.pdf)</string>
     <string name="about_description">一款輕量級的 Markdown 閱讀器，支援閱讀統計、筆記管理等功能。</string>
     <string name="icp_filing_hint">查詢備案資訊</string>

@@ -58,4 +58,48 @@ object CodeFileLanguage {
     }
 
     fun isCodeFile(name: String?): Boolean = fromFileName(name) != null
+
+    /** 全部受支持的代码扩展名（本地导入白名单与标题清理复用，避免两处清单漂移）。 */
+    val supportedExtensions: Set<String> = BY_EXTENSION.keys
+
+    /**
+     * 本地文件选择器的 MIME 白名单：代码文件在 Android 上常见多种 MIME
+     * （部分机型甚至没有注册扩展名 → 无 MIME），这里尽量列全，让源码文件可选。
+     * 选中后仍以扩展名为准（见 [BookImportSupport.detectFormat]）。
+     */
+    val importMimeTypes: Array<String> = arrayOf(
+        "text/x-python",
+        "application/x-python",
+        "text/x-script.python",
+        "text/javascript",
+        "application/javascript",
+        "application/x-javascript",
+        "text/typescript",
+        "application/typescript",
+        "application/json",
+        "application/xml",
+        "text/xml",
+        "text/css",
+        "text/x-scss",
+        "text/x-less",
+        "text/x-java-source",
+        "application/x-kotlin",
+        "text/x-kotlin",
+        "application/x-sh",
+        "text/x-shellscript",
+        "text/x-c",
+        "text/x-csrc",
+        "text/x-c++src",
+        "text/x-go",
+        "text/x-rust",
+        "text/x-ruby",
+        "application/x-httpd-php",
+        "text/x-php",
+        "text/x-swift",
+        "text/x-vue",
+        "application/toml",
+        "application/x-yaml",
+        "text/x-yaml",
+        "application/ini",
+    )
 }

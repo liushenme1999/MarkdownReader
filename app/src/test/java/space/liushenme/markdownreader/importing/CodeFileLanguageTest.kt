@@ -67,9 +67,14 @@ class CodeFileLanguageTest {
     }
 
     @Test
-    fun regularImporterKeepsExistingUnknownExtensionFallback() {
-        assertEquals(ImportedBookFormat.TXT, ImportedBookFormat.fromFileName("App.vue"))
-        assertEquals(ImportedBookFormat.TXT, ImportedBookFormat.fromFileName("Main.kt"))
+    fun regularImporterDetectsCodeFilesButKeepsDocumentFormats() {
+        // 本地导入现在也支持源码文件（全屏代码阅读 + 高亮），语言按扩展名推断。
+        assertEquals(ImportedBookFormat.CODE, ImportedBookFormat.fromFileName("App.vue"))
+        assertEquals(ImportedBookFormat.CODE, ImportedBookFormat.fromFileName("Main.kt"))
+        // 文档类扩展名仍走各自格式，不被代码分支吞掉。
         assertEquals(ImportedBookFormat.HTML, ImportedBookFormat.fromFileName("page.html"))
+        assertEquals(ImportedBookFormat.MARKDOWN, ImportedBookFormat.fromFileName("notes.md"))
+        // 完全未知的扩展名仍回退纯文本。
+        assertEquals(ImportedBookFormat.TXT, ImportedBookFormat.fromFileName("data.unknown"))
     }
 }

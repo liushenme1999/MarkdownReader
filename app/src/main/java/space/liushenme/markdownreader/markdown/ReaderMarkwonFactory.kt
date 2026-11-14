@@ -65,6 +65,10 @@ object ReaderMarkwonFactory {
                         .addSchemeHandler(FileSchemeHandler.create())
                         .addSchemeHandler(CachedNetworkSchemeHandler.create(appContext))
                         .addSchemeHandler(DiagramSchemeHandler.create(appContext))
+                        // Git 项目与网络图片中的 SVG：FileSchemeHandler/网络缓存按扩展名
+                        // 产出 image/svg+xml。用带兼容性清洗的解码器（Mermaid 导出的
+                        // SVG2 标记会让原生 AndroidSVG 解析失败，整图空白）。
+                        .addMediaDecoder(SanitizedSvgMediaDecoder(appContext.resources))
                         .placeholderProvider { drawable ->
                             NetworkImagePlaceholderProvider.provide(appContext, drawable)
                         }

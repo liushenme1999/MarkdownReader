@@ -264,13 +264,19 @@ internal fun PdfContinuousReader(
     }
 
     val decodeWidth = pdfDecodeWidthForScale(viewportW, settleScale, PdfPageRenderSize.MAX_WIDTH)
-    LaunchedEffect(listState, settleScale, viewportH, pages) {
+    // 缩放过程中 heights 已经变化、而 LazyListState 仍是旧布局，此时算出的可见页区间不可靠：
+    // 若据此淘汰「不可见」页，会把用户正在看的那一页从缓存里移除（旧实现还会连带 recycle），
+    // 放大后就出现空白。因此捏合期间跳过淘汰，手势结束（settleScale 变化）后再按稳定布局重算。
+    // 额外多留 2 页余量，避免边界处误判把正在显示的页丢掉。
+    LaunchedEffect(listState, settleScale, viewportH, pages, pinching) {
+        if (pinching) return@LaunchedEffect
         snapshotFlow {
             listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
         }.collect {
+            if (pinching) return@collect
             if (viewportH <= 0f || heights.isEmpty()) return@collect
             val y = currentScrollY()
-            val visible = pdfVisiblePageIndices(y, viewportH, heights, gap)
+            val visible = pdfVisiblePageIndices(y, viewportH, heights, gap, extra = 2)
             cache.retainPaths(visible.map { pages[it].path }.toSet())
         }
     }

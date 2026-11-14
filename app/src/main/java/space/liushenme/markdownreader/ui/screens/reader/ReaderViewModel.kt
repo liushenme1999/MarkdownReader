@@ -155,6 +155,21 @@ class ReaderViewModel @Inject constructor(
             initialValue = ReaderSettingsRepository.DEFAULT_HIDE_SYSTEM_BARS,
         )
 
+    /**
+     * 右滑加书签的首次引导是否还没展示过。
+     * 直接读 DataStore（suspend），不走 StateFlow：该 UI 只在一处临时读取，
+     * 用 stateIn(WhileSubscribed) 的 `.value` 会因为无人订阅而永远停在初始值，导致反复提示。
+     */
+    suspend fun shouldShowSwipeBookmarkHint(): Boolean =
+        readerSettingsRepository.swipeBookmarkHintShown.first().not()
+
+    /** 记录右滑书签引导已展示，避免每次命中手势都弹说明。 */
+    fun markSwipeBookmarkHintShown() {
+        viewModelScope.launch {
+            readerSettingsRepository.setSwipeBookmarkHintShown(true)
+        }
+    }
+
     val showTocInLandscape: StateFlow<Boolean> = readerSettingsRepository.showTocInLandscape
         .stateIn(
             scope = viewModelScope,

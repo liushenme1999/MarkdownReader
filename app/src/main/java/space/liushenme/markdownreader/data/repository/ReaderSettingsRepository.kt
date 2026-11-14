@@ -92,6 +92,14 @@ class ReaderSettingsRepository @Inject constructor(
         prefs[KEY_HIDE_SYSTEM_BARS] ?: DEFAULT_HIDE_SYSTEM_BARS
     }
 
+    /**
+     * 右滑加书签是隐藏手势，首次触发时给一次说明提示，之后不再打扰。
+     * true 表示提示已展示过。
+     */
+    val swipeBookmarkHintShown: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[KEY_SWIPE_BOOKMARK_HINT_SHOWN] ?: false
+    }
+
     /** 横屏阅读时是否显示左侧目录栏；默认开启，竖屏布局不会使用该开关。 */
     val showTocInLandscape: Flow<Boolean> = dataStore.data.map { prefs ->
         prefs[KEY_SHOW_TOC_IN_LANDSCAPE] ?: DEFAULT_SHOW_TOC_IN_LANDSCAPE
@@ -235,6 +243,12 @@ class ReaderSettingsRepository @Inject constructor(
         }
     }
 
+    suspend fun setSwipeBookmarkHintShown(shown: Boolean) {
+        dataStore.edit { prefs ->
+            prefs[KEY_SWIPE_BOOKMARK_HINT_SHOWN] = shown
+        }
+    }
+
     suspend fun setShowTocInLandscape(show: Boolean) {
         dataStore.edit { prefs ->
             prefs[KEY_SHOW_TOC_IN_LANDSCAPE] = show
@@ -323,6 +337,8 @@ class ReaderSettingsRepository @Inject constructor(
         private val KEY_CODE_HIGHLIGHT_THEME =
             stringPreferencesKey("reader_code_highlight_theme")
         private val KEY_HIDE_SYSTEM_BARS = booleanPreferencesKey("reader_hide_system_bars")
+        private val KEY_SWIPE_BOOKMARK_HINT_SHOWN =
+            booleanPreferencesKey("reader_swipe_bookmark_hint_shown")
         private val KEY_SHOW_TOC_IN_LANDSCAPE = booleanPreferencesKey("reader_show_toc_in_landscape")
         private val KEY_LAST_HIGHLIGHT_COLOR = intPreferencesKey("reader_last_highlight_color")
         private val KEY_LAST_HIGHLIGHT_STYLE = stringPreferencesKey("reader_last_highlight_style")

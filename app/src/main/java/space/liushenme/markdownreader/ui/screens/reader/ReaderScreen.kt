@@ -152,11 +152,16 @@ fun ReaderScreen(
     val documentFormat = uiState.documentSnapshot?.document?.format
     val importFormat = book?.let { ImportedBookFormat.fromStored(it.importFormat) }
     val isCodeBook = documentFormat == DocumentFormat.Code || importFormat?.isCode == true
-    val codeBlockLanguage = remember(isCodeBook, book?.gitRelativePath, book?.filePath) {
+    val codeBlockLanguage = remember(isCodeBook, book?.gitRelativePath, book?.filePath, book?.title) {
         if (!isCodeBook) {
             null
         } else {
-            CodeFileLanguage.fromFileName(book?.gitRelativePath ?: book?.filePath)?.token ?: "text"
+            // Git 项目用相对路径；本地导入的代码文件 filePath 是 content:// URI（无扩展名），
+            // 回退到保留扩展名的书名推断语言。
+            (
+                CodeFileLanguage.fromFileName(book?.gitRelativePath ?: book?.filePath)
+                    ?: CodeFileLanguage.fromFileName(book?.title)
+                )?.token ?: "text"
         }
     }
     val isPdfBook = !isCodeBook && (
@@ -285,15 +290,31 @@ fun ReaderScreen(
     val readingTitleFallback = stringResource(R.string.reader_title_reading)
     val snackbarBookmarkAdded = stringResource(R.string.snackbar_bookmark_added)
     val snackbarBookmarkRemoved = stringResource(R.string.snackbar_bookmark_removed)
+    val snackbarBookmarkSwipeHint = stringResource(R.string.snackbar_bookmark_swipe_hint)
 
-    LaunchedEffect(viewModel, bookId, snackbarBookmarkAdded, snackbarBookmarkRemoved) {
+    LaunchedEffect(
+        viewModel,
+        bookId,
+        snackbarBookmarkAdded,
+        snackbarBookmarkRemoved,
+        snackbarBookmarkSwipeHint,
+    ) {
         viewModel.effects.collect { effect ->
             when (effect) {
                 is ReaderEffect.BookLoaded -> if (effect.bookId == bookId) showTopBar = false
                 is ReaderEffect.LoadFailed -> Unit
-                is ReaderEffect.BookmarkToggled -> snackbarHostState.showBriefSnackbar(
-                    if (effect.added) snackbarBookmarkAdded else snackbarBookmarkRemoved,
-                )
+                is ReaderEffect.BookmarkToggled -> {
+                    // 右滑加书签是隐藏手势：首次触发时顺带说明怎么找到它，之后只提示结果。
+                    val firstAdd = effect.added && viewModel.shouldShowSwipeBookmarkHint()
+                    if (firstAdd) viewModel.markSwipeBookmarkHintShown()
+                    snackbarHostState.showBriefSnackbar(
+                        when {
+                            firstAdd -> snackbarBookmarkSwipeHint
+                            effect.added -> snackbarBookmarkAdded
+                            else -> snackbarBookmarkRemoved
+                        },
+                    )
+                }
             }
         }
     }
@@ -2540,6 +2561,21 @@ fun ReaderScreen(
                         reachedEnd = reachedEndForChar(navigationPlan.charPosition),
                     )
                     prefetchUpTargetChar = if (winStart > 0) winStart else -1
+                    // 跳转触发的 scrollTo(0,0)/换窗过程会让旧的滚动回调以旧视口（窗口起点附近）
+                    // 晚到覆盖进度（表现为目录跳转后顶栏仍显示 0%）。这里在渲染稳定后重断言一次
+                    // 目标进度；若用户已实际滚动（视口明显偏离章节起点），尊重用户位置不再纠正。
+                    val tocJumpTargetChar = navigationPlan.charPosition
+                    scope.launch {
+                        delay(600)
+                        val top = currentTopGlobalChar() ?: return@launch
+                        val drift = kotlin.math.abs(top - tocJumpTargetChar)
+                        if (drift <= (contentLen / 20).coerceAtLeast(64)) {
+                            viewModel.updateReadingProgressAtCharNow(
+                                tocJumpTargetChar,
+                                reachedEnd = reachedEndForChar(tocJumpTargetChar),
+                            )
+                        }
+                    }
                 }
             }
             showToc = false

@@ -251,7 +251,17 @@ fun AboutScreen(
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                         )
                         Text(
+                            text = stringResource(R.string.about_format_html).trim(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        )
+                        Text(
                             text = stringResource(R.string.about_format_pdf).trim(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        )
+                        Text(
+                            text = stringResource(R.string.about_format_code).trim(),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                         )

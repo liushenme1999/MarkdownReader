@@ -8,8 +8,9 @@ import java.net.URI
 object BookImportSupport {
 
     /**
-     * 系统文件选择器 MIME 过滤：仅展示 Markdown / TXT / PDF / HTML。
+     * 系统文件选择器 MIME 过滤：Markdown / TXT / PDF / HTML + 常见源码文件。
      * 不含 application/octet-stream，避免其它二进制文件混入列表；目录仍可正常浏览进入。
+     * 代码文件扩展名与语言映射见 [CodeFileLanguage]（单一清单来源）。
      */
     val importMimeTypes: Array<String> = arrayOf(
         "text/markdown",
@@ -17,14 +18,15 @@ object BookImportSupport {
         "text/plain",
         "application/pdf",
         "text/html",
+        *CodeFileLanguage.importMimeTypes,
     )
 
     private val SUPPORTED_EXTENSIONS = setOf(
         "md", "markdown", "mdown", "mkd",
         "txt", "text", "log",
         "pdf",
-        "html", "htm"
-    )
+        "html", "htm",
+    ) + CodeFileLanguage.supportedExtensions
 
     private val REMOVED_EXTENSIONS = setOf(
         "epub", "docx", "doc", "mobi", "prc", "azw3", "azw"
@@ -34,7 +36,7 @@ object BookImportSupport {
         ".markdown", ".mdown", ".mkd", ".md",
         ".txt", ".text", ".log",
         ".pdf",
-        ".html", ".htm"
+        ".html", ".htm",
     )
 
     /** 已移除的格式（EPUB / Word / Kindle），用于导入前拦截。 */

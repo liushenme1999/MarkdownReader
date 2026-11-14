@@ -822,6 +822,8 @@ internal class ReaderTouchState(
     var codeBlockSpan: ReaderScrollableCodeBlockSpan? = null,
     var lastCodeTouchX: Float = 0f,
     var codeScrolling: Boolean = false,
+    /** 按下时命中表格单元格 → 本次触摸禁用滑动加书签，避免与表格拖选/单元格操作互相抢手势 */
+    var downOnTableCell: Boolean = false,
 )
 
 /** 当前是否处于文本选区（含 SafeReaderTextView 会话与 Spannable 选区）。 */
@@ -883,6 +885,7 @@ internal fun bindReaderGesturesAndScroll(
                 (tv as? SafeReaderTextView)?.prepareForNewTouch(e.x, e.y)
                 val downTarget = (tv as? SafeReaderTextView)?.readerHitTargetAt(e.x, e.y)
                 touchState.codeBlockSpan = downTarget?.span as? ReaderScrollableCodeBlockSpan
+                touchState.downOnTableCell = downTarget?.kind == ReaderHitKind.TABLE_CELL
                 // 手指按下即解除目录/书签跳转锁定：否则滑走后 diagram 仍按标题 offset 拉回。
                 if (allowVerticalScroll) {
                     clearPendingScrollCharOffset(tv)
@@ -967,6 +970,7 @@ internal fun bindReaderGesturesAndScroll(
                     if (tv != null) notifyReaderScroll(tv, force = true)
                 }
                 val blockBookmarkSwipe = touchState.blockBookmarkSwipeGesture ||
+                    touchState.downOnTableCell ||
                     touchState.codeScrolling ||
                     (tv as? SafeReaderTextView)?.isCodeBlockScrolling() == true ||
                     tv?.hasActiveReaderTextSelection() == true
@@ -975,6 +979,7 @@ internal fun bindReaderGesturesAndScroll(
                 touchState.blockBookmarkSwipeGesture = false
                 touchState.codeScrolling = false
                 touchState.codeBlockSpan = null
+                touchState.downOnTableCell = false
                 if (e.actionMasked != MotionEvent.ACTION_UP) return@setOnTouchListener false
                 // 划词/选区期间跳过预览、链接与滑动加书签
                 if (tv is SafeReaderTextView && tv.isInTextSelection()) {
@@ -1214,6 +1219,18 @@ internal open class SafeReaderTextView(context: Context) : TextView(context) {
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         ReaderTableSpacing.lineSpacingMultiplier = lineSpacingMultiplier
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+        if (isFullScreenCodeDocument()) {
+            // 纯代码文档：把视图高度撑到约束允许的最大高度（通常即整屏视口）。
+            // 短文件时 TextView 否则按内容收缩，导致横向滚动条贴在代码末行下方、
+            // 且代码下方空白区域脱离视图触摸范围（无法横滑查看代码）。
+            val heightMode = MeasureSpec.getMode(heightMeasureSpec)
+            val heightSize = MeasureSpec.getSize(heightMeasureSpec)
+            if (measuredHeight < heightSize &&
+                (heightMode == MeasureSpec.AT_MOST || heightMode == MeasureSpec.UNSPECIFIED)
+            ) {
+                setMeasuredDimension(measuredWidth, heightSize)
+            }
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -1276,7 +1293,14 @@ internal open class SafeReaderTextView(context: Context) : TextView(context) {
         fullScreenCodeSpan = (currentText as? Spanned)
             ?.getSpans(0, currentText.length, ReaderScrollableCodeBlockSpan::class.java)
             ?.firstOrNull { it.fullScreenCodeDocument }
+        val hadFullScreenCodeDocument = hasFullScreenCodeDocument
         hasFullScreenCodeDocument = fullScreenCodeSpan != null
+        if (!hadFullScreenCodeDocument && hasFullScreenCodeDocument) {
+            // 纯代码文档就绪时，onMeasure 首测通常发生在 setText 之前（当时还不是代码文档，
+            // 不会撑满视口高度）。这里补一次布局，让视图高度扩展到整屏：
+            // 短代码文件的横向滚动条才能固定在屏幕底部，空白区域也纳入触摸范围。
+            requestLayout()
+        }
     }
 
     /**
@@ -2084,7 +2108,14 @@ internal open class SafeReaderTextView(context: Context) : TextView(context) {
         val contentW = (width - totalPaddingLeft - totalPaddingRight).toFloat()
         val contentY = y + scrollY - totalPaddingTop
         val spans = spanned.getSpans(0, spanned.length, ReaderScrollableCodeBlockSpan::class.java)
+        var fullScreenSpan: ReaderScrollableCodeBlockSpan? = null
         for (span in spans) {
+            if (span.fullScreenCodeDocument) {
+                // 纯代码文档：代码文本可能不满一屏，空白区域也应支持横向滚动查看代码，
+                // 因此整个视口都视为命中（横向偏移由 span 自身 clamp，纵向无需处理）。
+                fullScreenSpan = span
+                continue
+            }
             val spanStart = spanned.getSpanStart(span)
             val spanEnd = spanned.getSpanEnd(span)
             if (spanStart < 0 || spanEnd <= spanStart) continue
@@ -2097,7 +2128,7 @@ internal open class SafeReaderTextView(context: Context) : TextView(context) {
             if (contentW > 0f && (contentX < -8f || contentX > contentW + 8f)) continue
             return span
         }
-        return null
+        return fullScreenSpan
     }
 
     /**

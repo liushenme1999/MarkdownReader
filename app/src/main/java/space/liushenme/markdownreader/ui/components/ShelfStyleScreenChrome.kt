@@ -20,7 +20,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -88,6 +90,20 @@ fun ShelfStyleSystemBarsEffect(
     }
 
     SideEffect { apply() }
+
+    // HyperOS/MIUI：BottomSheet、Dialog 等独立窗口收起后，系统会在窗口退出动画结束时把底层
+    // Activity 的系统栏恢复出来，且恢复时机可能晚至 1s+。此时 hide() 已在动画期间调用过、
+    // 且不再有新的重组触发 SideEffect，系统栏就会保持可见（阅读页顶部进度条与状态栏重叠）。
+    // 这里在目标状态转为隐藏后做多次延迟补偿 hide，覆盖面板退出动画与 OEM 延迟恢复的时序；
+    // 重复调用同一目标是幂等的。
+    LaunchedEffect(systemBarsVisible) {
+        if (systemBarsVisible) return@LaunchedEffect
+        val retryDelaysMillis = longArrayOf(300, 400, 500, 700, 900)
+        for (delayMillis in retryDelaysMillis) {
+            delay(delayMillis)
+            SystemBarAppearance.setSystemBarsVisible(activity, view, false)
+        }
+    }
 
     DisposableEffect(
         lifecycleOwner,

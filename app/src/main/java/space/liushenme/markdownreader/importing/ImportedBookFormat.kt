@@ -51,8 +51,9 @@ enum class ImportedBookFormat(val storedKey: String) {
                 "md", "markdown", "mdown", "mkd" -> MARKDOWN
                 "txt", "text", "log" -> TXT
                 "pdf" -> PDF
+                // HTML 仍走 WebView 预览，优先于代码渲染。
                 "html", "htm" -> HTML
-                else -> TXT
+                else -> if (ext in CodeFileLanguage.supportedExtensions) CODE else TXT
             }
         }
 

@@ -12,15 +12,20 @@ internal data class PdfBitmapKey(val path: String, val targetWidth: Int)
 /**
  * 按目标宽度解码页图。放大松手后提高 [targetWidth] 即「重绘」；离开视口后 [retain] 回收。
  * 本地只有导入 PNG 时，清晰度上限是文件像素，不会凭空变清。
+ *
+ * 注意：淘汰时**只丢弃引用，绝不 `recycle()`**。
+ * 解码出的 Bitmap 会同时被 Compose（`Image`/`asImageBitmap`）持有并绘制，缓存无从得知
+ * 某个位图当前是否正在上屏；一旦 `recycle()` 掉仍在绘制的位图，Skia 会直接画不出内容，
+ * 表现为「放大后偶发空白、缩小后才恢复」（因缩小改变解码宽度才会重新解码替换）。
+ * 丢失缓存引用后由 GC 回收像素内存，既安全又能避免这类空白。
  */
 internal class PdfPageBitmapCache(
     private val maxEntries: Int = ReaderMediaCache.policy.pdfBitmapEntries,
 ) {
     private val cache = object : LinkedHashMap<PdfBitmapKey, Bitmap>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PdfBitmapKey, Bitmap>?): Boolean {
-            if (size <= maxEntries) return false
-            eldest?.value?.takeIf { !it.isRecycled }?.recycle()
-            return true
+            // 只淘汰引用；位图可能仍在屏幕上绘制，不能 recycle。
+            return size > maxEntries
         }
     }
 
@@ -40,7 +45,7 @@ internal class PdfPageBitmapCache(
     fun retain(keep: Set<PdfBitmapKey>) {
         val stale = cache.keys.filterNot { it in keep }.toList()
         for (key in stale) {
-            cache.remove(key)?.takeIf { !it.isRecycled }?.recycle()
+            cache.remove(key)
         }
     }
 
@@ -49,13 +54,12 @@ internal class PdfPageBitmapCache(
     fun retainPaths(paths: Set<String>) {
         val stale = cache.keys.filterNot { it.path in paths }.toList()
         for (key in stale) {
-            cache.remove(key)?.takeIf { !it.isRecycled }?.recycle()
+            cache.remove(key)
         }
     }
 
     @Synchronized
     fun clear() {
-        cache.values.forEach { if (!it.isRecycled) it.recycle() }
         cache.clear()
     }
 
@@ -88,7 +92,13 @@ internal class PdfPageBitmapCache(
                 inSampleSize = sampleSize(srcW, targetWidth)
                 inPreferredConfig = Bitmap.Config.ARGB_8888
             }
-            return BitmapFactory.decodeFile(file.absolutePath, opts)
+            // 高倍率下解码较大位图可能 OOM：返回 null 让上层沿用已有画面，
+            // 而不是抛错中断组合导致整页空白或闪退。
+            return try {
+                BitmapFactory.decodeFile(file.absolutePath, opts)
+            } catch (_: OutOfMemoryError) {
+                null
+            }
         }
     }
 }

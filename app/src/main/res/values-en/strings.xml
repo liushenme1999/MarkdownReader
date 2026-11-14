@@ -98,7 +98,7 @@
     <string name="bookshelf_toast_sync_uptodate">Progress is already up to date</string>
     <string name="bookshelf_toast_sync_failed">Failed to sync progress: %1$s</string>
     <string name="bookshelf_empty_title">Your library is empty</string>
-    <string name="bookshelf_empty_subtitle">Supports Markdown, TXT, PDF, and public GitHub projects</string>
+    <string name="bookshelf_empty_subtitle">Supports Markdown, TXT, PDF, HTML, source code, and public GitHub projects</string>
     <string name="bookshelf_import">Import</string>
     <string name="bookshelf_import_cd">Import book</string>
     <string name="bookshelf_continue_reading">Continue reading</string>
@@ -133,7 +133,7 @@
     <string name="dialog_group_name_label">Custom group</string>
     <string name="dialog_group_name_hint">Pick an existing group or type a new name. Leave empty to ungroup.</string>
     <string name="dialog_import_book_title">Import book</string>
-    <string name="dialog_import_supported_formats">Supports Markdown, TXT, PDF, and public GitHub projects</string>
+    <string name="dialog_import_supported_formats">Supports Markdown, TXT, PDF, HTML, source code, and public GitHub projects</string>
     <string name="dialog_import_from_local">Import from device</string>
     <string name="dialog_import_from_url">Import from URL</string>
     <string name="dialog_import_from_github">Import GitHub project</string>
@@ -209,6 +209,7 @@
     <string name="reader_title_reading">Reading</string>
     <string name="reader_back_to_bookshelf">Back to library</string>
     <string name="snackbar_bookmark_added">Bookmark added</string>
+    <string name="snackbar_bookmark_swipe_hint">Swipe right added a bookmark — view or jump to it in the Bookmarks list</string>
     <string name="snackbar_bookmark_removed">Bookmark removed</string>
     <string name="reader_toc_empty_plain_text">No chapters found. Put chapter titles on their own line, e.g.\nChapter 1 …, Section 1 …</string>
     <string name="reader_toc_empty_markdown">No headings found. Use Markdown ATX syntax, e.g.\n# Heading 1\n## Heading 2</string>
@@ -334,6 +335,8 @@
     <string name="about_supported_formats">Supported formats:</string>
     <string name="about_format_md">  - Markdown (.md)</string>
     <string name="about_format_txt">  - Plain text (.txt)</string>
+    <string name="about_format_html">  - Web page (.html / .htm)</string>
+    <string name="about_format_code">  - Source code (.py / .js / .ts / .java ...)</string>
     <string name="about_format_pdf">  - PDF (.pdf)</string>
     <string name="about_description">A lightweight Markdown reader with reading stats and note management.</string>
     <string name="icp_filing_hint">View ICP filing</string>

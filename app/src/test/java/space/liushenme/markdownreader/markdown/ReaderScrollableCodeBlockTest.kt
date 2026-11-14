@@ -880,8 +880,13 @@ class ReaderScrollableCodeBlockTest {
         val documentHeight = span.requiredHeightForTest(paint)
         val bitmap = Bitmap.createBitmap(240, viewportHeight, Bitmap.Config.ARGB_8888)
         try {
+            // 模拟 TextView.onDraw 的画布状态：内容坐标系（translate -scrollY）+ clip 到可视区。
+            // 滚动条的可视区底直接取 clipBounds.bottom，与真实绘制路径保持一致。
+            val canvas = Canvas(bitmap)
+            canvas.translate(0f, -viewportTop.toFloat())
+            canvas.clipRect(0f, viewportTop.toFloat(), 240f, (viewportTop + viewportHeight).toFloat())
             span.drawFullScreenByHost(
-                canvas = Canvas(bitmap),
+                canvas = canvas,
                 x = 0f,
                 top = 0,
                 bottom = documentHeight,

@@ -703,13 +703,12 @@ internal class ReaderScrollableCodeBlockSpan(
     }
 
     private fun resolvedViewportWidth(): Int {
-        val fromDraw = lastViewportWidth
+        // 优先用宿主下发的稳定视口宽度：lastViewportWidth 会在触摸/绘制过程中被改写，
+        // 若让它主导，首次触摸会触发按新宽度重新折行、卡片高度变化，表现为下方文字跳动。
         val fromSettings = ReaderCodeBlockSettings.viewportWidthPx
-        return when {
-            fromDraw > 1 -> fromDraw
-            fromSettings > 1 -> fromSettings
-            else -> 1
-        }
+        if (fromSettings > 1) return fromSettings
+        val fromDraw = lastViewportWidth
+        return if (fromDraw > 1) fromDraw else 1
     }
 
     fun canScrollHorizontally(): Boolean = maxScrollX() > 0
@@ -866,10 +865,16 @@ internal class ReaderScrollableCodeBlockSpan(
 
         val codeTop = top + headerH + padV
         val barSpace = if (canScrollHorizontally()) scrollBarGap + scrollBarH else 0
-        val stickyBottom = if (fullScreenCodeDocument &&
-            ReaderCodeBlockSettings.viewportHeightPx > 0
-        ) {
-            ReaderCodeBlockSettings.viewportTopPx + ReaderCodeBlockSettings.viewportHeightPx
+        // 纯代码文档：横向滚动条固定在当前屏幕可视区底部。
+        // onDraw 画布处于内容坐标系并被 clip 到 (scrollX, scrollY, +w, +h)，
+        // 因此 clipBounds.bottom = scrollY + 视口高，正是可视区底部（长短文件统一）。
+        // 不能依赖 TextView 的 totalPadding 推导：底部 padding 含动态垫高，会把
+        // "视口"错缩到代码内容高度，导致短文件滚动条贴在代码末行下方。
+        // Markdown 内的普通代码块（fullScreenCodeDocument=false）保持原语义：
+        // 滚动条贴代码块自身底部，绝不越出卡片与正文重叠。
+        val stickyBottom = if (fullScreenCodeDocument) {
+            val clipBottom = canvas.clipBounds?.bottom ?: 0
+            if (clipBottom > codeTop) clipBottom else bottom
         } else {
             bottom
         }
@@ -1015,11 +1020,11 @@ internal class ReaderScrollableCodeBlockSpan(
     }
 
     private fun chromeHeight(layout: StaticLayout, paint: Paint): Int {
-        val bar = if (!wrapEnabled && maxLineWidth > lastViewportWidth.coerceAtLeast(1)) {
-            scrollBarGap + scrollBarH
-        } else {
-            0
-        }
+        // 关闭自动换行时始终预留滚动条空间，只取决于稳定的 wrapEnabled。
+        // 切勿用 maxLineWidth > lastViewportWidth 判断：lastViewportWidth 会在触摸/绘制时
+        // 被 prepareForTouch / getSize 改写，横滑代码块时卡片高度随之变化，
+        // 表现为「代码框下方的文字跳动」。
+        val bar = if (!wrapEnabled) scrollBarGap + scrollBarH else 0
         return headerHeight(paint) + padV + layout.height + padV + bar
     }
 

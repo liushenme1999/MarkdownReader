@@ -220,6 +220,13 @@ fun ProfileScreen(
                         icon = Icons.Default.LocalFireDepartment,
                         modifier = Modifier.widthIn(min = 92.dp)
                     )
+                    // 可点击提示：进入阅读统计（趋势图 / 周目标）
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
+                        modifier = Modifier.padding(end = 4.dp)
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
                 }
             }
