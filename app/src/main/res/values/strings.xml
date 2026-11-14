@@ -288,6 +288,7 @@
     <string name="reader_mark_finished_confirm">标记已读完</string>
     <string name="reader_mark_finished_later">暂不标记</string>
     <string name="reader_error_book_not_found">找不到该书，可能已被删除。</string>
+    <string name="reader_error_out_of_memory">文件过大，无法打开</string>
     <string name="reader_error_cannot_read_body">无法读取正文（文件权限失效或路径无效）。请返回书架删除该书后，使用「导入」重新选择文件。</string>
     <string name="reader_error_permission_denied">文件访问权限已失效。请返回书架重新导入并授权该文件。</string>
     <string name="reader_error_network_required">网络正文暂时无法下载，请检查网络后重试。</string>
@@ -443,7 +444,7 @@
     <string name="reading_settings_section_display">阅读界面</string>
     <string name="reading_settings_section_page_turn">翻页方式</string>
     <string name="reader_code_line_numbers">显示行号</string>
-    <string name="reader_code_line_numbers_summary">纯代码文件预览时在左侧显示源码行号</string>
+    <string name="reader_code_line_numbers_summary">代码块与纯代码文件左侧显示源码行号</string>
 
     <!-- Statistics -->
     <string name="statistics_title">阅读统计</string>

@@ -29,9 +29,12 @@ class ReadingFormatProfileTest {
     }
 
     @Test
-    fun pdfHasNoCodeStyleOrTypography() {
+    fun pdfAndHtmlHaveNoCodeStyleOrTypography() {
         assertFalse(ReadingFormatProfile.PDF.usesCodeStyle)
         assertFalse(ReadingFormatProfile.PDF.usesTypography)
+        // HTML 由 WebView 渲染：既没有 Markdown 代码块样式，也不走字号/行距排版。
+        assertFalse(ReadingFormatProfile.HTML.usesCodeStyle)
+        assertFalse(ReadingFormatProfile.HTML.usesTypography)
         assertTrue(ReadingFormatProfile.MARKDOWN.usesCodeStyle)
         assertTrue(ReadingFormatProfile.CODE.usesCodeStyle)
         assertTrue(ReadingFormatProfile.PLAIN_TEXT.usesTypography)

@@ -229,7 +229,7 @@ internal object ReaderTextSelectionTouch {
         val lineStart = layout.getLineStart(line)
         val lastOnLine = lastVisibleCharOffset(layout, line)
         var offset = layout.getOffsetForHorizontal(line, hx)
-            .coerceIn(lineStart, lastOnLine)
+            .coerceIn(lineStart, lastOnLine.coerceAtLeast(lineStart))
         // getOffsetForHorizontal 给的是离触点最近的「光标位」：按在某个字的右半边时，
         // 它会跳到下一个字。划词要的是手指正下方那个字，所以边界落在触点右侧时回退一格。
         if (offset > lineStart &&
@@ -304,8 +304,12 @@ internal object ReaderTextSelectionTouch {
         var end = iterator.following(o)
         if (end == BreakIterator.DONE) end = lineLimit
         if (start >= end || o < start || o >= end) return grapheme
-        start = start.coerceIn(lineStart, lineLimit - 1)
-        end = end.coerceIn(start + 1, lineLimit)
+        // 空行时 lineLimit 可能等于 lineStart，`coerceIn(lineStart, lineLimit - 1)` 会构造
+        // 空区间并抛 IllegalArgumentException（Cannot coerce value to an empty range）。
+        // TXT 正文空行很多，后翻页时极易触发闪退，这里先把区间下界撑到合法范围。
+        val safeLimit = lineLimit.coerceAtLeast(lineStart + 1)
+        start = start.coerceIn(lineStart, safeLimit - 1)
+        end = end.coerceIn(start + 1, safeLimit)
         if (end <= start) return grapheme
         if (containsNonLatin(text, start, end)) return grapheme
         return start until end

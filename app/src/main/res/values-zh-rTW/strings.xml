@@ -280,6 +280,7 @@
     <string name="reader_mark_finished_confirm">標記已讀完</string>
     <string name="reader_mark_finished_later">暫不標記</string>
     <string name="reader_error_book_not_found">找不到該書，可能已被刪除。</string>
+    <string name="reader_error_out_of_memory">檔案過大，無法開啟</string>
     <string name="reader_error_cannot_read_body">無法讀取正文（檔案權限失效或路徑無效）。請返回書架刪除該書後，使用「匯入」重新選擇檔案。</string>
     <string name="reader_error_permission_denied">檔案存取權限已失效。請返回書架重新匯入並授權此檔案。</string>
     <string name="reader_error_network_required">網路正文暫時無法下載，請檢查網路後重試。</string>
@@ -429,7 +430,7 @@
     <string name="reading_settings_section_display">閱讀畫面</string>
     <string name="reading_settings_section_page_turn">翻頁方式</string>
     <string name="reader_code_line_numbers">顯示行號</string>
-    <string name="reader_code_line_numbers_summary">純程式碼檔案預覽時在左側顯示原始碼行號</string>
+    <string name="reader_code_line_numbers_summary">程式碼區塊與純程式碼檔案左側顯示行號</string>
 
     <string name="statistics_title">閱讀統計</string>
     <string name="statistics_overview">閱讀總覽</string>

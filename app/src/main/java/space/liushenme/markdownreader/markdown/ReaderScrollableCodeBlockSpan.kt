@@ -55,7 +55,7 @@ internal class ReaderScrollableCodeBlockSpan(
     val rawCode: String = normalizeReaderCodeContent(rawCode).toString()
     private val hasBidiText: Boolean = hasBidiDirection(content)
     private val logicalLineStarts: IntArray = sourceLineStarts(content)
-    private val showCodeLineNumbers: Boolean = fullScreenCodeDocument && showLineNumbers
+    private val showCodeLineNumbers: Boolean = showLineNumbers
     val languageLabel: String = ReaderCodeBlockLanguage.label(languageInfo)
 
     var scrollX: Int = 0

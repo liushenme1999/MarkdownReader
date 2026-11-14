@@ -97,6 +97,7 @@ internal object ReaderCodeStylePlugin {
             rawCode = code,
             languageInfo = info,
             wrapEnabled = ReaderCodeBlockSettings.wrapEnabled,
+            showLineNumbers = ReaderCodeBlockSettings.showLineNumbers,
             density = density,
         )
         visitor.builder().append('\uFFFC')

@@ -51,11 +51,11 @@ enum class ReadingFormatProfile(val storageKey: String) {
             CODE -> space.liushenme.markdownreader.R.string.book_format_code
         }
 
-    /** 该格式是否使用代码样式设置（高亮主题 / 自动换行 / 行号）。 */
+    /** 该格式是否使用代码样式设置（高亮主题 / 自动换行 / 行号）。HTML 由 WebView 渲染，不适用。 */
     val usesCodeStyle: Boolean
-        get() = this == MARKDOWN || this == CODE || this == HTML
+        get() = this == MARKDOWN || this == CODE
 
-    /** 该格式是否使用字体与排版设置（字号 / 页边距 / 行距）。 */
+    /** 该格式是否使用字体与排版设置（字号 / 页边距 / 行距）。PDF 为页图、HTML 由 WebView 渲染，均不适用。 */
     val usesTypography: Boolean
-        get() = this != PDF
+        get() = this == MARKDOWN || this == PLAIN_TEXT || this == CODE
 }

@@ -4,6 +4,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -272,27 +275,20 @@ fun CodeHighlightThemeGrid(
     onSelect: (CodeHighlightTheme) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+    // 单行横向滑动：卡片更小，一屏可瞥见多个主题，左右滑动选择。
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        themes.chunked(2).forEach { rowThemes ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                rowThemes.forEach { theme ->
-                    CodeHighlightThemeCardOption(
-                        theme = theme,
-                        isSelected = theme == selected,
-                        onClick = { onSelect(theme) },
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                repeat(2 - rowThemes.size) {
-                    Spacer(modifier = Modifier.weight(1f))
-                }
-            }
+        themes.forEach { theme ->
+            CodeHighlightThemeCardOption(
+                theme = theme,
+                isSelected = theme == selected,
+                onClick = { onSelect(theme) },
+                modifier = Modifier.width(ThemeCardWidth),
+            )
         }
     }
 }
@@ -613,3 +609,6 @@ private fun pageTurnModeIcon(mode: ReaderPageTurnMode): ImageVector = when (mode
     ReaderPageTurnMode.SimulationPageTurn -> Icons.AutoMirrored.Filled.MenuBook
     ReaderPageTurnMode.CoverPageTurn -> Icons.Default.ViewCarousel
 }
+
+/** 代码高亮主题卡片宽度（横向滑动列表）。 */
+private val ThemeCardWidth = 148.dp

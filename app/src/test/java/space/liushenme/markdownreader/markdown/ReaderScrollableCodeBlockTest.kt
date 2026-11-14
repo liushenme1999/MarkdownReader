@@ -38,6 +38,7 @@ class ReaderScrollableCodeBlockTest {
         ReaderCodeBlockSettings.viewportWidthPx = 0
         ReaderCodeBlockSettings.viewportTopPx = 0
         ReaderCodeBlockSettings.viewportHeightPx = 0
+        ReaderCodeBlockSettings.showLineNumbers = true
     }
 
     @After
@@ -46,6 +47,7 @@ class ReaderScrollableCodeBlockTest {
         ReaderCodeBlockSettings.viewportWidthPx = 0
         ReaderCodeBlockSettings.viewportTopPx = 0
         ReaderCodeBlockSettings.viewportHeightPx = 0
+        ReaderCodeBlockSettings.showLineNumbers = true
     }
 
     @Test
@@ -830,10 +832,11 @@ class ReaderScrollableCodeBlockTest {
     }
 
     @Test
-    fun markdownCodeBlock_neverShowsDocumentLineNumbers() {
+    fun markdownCodeBlock_lineNumbersFollowSetting() {
         val context = RuntimeEnvironment.getApplication()
         ReaderCodeBlockSettings.wrapEnabled = true
         ReaderCodeBlockSettings.viewportWidthPx = 480
+        ReaderCodeBlockSettings.showLineNumbers = false
         val rendered = ReaderMarkwonFactory.create(context).toMarkdown(
             "```kotlin\nfun value() = 42\n```",
         )
@@ -846,7 +849,24 @@ class ReaderScrollableCodeBlockTest {
         span.prepareForTouch(paint, 480)
         span.getSize(paint, rendered, 0, 1, Paint.FontMetricsInt())
 
-        assertEquals(0, span.lineNumberGutterWidthForTest(paint))
+        assertEquals("关闭设置时不占行号槽位", 0, span.lineNumberGutterWidthForTest(paint))
+
+        // 打开设置后，Markdown 代码块也应为行号预留槽位（与纯代码文件共用开关）
+        ReaderCodeBlockSettings.showLineNumbers = true
+        val withNumbers = ReaderMarkwonFactory.create(context).toMarkdown(
+            "```kotlin\nfun value() = 42\n```",
+        )
+        val numberedSpan = withNumbers.getSpans(
+            0,
+            withNumbers.length,
+            ReaderScrollableCodeBlockSpan::class.java,
+        ).single()
+        numberedSpan.prepareForTouch(paint, 480)
+        numberedSpan.getSize(paint, withNumbers, 0, 1, Paint.FontMetricsInt())
+        assertTrue(
+            "打开设置后 Markdown 代码块应显示行号",
+            numberedSpan.lineNumberGutterWidthForTest(paint) > 0,
+        )
     }
 
     @Test

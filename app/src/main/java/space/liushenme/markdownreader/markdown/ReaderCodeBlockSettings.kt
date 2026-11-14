@@ -5,6 +5,10 @@ internal object ReaderCodeBlockSettings {
     @Volatile
     var wrapEnabled: Boolean = true
 
+    /** 代码块左侧是否显示行号（Markdown 代码块与纯代码文件共用该开关）。 */
+    @Volatile
+    var showLineNumbers: Boolean = true
+
     /** 代码窗口可视宽度（已扣 TextView 左右 padding）。 */
     @Volatile
     var viewportWidthPx: Int = 0

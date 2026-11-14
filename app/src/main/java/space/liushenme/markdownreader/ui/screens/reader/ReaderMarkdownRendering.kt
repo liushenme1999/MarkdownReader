@@ -369,6 +369,7 @@ internal fun applyMarkdownContent(
     val codeLayoutPaint = if (codeBlockLanguage != null) Paint(textView.paint) else null
     readerMarkwonRenderExecutor.execute {
         ReaderCodeBlockSettings.wrapEnabled = codeBlockWrap
+        ReaderCodeBlockSettings.showLineNumbers = codeLineNumbers
         if (measuredViewport > 0) {
             ReaderCodeBlockSettings.viewportWidthPx = measuredViewport
         }
@@ -824,6 +825,8 @@ internal class ReaderTouchState(
     var codeScrolling: Boolean = false,
     /** 按下时命中表格单元格 → 本次触摸禁用滑动加书签，避免与表格拖选/单元格操作互相抢手势 */
     var downOnTableCell: Boolean = false,
+    /** 本次触摸已判定为「下拉加书签」手势 */
+    var downwardBookmarkSwipe: Boolean = false,
 )
 
 /** 当前是否处于文本选区（含 SafeReaderTextView 会话与 Spannable 选区）。 */
@@ -886,6 +889,7 @@ internal fun bindReaderGesturesAndScroll(
                 val downTarget = (tv as? SafeReaderTextView)?.readerHitTargetAt(e.x, e.y)
                 touchState.codeBlockSpan = downTarget?.span as? ReaderScrollableCodeBlockSpan
                 touchState.downOnTableCell = downTarget?.kind == ReaderHitKind.TABLE_CELL
+                touchState.downwardBookmarkSwipe = false
                 // 手指按下即解除目录/书签跳转锁定：否则滑走后 diagram 仍按标题 offset 拉回。
                 if (allowVerticalScroll) {
                     clearPendingScrollCharOffset(tv)
@@ -897,6 +901,21 @@ internal fun bindReaderGesturesAndScroll(
                 }
             }
             MotionEvent.ACTION_MOVE -> {
+                // 分页（左右滑动翻页）模式的「下拉加书签」：一旦识别为向下拖动就取消长按，
+                // 否则慢速下拉会被 TextView 判成长按，错误弹出选中文案工具栏。
+                if (!allowVerticalScroll && onSwipeDownBookmark != null) {
+                    val sdx = e.x - touchState.downX
+                    val sdy = e.y - touchState.downY
+                    // 向下为主（1.2 倍即可，斜向下滑也算）：取消长按、独占事件，
+                    // 避免被 TextView 判成长按选中，也避免父级 HorizontalPager 抢走触发翻页。
+                    if (sdy > slop && sdy > kotlin.math.abs(sdx) * 1.2f) {
+                        tv?.cancelLongPress()
+                        touchState.blockBookmarkSwipeGesture = false
+                        touchState.downwardBookmarkSwipe = true
+                        v.parent?.requestDisallowInterceptTouchEvent(true)
+                        return@setOnTouchListener true
+                    }
+                }
                 if (tv?.hasActiveReaderTextSelection() == true) {
                     touchState.blockBookmarkSwipeGesture = true
                 }
@@ -1030,8 +1049,8 @@ internal fun bindReaderGesturesAndScroll(
                 ) {
                     onSwipeRightBookmark()
                 } else if (!blockBookmarkSwipe && onSwipeDownBookmark != null &&
-                    dy > 120f &&
-                    dy > adx * 2f &&
+                    (touchState.downwardBookmarkSwipe || dy > 120f) &&
+                    dy > adx * 1.2f &&
                     (!allowVerticalScroll ||
                         (tv != null && touchState.scrollYOnDown == 0 && tv.scrollY == 0))
                 ) {
