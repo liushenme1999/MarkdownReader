@@ -1720,9 +1720,13 @@ fun ReaderScreen(
         viewportBottomChar = uiState.viewportBottomChar,
         visibleChapterOffset = uiState.visibleChapterOffset,
     )
+    // 横屏常驻目录栏只给 Markdown/纯文本用：PDF 按页阅读、目录即页码，常驻栏会挤压页面版面，
+    // 因此 PDF 横屏不再展示左侧导航（目录仍可从底栏「目录」按钮打开）。
     val wideReaderNavigation = uiState.showTocInLandscape &&
         isLandscapeWindow(windowSize.width, windowSize.height) &&
-        tocEntries.isNotEmpty()
+        tocEntries.isNotEmpty() &&
+        !isPdfBook &&
+        !isCodeBook
     ReaderContainer(
         isPdf = isPdfBook,
         immersive = immersiveReading,
