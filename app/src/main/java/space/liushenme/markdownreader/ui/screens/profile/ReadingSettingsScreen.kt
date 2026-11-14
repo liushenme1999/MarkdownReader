@@ -1,6 +1,7 @@
 package space.liushenme.markdownreader.ui.screens.profile
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,6 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -28,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import space.liushenme.markdownreader.R
+import space.liushenme.markdownreader.data.repository.ReadingFormatProfile
 import space.liushenme.markdownreader.markdown.CodeHighlightTheme
 import space.liushenme.markdownreader.model.AppLanguage
 import space.liushenme.markdownreader.model.AppThemeMode
@@ -65,6 +68,7 @@ fun ReadingSettingsScreen(
     val pageTurnMode by viewModel.pageTurnMode.collectAsState()
     val appThemeMode by viewModel.appThemeMode.collectAsState()
     val appLanguage by viewModel.appLanguage.collectAsState()
+    val activeProfile by viewModel.activeProfile.collectAsState()
     val pageTurnModes = ReaderPageTurnMode.selectableModes
     val appThemeModes = AppThemeMode.entries
     val appLanguages = AppLanguage.entries
@@ -92,6 +96,12 @@ fun ReadingSettingsScreen(
         ) {
             ReaderSettingsHintBanner(
                 text = stringResource(R.string.reading_settings_sync_hint),
+            )
+
+            // 格式档位切换：不同文件格式各自一套阅读样式。
+            ReaderSettingsFormatTabs(
+                active = activeProfile,
+                onSelect = viewModel::selectProfile,
             )
 
             Column {
@@ -148,7 +158,7 @@ fun ReadingSettingsScreen(
                 }
             }
 
-            Column {
+            if (activeProfile.usesCodeStyle) Column {
                 ReaderSettingsSectionTitle(
                     stringResource(R.string.reading_settings_section_code_appearance),
                 )
@@ -177,7 +187,7 @@ fun ReadingSettingsScreen(
                 }
             }
 
-            Column {
+            if (activeProfile.usesTypography) Column {
                 ReaderSettingsSectionTitle(stringResource(R.string.reading_settings_section_typography))
                 ReaderSettingsGroupCard {
                     ReaderWideSliderRow(
@@ -272,6 +282,35 @@ fun ReadingSettingsScreen(
                             )
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/** 阅读样式格式档位切换（Markdown / 文本 / HTML / PDF / 代码）。 */
+@Composable
+private fun ReaderSettingsFormatTabs(
+    active: ReadingFormatProfile,
+    onSelect: (ReadingFormatProfile) -> Unit,
+) {
+    Column {
+        ReaderSettingsSectionTitle(stringResource(R.string.reading_settings_section_format))
+        ReaderSettingsGroupCard {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ReadingFormatProfile.entries.forEach { profile ->
+                    val selected = profile == active
+                    FilterChip(
+                        selected = selected,
+                        onClick = { onSelect(profile) },
+                        label = { Text(stringResource(profile.labelRes)) },
+                    )
                 }
             }
         }

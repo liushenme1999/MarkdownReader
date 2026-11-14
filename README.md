@@ -8,7 +8,7 @@
 | **包名** | `space.liushenme.markdownreader` |
 | **最低系统** | Android 7.0 (API 24) |
 | **目标 SDK** | 35 |
-| **当前版本** | 1.3.2 (versionCode 34) |
+| **当前版本** | 1.3.3 (versionCode 35) |
 | **仓库** | [github.com/liukejun1999/MarkdownReader](https://github.com/liushenme1999/MarkdownReader) |
 
 ## 安装包下载
@@ -17,7 +17,7 @@
 
 | 版本 | 下载 | 大小约 |
 |------|------|--------|
-| **1.3.2** | [MD._release_1.3.2.apk](https://github.com/liushenme1999/MarkdownReader/releases/download/v1.3.2/MD._release_1.3.2.apk) | 8.3 MB |
+| **1.3.3** | [MD._release_1.3.3.apk](https://github.com/liushenme1999/MarkdownReader/releases/download/v1.3.3/MD._release_1.3.3.apk) | 8.3 MB |
 
 安装说明：
 
@@ -46,6 +46,7 @@
 - **2 种翻页方式**：上下滚动、左右滑动
 - 阅读页底栏将主题、字体排版、翻页方式、隐藏系统栏聚合为单一「阅读设置」
 - **隐藏系统栏**：阅读时隐藏状态栏与底部导航条（默认开启，可在阅读页或「我的 → 阅读设置」关闭）
+- **按文件格式独立阅读样式**：Markdown / 纯文本 / HTML / PDF / 源码各自一套颜色背景、代码样式、字体排版与翻页方式，打开即套用；「我的 → 阅读设置」顶部可切换格式编辑
 - 字体大小、页边距、行距调节（DataStore 持久化）
 - **PDF 连续阅读**：页内双指缩放 / 拖动，平移不超出纸张；大文件导入时书架显示进度，完成后再打开
 - **代码块自动换行**（默认开启）；关闭后超宽代码可横向滑动，并显示语言标签与复制按钮

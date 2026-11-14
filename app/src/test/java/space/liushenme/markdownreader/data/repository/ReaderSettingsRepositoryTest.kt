@@ -106,8 +106,31 @@ class ReaderSettingsRepositoryTest {
         )
     }
 
+    @Test
+    fun readingStylesAreIndependentPerFormat() = runBlocking {
+        repository.setActiveProfile(ReadingFormatProfile.MARKDOWN)
+        repository.setFontSize(24)
+        repository.setCodeBlockWrap(false)
+        repository.setActiveProfile(ReadingFormatProfile.PDF)
+        repository.setFontSize(16)
+        repository.setActiveProfile(ReadingFormatProfile.CODE)
+        repository.setCodeBlockWrap(true)
+
+        val fresh = ReaderSettingsRepository(context)
+        fresh.setActiveProfile(ReadingFormatProfile.MARKDOWN)
+        assertEquals(24, fresh.fontSize.first())
+        assertFalse(fresh.codeBlockWrap.first())
+        fresh.setActiveProfile(ReadingFormatProfile.PDF)
+        assertEquals(16, fresh.fontSize.first())
+        // PDF 未单独设置过代码样式，沿用旧全局默认
+        assertTrue(fresh.codeBlockWrap.first())
+        fresh.setActiveProfile(ReadingFormatProfile.CODE)
+        assertTrue(fresh.codeBlockWrap.first())
+        assertEquals(ReaderSettingsRepository.DEFAULT_FONT_SIZE, fresh.fontSize.first())
+    }
+
     private companion object {
-        const val CODE_HIGHLIGHT_THEME_KEY = "reader_code_highlight_theme"
-        const val CODE_LINE_NUMBERS_KEY = "reader_code_line_numbers"
+        const val CODE_HIGHLIGHT_THEME_KEY = "reader_code_highlight_theme@markdown"
+        const val CODE_LINE_NUMBERS_KEY = "reader_code_line_numbers@markdown"
     }
 }

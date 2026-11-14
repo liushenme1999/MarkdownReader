@@ -2,6 +2,7 @@ package space.liushenme.markdownreader.ui.screens.profile
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import space.liushenme.markdownreader.data.repository.ReadingFormatProfile
 import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
 import space.liushenme.markdownreader.markdown.CodeHighlightTheme
 import space.liushenme.markdownreader.model.AppLanguage
@@ -15,6 +16,8 @@ import javax.inject.Inject
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -23,6 +26,16 @@ import kotlinx.coroutines.withContext
 class ReadingSettingsViewModel @Inject constructor(
     private val readerSettingsRepository: ReaderSettingsRepository,
 ) : ViewModel() {
+
+    /** 当前正在编辑的格式档位（顶部 Tab）；切换后所有格式相关设置立即读取该档位。 */
+    private val _activeProfile = MutableStateFlow(readerSettingsRepository.activeProfile())
+    val activeProfile = _activeProfile.asStateFlow()
+
+    fun selectProfile(profile: ReadingFormatProfile) {
+        if (_activeProfile.value == profile) return
+        _activeProfile.value = profile
+        readerSettingsRepository.setActiveProfile(profile)
+    }
 
     val readingStyleState = readerSettingsRepository.readingStyleState.stateIn(
         scope = viewModelScope,

@@ -423,6 +423,7 @@
     <string name="reading_settings_title">Reading settings</string>
     <string name="reading_settings_sync_hint">These settings apply to all books and sync with the in-reader quick panel.</string>
     <string name="reading_settings_section_appearance">Appearance</string>
+    <string name="reading_settings_section_format">Format</string>
     <string name="reading_settings_section_reading_theme">Color &amp; background</string>
     <string name="reading_settings_section_typography">Typography</string>
     <string name="reading_settings_section_display">Reading screen</string>

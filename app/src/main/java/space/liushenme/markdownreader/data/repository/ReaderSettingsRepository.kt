@@ -25,7 +25,9 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 
 @Singleton
@@ -34,9 +36,105 @@ class ReaderSettingsRepository @Inject constructor(
 ) {
     private val dataStore = readerPreferencesDataStore(context)
 
-    val pageTurnMode: Flow<ReaderPageTurnMode> = dataStore.data.map { prefs ->
-        ReaderPageTurnMode.fromStored(prefs[KEY_PAGE_TURN_MODE])
+    // 当前阅读样式档位：由阅读器在打开书籍时设置，设置界面切换 Tab 时也会切换。
+    private val activeProfile = MutableStateFlow(ReadingFormatProfile.MARKDOWN)
+
+    fun setActiveProfile(profile: ReadingFormatProfile) {
+        activeProfile.value = profile
     }
+
+    fun activeProfile(): ReadingFormatProfile = activeProfile.value
+
+    /** 以「当前档位」为上游组合出可随档位切换的设置流。 */
+    private fun <T> withProfile(block: (ReadingFormatProfile) -> Flow<T>): Flow<T> =
+        activeProfile.flatMapLatest(block)
+
+    // ===== 按文件格式独立的阅读样式 =====
+    // 每个格式一套独立键（`键名@格式`）；读取时回退到旧全局键，
+    // 因此存量用户无需数据迁移，会直接沿用升级前的样式。
+
+    private class FormatPrefKeys(profile: ReadingFormatProfile) {
+        private val suffix = "@" + profile.storageKey
+        val pageTurnMode = stringPreferencesKey(KEY_PAGE_TURN_MODE.name + suffix)
+        val readingStyles = stringPreferencesKey(KEY_READING_STYLES.name + suffix)
+        val readingStyleIndex = intPreferencesKey(KEY_READING_STYLE_INDEX.name + suffix)
+        val textColor = intPreferencesKey(KEY_TEXT_COLOR.name + suffix)
+        val bgColor = intPreferencesKey(KEY_BG_COLOR.name + suffix)
+        val bgAlpha = intPreferencesKey(KEY_BG_ALPHA.name + suffix)
+        val bgImage = stringPreferencesKey(KEY_BG_IMAGE.name + suffix)
+        val legacyTheme = stringPreferencesKey(KEY_READING_THEME.name + suffix)
+        val fontSize = intPreferencesKey(KEY_FONT_SIZE.name + suffix)
+        val paddingDp = intPreferencesKey(KEY_READER_PADDING_DP.name + suffix)
+        val lineSpacing = floatPreferencesKey(KEY_LINE_SPACING_MULT.name + suffix)
+        val codeBlockWrap = booleanPreferencesKey(KEY_CODE_BLOCK_WRAP.name + suffix)
+        val codeLineNumbers = booleanPreferencesKey(KEY_CODE_LINE_NUMBERS.name + suffix)
+        val codeHighlightTheme = stringPreferencesKey(KEY_CODE_HIGHLIGHT_THEME.name + suffix)
+    }
+
+    private val formatPrefKeys: Map<ReadingFormatProfile, FormatPrefKeys> =
+        ReadingFormatProfile.entries.associateWith { FormatPrefKeys(it) }
+
+    fun pageTurnModeFor(profile: ReadingFormatProfile): Flow<ReaderPageTurnMode> =
+        dataStore.data.map { prefs ->
+            val k = formatPrefKeys.getValue(profile)
+            ReaderPageTurnMode.fromStored(prefs[k.pageTurnMode] ?: prefs[KEY_PAGE_TURN_MODE])
+        }
+
+    fun readingStyleStateFor(profile: ReadingFormatProfile): Flow<ReadingStyleState> =
+        dataStore.data.map { prefs ->
+            val k = formatPrefKeys.getValue(profile)
+            ReadingThemeStorage.migrateToStyleState(
+                stylesJson = prefs[k.readingStyles] ?: prefs[KEY_READING_STYLES],
+                selectedIndex = prefs.intPref(k.readingStyleIndex)
+                    ?: prefs.intPref(KEY_READING_STYLE_INDEX),
+                textColorArgb = prefs.intPref(k.textColor) ?: prefs.intPref(KEY_TEXT_COLOR),
+                bgColorArgb = prefs.intPref(k.bgColor) ?: prefs.intPref(KEY_BG_COLOR),
+                bgAlpha = prefs.intPref(k.bgAlpha) ?: prefs.intPref(KEY_BG_ALPHA),
+                bgImage = prefs[k.bgImage] ?: prefs[KEY_BG_IMAGE],
+                legacyName = prefs[k.legacyTheme] ?: prefs[KEY_READING_THEME],
+            )
+        }
+
+    fun readingThemeFor(profile: ReadingFormatProfile): Flow<ReadingTheme> =
+        readingStyleStateFor(profile).map { it.current }
+
+    fun fontSizeFor(profile: ReadingFormatProfile): Flow<Int> = dataStore.data.map { prefs ->
+        val k = formatPrefKeys.getValue(profile)
+        prefs.intPref(k.fontSize) ?: prefs.intPref(KEY_FONT_SIZE) ?: DEFAULT_FONT_SIZE
+    }
+
+    fun readerPaddingDpFor(profile: ReadingFormatProfile): Flow<Int> = dataStore.data.map { prefs ->
+        val k = formatPrefKeys.getValue(profile)
+        prefs.intPref(k.paddingDp) ?: prefs.intPref(KEY_READER_PADDING_DP) ?: DEFAULT_PADDING_DP
+    }
+
+    fun readerLineSpacingMultiplierFor(profile: ReadingFormatProfile): Flow<Float> =
+        dataStore.data.map { prefs ->
+            val k = formatPrefKeys.getValue(profile)
+            prefs.floatPref(k.lineSpacing) ?: prefs.floatPref(KEY_LINE_SPACING_MULT)
+                ?: DEFAULT_LINE_SPACING_MULT
+        }
+
+    fun codeBlockWrapFor(profile: ReadingFormatProfile): Flow<Boolean> = dataStore.data.map { prefs ->
+        val k = formatPrefKeys.getValue(profile)
+        prefs[k.codeBlockWrap] ?: prefs[KEY_CODE_BLOCK_WRAP] ?: DEFAULT_CODE_BLOCK_WRAP
+    }
+
+    fun codeLineNumbersFor(profile: ReadingFormatProfile): Flow<Boolean> =
+        dataStore.data.map { prefs ->
+            val k = formatPrefKeys.getValue(profile)
+            prefs[k.codeLineNumbers] ?: prefs[KEY_CODE_LINE_NUMBERS] ?: DEFAULT_CODE_LINE_NUMBERS
+        }
+
+    fun codeHighlightThemeFor(profile: ReadingFormatProfile): Flow<CodeHighlightTheme> =
+        dataStore.data.map { prefs ->
+            val k = formatPrefKeys.getValue(profile)
+            CodeHighlightTheme.fromStored(
+                prefs[k.codeHighlightTheme] ?: prefs[KEY_CODE_HIGHLIGHT_THEME],
+            )
+        }
+
+    val pageTurnMode: Flow<ReaderPageTurnMode> = withProfile { pageTurnModeFor(it) }
 
     val appLanguage: Flow<AppLanguage> = dataStore.data.map { prefs ->
         AppLanguage.fromStored(prefs[KEY_APP_LANGUAGE])
@@ -46,46 +144,24 @@ class ReaderSettingsRepository @Inject constructor(
         appThemeFromStored(prefs[KEY_APP_THEME_MODE])
     }
 
-    val readingStyleState: Flow<ReadingStyleState> = dataStore.data.map { prefs ->
-        ReadingThemeStorage.migrateToStyleState(
-            stylesJson = prefs[KEY_READING_STYLES],
-            selectedIndex = prefs.intPref(KEY_READING_STYLE_INDEX),
-            textColorArgb = prefs.intPref(KEY_TEXT_COLOR),
-            bgColorArgb = prefs.intPref(KEY_BG_COLOR),
-            bgAlpha = prefs.intPref(KEY_BG_ALPHA),
-            bgImage = prefs[KEY_BG_IMAGE],
-            legacyName = prefs[KEY_READING_THEME],
-        )
-    }
+    val readingStyleState: Flow<ReadingStyleState> = withProfile { readingStyleStateFor(it) }
 
     val readingTheme: Flow<ReadingTheme> = readingStyleState.map { it.current }
 
-    val fontSize: Flow<Int> = dataStore.data.map { prefs ->
-        prefs.intPref(KEY_FONT_SIZE) ?: DEFAULT_FONT_SIZE
-    }
+    val fontSize: Flow<Int> = withProfile { fontSizeFor(it) }
 
-    val readerPaddingDp: Flow<Int> = dataStore.data.map { prefs ->
-        prefs.intPref(KEY_READER_PADDING_DP) ?: DEFAULT_PADDING_DP
-    }
+    val readerPaddingDp: Flow<Int> = withProfile { readerPaddingDpFor(it) }
 
-    val readerLineSpacingMultiplier: Flow<Float> = dataStore.data.map { prefs ->
-        prefs.floatPref(KEY_LINE_SPACING_MULT) ?: DEFAULT_LINE_SPACING_MULT
-    }
+    val readerLineSpacingMultiplier: Flow<Float> = withProfile { readerLineSpacingMultiplierFor(it) }
 
     /** 围栏/缩进代码块是否自动换行；关闭后代码块可左右滑动。默认开启。 */
-    val codeBlockWrap: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[KEY_CODE_BLOCK_WRAP] ?: DEFAULT_CODE_BLOCK_WRAP
-    }
+    val codeBlockWrap: Flow<Boolean> = withProfile { codeBlockWrapFor(it) }
 
     /** 纯代码文件左侧是否显示源码行号；默认开启。 */
-    val codeLineNumbers: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[KEY_CODE_LINE_NUMBERS] ?: DEFAULT_CODE_LINE_NUMBERS
-    }
+    val codeLineNumbers: Flow<Boolean> = withProfile { codeLineNumbersFor(it) }
 
     /** 全局代码高亮主题；缺失或未知值回退到 VS Light+。 */
-    val codeHighlightTheme: Flow<CodeHighlightTheme> = dataStore.data.map { prefs ->
-        CodeHighlightTheme.fromStored(prefs[KEY_CODE_HIGHLIGHT_THEME])
-    }
+    val codeHighlightTheme: Flow<CodeHighlightTheme> = withProfile { codeHighlightThemeFor(it) }
 
     /** 沉浸阅读时隐藏状态栏与底部导航条；唤出功能栏时再显示。默认开启。 */
     val hideSystemBars: Flow<Boolean> = dataStore.data.map { prefs ->
@@ -132,7 +208,7 @@ class ReaderSettingsRepository @Inject constructor(
     suspend fun setPageTurnMode(mode: ReaderPageTurnMode) {
         val normalized = ReaderPageTurnMode.normalize(mode)
         dataStore.edit { prefs ->
-            prefs[KEY_PAGE_TURN_MODE] = normalized.name
+            prefs[formatPrefKeys.getValue(activeProfile.value).pageTurnMode] = normalized.name
         }
     }
 
@@ -203,37 +279,37 @@ class ReaderSettingsRepository @Inject constructor(
 
     suspend fun setFontSize(size: Int) {
         dataStore.edit { prefs ->
-            prefs[KEY_FONT_SIZE] = size.coerceIn(10, 40)
+            prefs[formatPrefKeys.getValue(activeProfile.value).fontSize] = size.coerceIn(10, 40)
         }
     }
 
     suspend fun setReaderPaddingDp(dp: Int) {
         dataStore.edit { prefs ->
-            prefs[KEY_READER_PADDING_DP] = dp.coerceIn(8, 56)
+            prefs[formatPrefKeys.getValue(activeProfile.value).paddingDp] = dp.coerceIn(8, 56)
         }
     }
 
     suspend fun setReaderLineSpacingMultiplier(mult: Float) {
         dataStore.edit { prefs ->
-            prefs[KEY_LINE_SPACING_MULT] = mult.coerceIn(1f, 2.5f)
+            prefs[formatPrefKeys.getValue(activeProfile.value).lineSpacing] = mult.coerceIn(1f, 2.5f)
         }
     }
 
     suspend fun setCodeBlockWrap(wrap: Boolean) {
         dataStore.edit { prefs ->
-            prefs[KEY_CODE_BLOCK_WRAP] = wrap
+            prefs[formatPrefKeys.getValue(activeProfile.value).codeBlockWrap] = wrap
         }
     }
 
     suspend fun setCodeLineNumbers(show: Boolean) {
         dataStore.edit { prefs ->
-            prefs[KEY_CODE_LINE_NUMBERS] = show
+            prefs[formatPrefKeys.getValue(activeProfile.value).codeLineNumbers] = show
         }
     }
 
     suspend fun setCodeHighlightTheme(theme: CodeHighlightTheme) {
         dataStore.edit { prefs ->
-            prefs[KEY_CODE_HIGHLIGHT_THEME] = theme.stableId
+            prefs[formatPrefKeys.getValue(activeProfile.value).codeHighlightTheme] = theme.stableId
         }
     }
 
@@ -284,13 +360,14 @@ class ReaderSettingsRepository @Inject constructor(
         val safeStyles = styles.ifEmpty { ReadingTheme.allThemes() }
         val index = ReadingThemeStorage.coerceIndex(selectedIndex, safeStyles.size)
         val current = safeStyles[index]
+        val k = formatPrefKeys.getValue(activeProfile.value)
         dataStore.edit { prefs ->
-            prefs[KEY_READING_STYLES] = ReadingThemeStorage.encodeStyles(safeStyles)
-            prefs[KEY_READING_STYLE_INDEX] = index
-            prefs[KEY_TEXT_COLOR] = current.textColor.toArgb()
-            prefs[KEY_BG_COLOR] = current.backgroundColor.toArgb()
-            prefs[KEY_BG_ALPHA] = ReadingThemeStorage.clampAlpha(current.backgroundAlpha)
-            prefs[KEY_BG_IMAGE] = current.backgroundImageAsset.orEmpty()
+            prefs[k.readingStyles] = ReadingThemeStorage.encodeStyles(safeStyles)
+            prefs[k.readingStyleIndex] = index
+            prefs[k.textColor] = current.textColor.toArgb()
+            prefs[k.bgColor] = current.backgroundColor.toArgb()
+            prefs[k.bgAlpha] = ReadingThemeStorage.clampAlpha(current.backgroundAlpha)
+            prefs[k.bgImage] = current.backgroundImageAsset.orEmpty()
         }
     }
 

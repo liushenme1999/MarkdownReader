@@ -11,6 +11,7 @@ import space.liushenme.markdownreader.data.repository.IBookRepository
 import space.liushenme.markdownreader.data.repository.IBookmarkRepository
 import space.liushenme.markdownreader.data.repository.IHighlightRepository
 import space.liushenme.markdownreader.data.repository.ReaderPersistenceQueue
+import space.liushenme.markdownreader.data.repository.ReadingFormatProfile
 import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
 import space.liushenme.markdownreader.document.DocumentOpenFailure
 import space.liushenme.markdownreader.document.DocumentOpenResult
@@ -460,6 +461,12 @@ class ReaderViewModel @Inject constructor(
         val currentLoadJob = viewModelScope.launch {
             val bookEntity = bookRepository.getBookById(bookId)
             _book.value = bookEntity
+            // 切换阅读样式档位：不同文件格式各自一套「颜色与背景 / 代码样式 / 字体排版 / 翻页方式」。
+            readerSettingsRepository.setActiveProfile(
+                ReadingFormatProfile.fromBookFormat(
+                    ImportedBookFormat.fromStored(bookEntity?.importFormat),
+                ),
+            )
 
             if (bookEntity == null) {
                 loadedBookId = null
@@ -560,8 +567,16 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    /** 阅读页进入前台：开始（或继续）本段阅读计时。 */
+    /** 阅读页进入前台：开始（或继续）本段阅读计时，并重新确立本册的阅读样式档位。 */
     fun onReadingResumed() {
+        // 从「我的 → 阅读设置」返回时，设置页可能切换过档位，这里按当前书籍再确立一次。
+        _book.value?.let { book ->
+            readerSettingsRepository.setActiveProfile(
+                ReadingFormatProfile.fromBookFormat(
+                    ImportedBookFormat.fromStored(book.importFormat),
+                ),
+            )
+        }
         session.onReadingResumed(
             hasBook = _book.value != null,
             hasContent = _content.value.isNotEmpty(),
