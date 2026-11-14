@@ -183,6 +183,12 @@ fun ReadingSettingsScreen(
                             checked = codeLineNumbers,
                             onCheckedChange = viewModel::setCodeLineNumbers,
                         )
+                        ReaderSettingsSwitchRow(
+                            title = stringResource(R.string.reader_code_block_wrap),
+                            summary = stringResource(R.string.reader_code_block_wrap_summary),
+                            checked = codeBlockWrap,
+                            onCheckedChange = viewModel::setCodeBlockWrap,
+                        )
                     }
                 }
             }
@@ -221,30 +227,6 @@ fun ReadingSettingsScreen(
                         steps = 29,
                         showDividerBelow = true,
                     )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 4.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = stringResource(R.string.reader_code_block_wrap),
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Medium,
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = stringResource(R.string.reader_code_block_wrap_summary),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                            )
-                        }
-                        Switch(
-                            checked = codeBlockWrap,
-                            onCheckedChange = viewModel::setCodeBlockWrap,
-                        )
-                    }
                 }
             }
 

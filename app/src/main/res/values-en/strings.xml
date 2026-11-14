@@ -252,7 +252,7 @@
     <string name="reader_line_spacing_value">%1$.2fx</string>
     <string name="reader_code_block_wrap">Wrap code blocks</string>
     <string name="reader_code_block_wrap_summary">When off, long code can be scrolled horizontally inside the block</string>
-    <string name="reading_settings_section_code_appearance">Code appearance</string>
+    <string name="reading_settings_section_code_appearance">Code style</string>
     <string name="reading_settings_code_appearance_summary">Syntax themes apply to Git source files and Markdown code blocks immediately</string>
     <string name="reader_hide_system_bars">Hide system bars while reading</string>
     <string name="reader_hide_system_bars_summary">Hide the status bar and navigation bar during immersive reading. They reappear when you show the toolbar. Applies to Markdown, TXT, and PDF.</string>

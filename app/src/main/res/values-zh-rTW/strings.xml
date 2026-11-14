@@ -252,7 +252,7 @@
     <string name="reader_line_spacing_value">%1$.2f 倍</string>
     <string name="reader_code_block_wrap">程式碼區塊自動換行</string>
     <string name="reader_code_block_wrap_summary">關閉後，長程式碼可在區塊內左右滑動檢視</string>
-    <string name="reading_settings_section_code_appearance">程式碼外觀</string>
+    <string name="reading_settings_section_code_appearance">程式碼樣式</string>
     <string name="reading_settings_code_appearance_summary">語法主題同時套用於 Git 原始碼與 Markdown 程式碼區塊，選擇後立即生效</string>
     <string name="reader_hide_system_bars">閱讀時隱藏系統列</string>
     <string name="reader_hide_system_bars_summary">沉浸閱讀時隱藏頂部狀態列與底部小白條，點螢幕喚出功能列時再顯示。適用於 Markdown、TXT 與 PDF。</string>
