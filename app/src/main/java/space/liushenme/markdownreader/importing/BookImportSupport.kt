@@ -18,7 +18,12 @@ object BookImportSupport {
         "text/plain",
         "application/pdf",
         "text/html",
+        "text/x-html",
         *CodeFileLanguage.importMimeTypes,
+        // 兜底：Android 无法识别的扩展名（.kt/.go/.rs/.sh/.yaml…）常被系统报成
+        // application/octet-stream。不放行这一项时，系统文件选择器会把这些文件置灰/隐藏，
+        // 表现为「明明有文件却选不中 / 导入不了」。真正是否可导入仍由扩展名白名单判定。
+        "application/octet-stream",
     )
 
     private val SUPPORTED_EXTENSIONS = setOf(
@@ -49,6 +54,18 @@ object BookImportSupport {
             m.contains("azw") ||
             m.contains("wordprocessingml") ||
             (m.contains("msword") && !m.contains("openxml"))
+    }
+
+    /**
+     * 扩展名与 MIME 都无法判定为受支持格式（例如未知扩展名 + octet-stream）。
+     * 文件选择器放开 octet-stream 后，用它拦截 APK / 压缩包等误选文件。
+     */
+    fun isUnsupportedPick(fileName: String?, mime: String?): Boolean {
+        val ext = fileName?.substringAfterLast('.', "")?.trim()?.lowercase().orEmpty()
+        if (ext in SUPPORTED_EXTENSIONS) return false
+        val normalizedMime = mime?.lowercase()?.trim().orEmpty()
+        if (ext.isEmpty()) return false
+        return normalizedMime.isEmpty() || normalizedMime == "application/octet-stream"
     }
 
     fun detectFormat(fileName: String?, mime: String?): ImportedBookFormat {

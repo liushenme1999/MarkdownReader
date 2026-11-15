@@ -4,6 +4,19 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [1.3.7] - 2026-11-16
+
+### 修复
+
+- 部分源码文件在系统文件选择器里置灰/不可选，导入不了：Android 对 `.kt/.go/.rs/.sh/.yaml` 等扩展名常报成 `application/octet-stream`，导入白名单缺少这一项。现已补上兜底，并补齐 `text/x-sh`、`text/x-shellscript`、`application/x-shellscript`、`application/yaml`、`text/yaml`、`application/x-toml`、`application/x-typescript` 等常见别名
+- 文件管理器「用其他应用打开」对源码文件不出现本应用：菜单里逐个枚举 MIME 会漏，改为按 `text/*` + 常见 `application/*` 类型收口，格式是否可读仍由扩展名白名单判定
+- 放开 `octet-stream` 后误选 APK/压缩包会被当作文本导入：新增 `isUnsupportedPick` 拦截，改为提示「不支持该格式」
+
+### 测试
+
+- 新增全格式导入矩阵测试（JVM + 设备两套）：用 22 个真实样本逐一验证 Markdown / TXT / HTML / PDF / 12 种源码格式，以及 GBK、UTF-8 BOM、UTF-16、大写扩展名、无扩展名等边界
+- 新增文件选择器兼容性测试：`octet-stream` 兜底、各源码扩展名的 MIME 路由、未知二进制拒绝
+
 ## [1.3.6] - 2026-11-15
 
 ### 修复

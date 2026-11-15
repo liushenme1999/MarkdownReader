@@ -426,6 +426,14 @@ class BookshelfViewModel @Inject constructor(
                 }
                 return LocalImportOutcome.Failed
             }
+            if (BookImportSupport.isUnsupportedPick(fileName, mime)) {
+                if (notify) {
+                    toastChannel.trySend(
+                        appContext.getString(R.string.toast_import_unsupported_format)
+                    )
+                }
+                return LocalImportOutcome.Failed
+            }
             val format = BookImportSupport.detectFormat(fileName, mime)
             val title = BookImportSupport.stripKnownExtension(fileName)
             jobId = UUID.randomUUID().toString()
@@ -509,7 +517,9 @@ class BookshelfViewModel @Inject constructor(
                 }
                 val result = withContext(Dispatchers.IO) { UrlBookDownloader.download(url) }
                 val name = result.suggestedFileName ?: url.substringAfterLast('/').substringBefore('?')
-                if (BookImportSupport.isRemovedFormat(name, result.contentType)) {
+                if (BookImportSupport.isRemovedFormat(name, result.contentType) ||
+                    BookImportSupport.isUnsupportedPick(name, result.contentType)
+                ) {
                     toastChannel.trySend(
                         appContext.getString(R.string.toast_import_unsupported_format)
                     )

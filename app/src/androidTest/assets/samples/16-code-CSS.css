@@ -1,0 +1,36 @@
+/* 代码阅读测试（CSS）：变量、媒体查询、动画与长选择器。 */
+:root {
+  --paper: #fbf7ef;
+  --ink: #24201b;
+  --accent: #b08968;
+  --radius: 12px;
+}
+
+.reader-page {
+  background: var(--paper);
+  color: var(--ink);
+  line-height: 1.9;
+  padding: 32px;
+  border-radius: var(--radius);
+  transition: background-color 200ms ease;
+}
+
+.reader-page .chapter-title {
+  font-size: 1.4em;
+  font-weight: 600;
+  border-left: 4px solid var(--accent);
+  padding-left: 10px;
+}
+
+/* 超长行：这一行用于验证 CSS 代码块的横向滚动与自动换行，选择器与属性值故意写得很长，包含中文注释与多个组合选择器。 */
+.reader-page .content > p + p, .reader-page .content > blockquote + p, .reader-page .content > ul li, .reader-page .content > ol li, .reader-page .content > table tr td, .reader-page .content > pre code { margin: 0 0 .8em; }
+
+@media (prefers-color-scheme: dark) {
+  :root { --paper: #1c1a17; --ink: #e8e3da; }
+  .reader-page { box-shadow: none; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}

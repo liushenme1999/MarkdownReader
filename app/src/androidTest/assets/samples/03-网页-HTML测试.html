@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>网页格式测试</title>
+<style>
+  :root { color-scheme: light; }
+  body { margin: 0; padding: 20px; font-family: -apple-system, "PingFang SC", "Noto Sans CJK SC", sans-serif; line-height: 1.9; color: #222; background: #fbf7ef; }
+  h1 { font-size: 26px; margin: 0 0 6px; }
+  h2 { font-size: 20px; margin: 28px 0 10px; padding-left: 10px; border-left: 4px solid #b08968; }
+  p { margin: 10px 0; }
+  .muted { color: #777; font-size: 14px; }
+  .card { background: #fff; border-radius: 12px; padding: 14px 16px; box-shadow: 0 1px 6px rgba(0,0,0,.08); margin: 14px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 14px; }
+  th { background: #f3ece1; }
+  code { background: #f0e9dd; padding: 2px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #2b2b2b; color: #eee; padding: 12px; border-radius: 10px; overflow-x: auto; }
+  blockquote { margin: 12px 0; padding: 8px 14px; border-left: 3px solid #c9a227; background: #fff8e1; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #e8f5e9; color: #2e7d32; font-size: 12px; }
+  a { color: #1565c0; }
+</style>
+</head>
+<body>
+  <h1>网页（HTML）格式测试</h1>
+  <p class="muted">用于验证 WebView 预览、滚动、缩放、链接、图片与表格。</p>
+
+  <div class="card">
+    <h2>一、标题与段落</h2>
+    <p>这是一段普通正文，包含 <strong>粗体</strong>、<em>斜体</em>、<code>行内代码</code> 与 <span class="tag">标签</span>。</p>
+    <p>长段落：夜色像一层缓慢下沉的水，把城里的声音都压低了。远处霓虹被雨揉碎，沿着玻璃往下流，像一封写到一半就被迫中断的信。她坐在窗边，把书翻到上次折角的那一页，忽然意识到自己已经记不清故事的开头。</p>
+  </div>
+
+  <h2>二、列表</h2>
+  <ul>
+    <li>无序列表项一</li>
+    <li>无序列表项二
+      <ul><li>嵌套项 A</li><li>嵌套项 B</li></ul>
+    </li>
+  </ul>
+  <ol>
+    <li>有序列表项一</li>
+    <li>有序列表项二</li>
+    <li>有序列表项三</li>
+  </ol>
+
+  <h2>三、表格</h2>
+  <table>
+    <thead><tr><th>格式</th><th>扩展名</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>Markdown</td><td>.md</td><td>完整渲染</td></tr>
+      <tr><td>纯文本</td><td>.txt</td><td>行级分页</td></tr>
+      <tr><td>网页</td><td>.html</td><td>WebView 预览</td></tr>
+      <tr><td>PDF</td><td>.pdf</td><td>按页栅格化</td></tr>
+      <tr><td>源码</td><td>.kt/.py/.js…</td><td>代码阅读</td></tr>
+    </tbody>
+  </table>
+
+  <h2>四、代码块</h2>
+  <pre><code>fun main() {
+    println("Hello, MD Reader")
+}</code></pre>
+
+  <h2>五、引用与链接</h2>
+  <blockquote>阅读是把别人的思考，变成自己的台阶。</blockquote>
+  <p>链接：<a href="https://commonmark.org/">CommonMark 规范</a> ｜ <a href="#top">回到顶部</a> ｜ <a href="mailto:test@example.com">邮件</a></p>
+
+  <h2>六、图片</h2>
+  <p>网络图片（需联网）：</p>
+  <p><img src="https://www.baidu.com/img/flexible/logo/pc/result.png" alt="示例图片" style="max-width:100%"></p>
+  <p>内联 SVG：</p>
+  <p>
+    <svg width="220" height="80" viewBox="0 0 220 80" xmlns="http://www.w3.org/2000/svg">
+      <rect x="2" y="2" width="216" height="76" rx="12" fill="#fff3cd" stroke="#c9a227"/>
+      <text x="110" y="48" font-size="18" text-anchor="middle" fill="#8a6d1d">HTML 内联 SVG</text>
+    </svg>
+  </p>
+
+  <h2 id="end">七、结尾</h2>
+  <p>如果以上内容显示正常，说明 HTML 格式解析与预览正常。</p>
+  <p class="muted">—— 文档结束 ——</p>
+</body>
+</html>

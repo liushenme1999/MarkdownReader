@@ -1,0 +1,36 @@
+# 代码阅读测试（YAML）：缩进、锚点、列表与多行字符串。
+version:
+  name: 1.3.5
+  code: 37
+
+reader: &reader_defaults
+  fontSize: 16
+  lineSpacing: 1.5
+  padding: 32
+  pageTurnMode: paged
+
+profiles:
+  markdown:
+    <<: *reader_defaults
+    format: markdown
+  txt:
+    <<: *reader_defaults
+    format: txt
+    paging: true
+  code:
+    <<: *reader_defaults
+    format: code
+    lineNumbers: true
+    wrap: false
+
+longLine: >-
+  这一行故意很长，用来测试 YAML 代码块的横向滚动与自动换行：
+  abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789
+
+items:
+  - name: Markdown
+    ext: .md
+  - name: 纯文本
+    ext: .txt
+  - name: PDF
+    ext: .pdf

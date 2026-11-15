@@ -42,41 +42,24 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- 文件管理器 / 其他应用：用其他应用打开 -->
+            <!-- 文件管理器 / 其他应用：用其他应用打开。
+                 不再逐个枚举 MIME：不同 ROM 把 .kt/.go/.rs/.sh/.yaml 报成 text/*、
+                 application/* 甚至 application/octet-stream，逐个声明会漏。
+                 统一按 text/* + 常见 application 类型收口，真正的格式判定由扩展名白名单完成。 -->
             <intent-filter android:label="@string/open_with_label">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="content" />
-                <data android:mimeType="text/markdown" />
-            </intent-filter>
-            <intent-filter android:label="@string/open_with_label">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="content" />
-                <data android:mimeType="text/x-markdown" />
-            </intent-filter>
-            <intent-filter android:label="@string/open_with_label">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="content" />
-                <data android:mimeType="text/plain" />
-            </intent-filter>
-            <intent-filter android:label="@string/open_with_label">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="content" />
-                <data android:mimeType="text/html" />
-            </intent-filter>
-            <intent-filter android:label="@string/open_with_label">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="content" />
+                <data android:mimeType="text/*" />
                 <data android:mimeType="application/pdf" />
-            </intent-filter>
-            <intent-filter android:label="@string/open_with_label">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="content" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="application/xml" />
+                <data android:mimeType="application/yaml" />
+                <data android:mimeType="application/x-yaml" />
+                <data android:mimeType="application/toml" />
+                <data android:mimeType="application/ini" />
+                <data android:mimeType="application/javascript" />
+                <data android:mimeType="application/typescript" />
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
             <!-- 分享到本应用 -->
@@ -84,15 +67,15 @@
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/*" />
-            </intent-filter>
-            <intent-filter android:label="@string/open_with_label">
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="application/pdf" />
-            </intent-filter>
-            <intent-filter android:label="@string/open_with_label">
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="application/xml" />
+                <data android:mimeType="application/yaml" />
+                <data android:mimeType="application/x-yaml" />
+                <data android:mimeType="application/toml" />
+                <data android:mimeType="application/ini" />
+                <data android:mimeType="application/javascript" />
+                <data android:mimeType="application/typescript" />
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>
