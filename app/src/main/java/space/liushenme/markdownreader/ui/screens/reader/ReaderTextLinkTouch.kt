@@ -62,7 +62,7 @@ internal object ReaderTextLinkTouch {
     }
 
     /** 点击点是否落在 [span] 在当前行显示出来的字形横向范围内。 */
-    private fun isSpanAtHorizontal(
+    internal fun isSpanAtHorizontal(
         layout: Layout,
         spannable: Spanned,
         span: ClickableSpan,
@@ -204,7 +204,7 @@ internal object ReaderTextLinkTouch {
         return contentX >= left && contentX <= right
     }
 
-    private fun spanAtOffset(spannable: Spanned, offset: Int): ClickableSpan? {
+    internal fun spanAtOffset(spannable: Spanned, offset: Int): ClickableSpan? {
         return spannable.getSpans(offset, offset, ClickableSpan::class.java)
             .asSequence()
             .filter { offset >= spannable.getSpanStart(it) && offset < spannable.getSpanEnd(it) }

@@ -74,6 +74,17 @@ internal fun resolveReaderHitTarget(
     }
 
     tableCellHitAt(textView, x, y)?.let { hit ->
+        // 表格单元格里的链接：单元格文字由行 span 内部 layout 绘制，外层命中不到链接，
+        // 必须先换算到单元格内部；点在链接文字以外的位置仍按单元格处理（划词/复制）。
+        ReaderTableLinkTouch.findClickableSpanAt(textView, x, y)?.let { link ->
+            return ReaderHitTarget(
+                kind = ReaderHitKind.LINK,
+                span = link,
+                canSelect = true,
+                canHighlight = false,
+                canClick = true,
+            )
+        }
         return ReaderHitTarget(
             kind = ReaderHitKind.TABLE_CELL,
             span = hit,

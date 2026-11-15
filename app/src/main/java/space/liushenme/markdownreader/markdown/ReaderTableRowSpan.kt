@@ -24,7 +24,7 @@ import io.noties.markwon.utils.SpanUtils
  * [draw] 用当前文字色补一层浅底，避免这种假空行。
  */
 internal class ReaderTableRowSpan(
-    theme: TableTheme,
+    private val theme: TableTheme,
     cells: List<TableRowSpan.Cell>,
     private val rowHeader: Boolean,
     private val rowOdd: Boolean,
@@ -40,6 +40,17 @@ internal class ReaderTableRowSpan(
     fun cellText(column: Int): CharSequence? = readerCells.getOrNull(column)?.text()
 
     fun cellTexts(): List<CharSequence> = readerCells.map { it.text() }
+
+    /** Markwon 单元格内边距（px）：命中单元格内文字时要从行内坐标里扣掉。 */
+    val cellPadding: Int
+        get() = theme.tableCellPadding()
+
+    /** 单元格自身的排版（Markwon 在测量/绘制时创建）；未完成布局时返回 null。 */
+    fun cellLayout(column: Int): android.text.Layout? {
+        val width = cellWidth()
+        if (width <= 0 || column !in 0 until columnCount) return null
+        return findLayoutForHorizontalOffset(column * width)
+    }
 
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val fillRect = Rect()
