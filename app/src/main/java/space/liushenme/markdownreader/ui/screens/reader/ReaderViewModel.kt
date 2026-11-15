@@ -227,6 +227,25 @@ class ReaderViewModel @Inject constructor(
     private var bookmarkCollectJob: Job? = null
     private var highlightCollectJob: Job? = null
     private var progressPersistJob: Job? = null
+    /** 窗口模式：当前 content 在全书中的起始字符偏移（0 表示 content 即全文）。 */
+    private val _contentBaseChar = MutableStateFlow(0)
+    private var contentBaseChar: Int
+        get() = _contentBaseChar.value
+        set(value) { _contentBaseChar.value = value }
+
+    /** 窗口模式：全书总字符数（用于进度百分比；0 表示用 content.length）。 */
+    private val _contentTotalChars = MutableStateFlow(0)
+    private var contentTotalChars: Int
+        get() = _contentTotalChars.value
+        set(value) { _contentTotalChars.value = value }
+
+    /** 打开书后待恢复的目标位置（全书偏移）；恢复完成前页码变化不得覆盖它。 */
+    private var pendingRestoreGlobalChar: Int? = null
+
+    /** 窗口模式：content 是否已追加到全书末尾。 */
+    private var contentWindowComplete: Boolean = true
+    private var windowAppendJob: Job? = null
+
     /** 当前 ViewModel 会话内已成功装载的正文 bookId；WebLink 返回等同书时不重复 load。 */
     private var loadedBookId: Long? = null
 
@@ -335,6 +354,8 @@ class ReaderViewModel @Inject constructor(
         val topChar: Int,
         val bottomChar: Int,
         val chapterOffset: Int?,
+        val windowStartChar: Int = 0,
+        val totalCharsGlobal: Int = 0,
     )
 
     val uiState: StateFlow<ReaderUiState> = combine(
@@ -393,8 +414,14 @@ class ReaderViewModel @Inject constructor(
         ) { progress, finishPrompt, bookmarks, highlights, loading ->
             RuntimeState(progress, finishPrompt, bookmarks, highlights, loading)
         },
-        combine(viewportTopChar, viewportBottomChar, visibleChapterOffset) { top, bottom, chapter ->
-            ViewportState(top, bottom, chapter)
+        combine(
+            viewportTopChar,
+            viewportBottomChar,
+            visibleChapterOffset,
+            _contentBaseChar,
+            _contentTotalChars,
+        ) { top, bottom, chapter, base, total ->
+            ViewportState(top, bottom, chapter, base, total)
         },
     ) { document, appearance, interaction, runtime, viewport ->
         val loadState = when {
@@ -430,6 +457,8 @@ class ReaderViewModel @Inject constructor(
             lastHighlightStyle = interaction.highlightStyle,
             codeHighlightTheme = interaction.codeHighlightTheme,
             showMarkFinishedPrompt = runtime.finishPrompt,
+            windowStartChar = viewport.windowStartChar,
+            totalCharsGlobal = viewport.totalCharsGlobal,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -501,6 +530,13 @@ class ReaderViewModel @Inject constructor(
             _book.value = latestBook
             _documentSnapshot.value = snapshot
             val text = snapshot.content
+            contentBaseChar = snapshot.windowStartChar.coerceAtLeast(0)
+            contentTotalChars = if (snapshot.totalCharsGlobal > 0) {
+                snapshot.totalCharsGlobal
+            } else {
+                contentBaseChar + text.length
+            }
+            contentWindowComplete = contentTotalChars <= contentBaseChar + text.length
             _content.value = text
             _structuredToc.value = snapshot.toc
                 .map {
@@ -512,15 +548,20 @@ class ReaderViewModel @Inject constructor(
                     )
                 }
                 .takeIf { it.isNotEmpty() }
+            // 会话内的阅读位置统一用「全书字符偏移」（与进度、书签、目录同一坐标系）：
+            // 窗口模式下 UI 侧局部位置由 ReaderScreen 负责与 windowStartChar 互相换算。
+            val storedGlobalPos = resolveStoredCharPos(
+                currentPosition = latestBook.currentPosition,
+                readingProgress = latestBook.readingProgress,
+                // 必须以「全书坐标空间」换算：传窗口长度会把全局位置按比例压缩成窗口内位置。
+                contentLength = contentTotalChars,
+                totalChars = latestBook.totalChars.coerceAtLeast(contentTotalChars),
+            ).coerceIn(0, (contentTotalChars - 1).coerceAtLeast(0))
+            pendingRestoreGlobalChar = storedGlobalPos
             session.restoreBookState(
                 progress = latestBook.readingProgress,
-                position = resolveStoredCharPos(
-                    currentPosition = latestBook.currentPosition,
-                    readingProgress = latestBook.readingProgress,
-                    contentLength = text.length,
-                    totalChars = latestBook.totalChars.coerceAtLeast(text.length.coerceAtLeast(1)),
-                ),
-                contentLength = text.length,
+                position = storedGlobalPos,
+                contentLength = contentTotalChars.coerceAtLeast(1),
                 previewText = latestBook.progressPreviewText,
             )
             _readerLoadEpoch.value = _readerLoadEpoch.value + 1L
@@ -589,7 +630,8 @@ class ReaderViewModel @Inject constructor(
      */
     fun onReadingPaused() {
         val book = _book.value ?: return
-        val delta = session.onReadingPaused(_content.value.length) ?: return
+        // 位置是全书偏移，按全书长度裁剪，避免窗口模式下把阅读字数算成 0。
+        val delta = session.onReadingPaused(effectiveTotalChars()) ?: return
         persistenceQueue.recordSession(book.id, delta.charsRead, delta.minutesRead)
     }
 
@@ -602,7 +644,7 @@ class ReaderViewModel @Inject constructor(
 
     private fun enqueueSessionSegmentSave() {
         val book = _book.value ?: return
-        val delta = session.onReadingPaused(_content.value.length) ?: return
+        val delta = session.onReadingPaused(effectiveTotalChars()) ?: return
         persistenceQueue.recordSession(book.id, delta.charsRead, delta.minutesRead)
     }
 
@@ -633,11 +675,68 @@ class ReaderViewModel @Inject constructor(
         bottomChar: Int? = null,
         chapterOffset: Int? = null,
     ) {
-        val contentLen = _content.value.length
+        val contentLen = effectiveTotalChars()
         if (contentLen <= 0) return
         setVisibleChapterOffset(chapterOffset)
-        session.updateVisibleProgress(globalChar, reachedEnd, bottomChar, contentLen)
+        session.updateVisibleProgress(
+            contentBaseChar + globalChar,
+            reachedEnd && windowReachedBookEnd(),
+            bottomChar?.let { contentBaseChar + it },
+            contentLen,
+        )
     }
+
+    /**
+     * 窗口模式：读到当前窗口尾部附近时异步追加下一批文本。
+     * 追加只改 content，不重置阅读位置；追加完成前忽略重复请求。
+     */
+    fun appendTxtWindowIfNeeded(localChar: Int) {
+        if (contentWindowComplete || windowAppendJob?.isActive == true) return
+        val current = _content.value
+        if (current.isEmpty()) return
+        val remaining = current.length - localChar
+        if (remaining > WINDOW_APPEND_THRESHOLD_CHARS) return
+        val book = _book.value ?: return
+        val fromGlobal = contentBaseChar + current.length
+        windowAppendJob = viewModelScope.launch {
+            val next = withContext(Dispatchers.IO) {
+                documentRepository.readNextTxtWindow(book.id, fromGlobal)
+            } ?: run {
+                contentWindowComplete = true
+                return@launch
+            }
+            val appended = _content.value + next.text
+            contentWindowComplete = contentBaseChar + appended.length >= contentTotalChars
+            _content.value = appended
+        }
+    }
+
+    /** 窗口模式：是否真的读到了全书末尾（窗口末尾不等于全书末尾）。 */
+    private fun windowReachedBookEnd(): Boolean =
+        contentWindowComplete || contentBaseChar + _content.value.length >= contentTotalChars
+
+    /**
+     * 窗口模式：把「全书字符位置」换算成当前窗口内的局部位置；
+     * 若目标不在窗口内，先按目标位置重新加载窗口。非窗口模式直接返回 clamp 结果。
+     */
+    suspend fun ensureLocalCharForGlobal(globalChar: Int): Int {
+        val current = _content.value
+        val local = globalChar - contentBaseChar
+        if (contentTotalChars <= 0 || (local in 0..(current.length - 1))) {
+            return local.coerceIn(0, (current.length - 1).coerceAtLeast(0))
+        }
+        val book = _book.value ?: return 0
+        val window = withContext(Dispatchers.IO) { documentRepository.reloadTxtWindowAt(book.id, globalChar) }
+            ?: return local.coerceIn(0, (current.length - 1).coerceAtLeast(0))
+        contentBaseChar = window.startChar
+        contentWindowComplete = contentTotalChars <= window.startChar + window.text.length
+        _content.value = window.text
+        return (globalChar - window.startChar).coerceIn(0, (window.text.length - 1).coerceAtLeast(0))
+    }
+
+    /** 进度计算用的「全书字符总数」（窗口模式取索引总字数）。 */
+    private fun effectiveTotalChars(): Int =
+        if (contentTotalChars > 0) contentTotalChars else _content.value.length
 
     /** 按全书源码字符下标更新进度（与书签记录字段一致：position + preview）。 */
     /**
@@ -670,18 +769,24 @@ class ReaderViewModel @Inject constructor(
         bottomChar: Int? = null,
         chapterOffset: Int? = null,
     ) {
-        val contentLen = _content.value.length
+        val contentLen = effectiveTotalChars()
         if (contentLen <= 0) return
         val snapshot = session.updateProgressAtChar(
-            globalChar = globalChar,
+            globalChar = contentBaseChar + globalChar,
             previewText = previewText?.let(::normalizeReadingPreviewText),
-            reachedEnd = reachedEnd,
+            reachedEnd = reachedEnd && windowReachedBookEnd(),
             bottomChar = bottomChar,
             chapterOffset = chapterOffset,
             contentLength = contentLen,
         )
         if (session.canPersistProgress) {
-            scheduleProgressPersist(snapshot.progress, snapshot.position, snapshot.previewText)
+            // snapshot.position 已经是全书偏移（上面按 contentBaseChar + globalChar 传入），
+            // 再叠加 contentBaseChar 会把进度存到「2×窗口起点 + 局部位置」，逐次打开越跑越偏。
+            scheduleProgressPersist(
+                snapshot.progress,
+                snapshot.position,
+                snapshot.previewText,
+            )
         }
     }
 
@@ -706,10 +811,10 @@ class ReaderViewModel @Inject constructor(
         previewText: String? = null,
         reachedEnd: Boolean = false,
     ) {
-        val contentLen = _content.value.length
+        val contentLen = effectiveTotalChars()
         if (contentLen <= 0) return
         val snapshot = session.updateProgressAtChar(
-            globalChar = globalChar,
+            globalChar = contentBaseChar + globalChar,
             previewText = previewText?.let(::normalizeReadingPreviewText),
             reachedEnd = reachedEnd,
             bottomChar = null,
@@ -731,7 +836,7 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun markAsFinished() {
-        val contentLen = _content.value.length
+        val contentLen = effectiveTotalChars()
         if (contentLen <= 0) return
         val snapshot = session.markAsFinished(contentLen)
         progressPersistJob?.cancel()
@@ -750,11 +855,11 @@ class ReaderViewModel @Inject constructor(
         globalChar: Int? = null,
         previewText: String? = null,
     ) {
-        val contentLen = _content.value.length
+        val contentLen = effectiveTotalChars()
         if (contentLen <= 0) return
         val snapshot = session.captureProgress(
             contentLength = contentLen,
-            globalChar = globalChar,
+            globalChar = globalChar?.let { contentBaseChar + it },
             previewText = previewText?.let(::normalizeReadingPreviewText),
         )
         progressPersistJob?.cancel()
@@ -764,9 +869,29 @@ class ReaderViewModel @Inject constructor(
 
     /** 窗口/翻页恢复时优先用会话内视口锚点，避免 [_book.currentPosition] 滞后于内存进度。 */
     fun readingCharPosForRestore(): Int {
-        val contentLen = _content.value.length
+        val contentLen = effectiveTotalChars()
         if (contentLen <= 0) return 0
+        // 打开书后的首次恢复必须以「加载时算出的目标位置」为准：
+        // 分页宿主会先按第 0 页上报一次进度（窗口起点），用会话里的实时位置会被它覆盖，
+        // 表现为每次重新进入都回到窗口第一页（阅读历史看起来失效）。
+        pendingRestoreGlobalChar?.let { return it.coerceIn(0, contentLen) }
         return lastKnownReadingCharPos.coerceIn(0, contentLen)
+    }
+
+    /** 恢复目标是否仍在等待首次定位（用于抑制页码变化过早覆盖进度）。 */
+    fun hasPendingRestoreChar(): Boolean = pendingRestoreGlobalChar != null
+
+    /** 恢复目标在当前窗口内的局部位置；未在恢复中返回 null。 */
+    fun pendingRestoreLocalChar(): Int? {
+        val pending = pendingRestoreGlobalChar ?: return null
+        val length = _content.value.length
+        if (length <= 0) return null
+        return (pending - contentBaseChar).coerceIn(0, length - 1)
+    }
+
+    /** 首次定位已完成，之后以会话内实时位置为准。 */
+    fun clearPendingRestoreChar() {
+        pendingRestoreGlobalChar = null
     }
 
     /** 打开书恢复用的视口顶预览（与书签 previewText 同格式）。 */
@@ -779,11 +904,11 @@ class ReaderViewModel @Inject constructor(
         previewText: String? = null,
         reachedEnd: Boolean? = null,
     ) {
-        val contentLen = _content.value.length
+        val contentLen = effectiveTotalChars()
         if (contentLen <= 0) return
         val snapshot = session.capturePosition(
             contentLength = contentLen,
-            globalChar = globalChar,
+            globalChar = contentBaseChar + globalChar,
             previewText = previewText?.let(::normalizeReadingPreviewText),
             reachedEnd = reachedEnd,
         )
@@ -793,8 +918,33 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun updateReadingProgress(progress: Float) {
-        val contentLen = _content.value.length.coerceAtLeast(1)
+        val contentLen = effectiveTotalChars().coerceAtLeast(1)
         updateReadingProgressAtChar((progress * contentLen).toInt())
+    }
+
+    /**
+     * 退出/进入后台时立即落盘当前位置。
+     *
+     * 用会话内的阅读位置（页码变化、恢复定位时更新），而不是当前页 TextView 的起点：
+     * 退出时系统栏显隐会触发分页重排，pager 可能先跳到别的页，直接读页起点会把进度写回上一页，
+     * 表现就是「退出再进回到前几页」。位置是全书偏移，按全书长度裁剪。
+     */
+    fun persistCurrentReadingPositionNow(previewText: String? = null) {
+        val contentLen = effectiveTotalChars()
+        if (contentLen <= 0) return
+        // 取「恢复目标」与「本次会话最近阅读位置」的较大值：打开时的被动重排可能把会话位置
+        // 往回挪，但绝不能把已经读到的位置写回去。
+        val position = maxOf(readingCharPosForRestore(), lastKnownReadingCharPos)
+        // 防御：任何情况下都不能让「裁剪」把已读位置写小（历史 bug 就是位置被压回窗口起点）。
+        val clampLength = maxOf(contentLen, position + 1)
+        val snapshot = session.captureProgress(
+            contentLength = clampLength,
+            globalChar = position,
+            previewText = previewText?.let(::normalizeReadingPreviewText),
+        )
+        progressPersistJob?.cancel()
+        progressPersistJob = null
+        persistReadingProgress(snapshot.progress, snapshot.position, snapshot.previewText)
     }
 
     private fun scheduleProgressPersist(progress: Float, position: Int, previewText: String) {
@@ -818,7 +968,9 @@ class ReaderViewModel @Inject constructor(
     private fun enqueueReadingProgressSave() {
         progressPersistJob?.cancel()
         progressPersistJob = null
-        val contentLen = _content.value.length.coerceAtLeast(1)
+        // 必须按全书长度裁剪：会话位置是全书偏移，用窗口长度(_content.length)裁剪会把
+        // 位置压回窗口起点附近（几十万字的大书变成几万字），下次打开直接回到开头。
+        val contentLen = effectiveTotalChars()
         val snapshot = session.snapshot(contentLen)
         persistReadingProgress(snapshot.progress, snapshot.position, snapshot.previewText)
     }
@@ -1242,3 +1394,6 @@ internal fun resolveBookmarkPreviewText(
         ).ifEmpty { fallback }
     }
 }
+
+/** 距窗口末尾不足该字符数时追加下一批正文（窗口模式）。 */
+private const val WINDOW_APPEND_THRESHOLD_CHARS = 8000

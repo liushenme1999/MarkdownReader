@@ -106,11 +106,29 @@ import kotlin.coroutines.resume
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-internal fun estimateTargetCharsPerPage(fontSize: Int, screenHeightDp: Int, screenWidthDp: Int): Int {
-    val lineHeight = fontSize * 1.55f
-    val lines = (screenHeightDp / lineHeight).toInt().coerceAtLeast(4)
-    val charsPerLine = (screenWidthDp / (fontSize * 0.48f)).toInt().coerceAtLeast(8)
-    return (lines * charsPerLine).coerceIn(900, 14_000)
+/**
+ * 估算「一屏能放多少字」。
+ *
+ * 必须扣掉阅读页的上下/左右留白，并计入行距倍数：否则每页字数会明显超过一屏，
+ * 渲染时多出的部分被裁掉，表现为「翻一页跳过一大段内容」（甚至看起来像跳了一章）。
+ * 最后再乘 0.92 的安全系数，给段落间距留余量。
+ */
+internal fun estimateTargetCharsPerPage(
+    fontSize: Int,
+    screenHeightDp: Int,
+    screenWidthDp: Int,
+    lineSpacingMultiplier: Float = 1f,
+    verticalPaddingDp: Int = 0,
+    horizontalPaddingDp: Int = 0,
+): Int {
+    val spacing = lineSpacingMultiplier.coerceIn(1f, 3f)
+    // 系统行高 ≈ 字号 * 1.33，再乘用户行距倍数
+    val lineHeight = (fontSize * 1.33f * spacing).coerceAtLeast(1f)
+    val usableHeight = (screenHeightDp - verticalPaddingDp * 2).coerceAtLeast(fontSize * 4)
+    val usableWidth = (screenWidthDp - horizontalPaddingDp * 2).coerceAtLeast(fontSize * 8)
+    val lines = (usableHeight / lineHeight).toInt().coerceAtLeast(4)
+    val charsPerLine = (usableWidth / (fontSize * 0.5f)).toInt().coerceAtLeast(8)
+    return (lines * charsPerLine * 0.92f).toInt().coerceIn(400, 14_000)
 }
 
 internal enum class AnnotationJumpKind { Bookmark, Highlight }
@@ -151,6 +169,23 @@ internal fun normalizeDisplayedSelection(
     )
 }
 
+/**
+ * 进程内缓存最近一次实测的分页页区尺寸。
+ *
+ * 打开书时先用它排版，可以避免「估算页高排一遍 → 实测后整篇重排」：重排会让页边界整体位移，
+ * 恢复定位与退出保存落在不同页上，表现就是「每次重进都往回退一两页」。
+ * 只在同一进程内复用，窗口尺寸变化时由阅读页写入新值覆盖。
+ */
+internal object ReaderPageViewportCache {
+    private var viewport: Pair<Int, Int>? = null
+
+    fun get(): Pair<Int, Int>? = viewport?.takeIf { it.first > 0 && it.second > 0 }
+
+    fun put(width: Int, height: Int) {
+        if (width > 0 && height > 0) viewport = width to height
+    }
+}
+
 /** 将正文切成多段用于横向分页；只存区间，渲染时再 substring。 */
 internal fun splitMarkdownToPages(content: String, targetChars: Int): List<IntRange> {
     if (content.isEmpty()) return listOf(0 until 0)
@@ -161,12 +196,16 @@ internal fun splitMarkdownToPages(content: String, targetChars: Int): List<IntRa
         val start = idx
         var end = (start + targetChars).coerceAtMost(content.length)
         if (end < content.length) {
+            // 只在「接近目标字数」的位置才回退到段落/换行边界。
+            // 旧逻辑只要有空行就回退，段落较长时会让本页少掉大半屏内容（页尾大片空白）；
+            // 正文跨页续排是阅读器的正常行为，因此这里允许在段中分页。
             val slice = content.substring(start, end)
+            val minBreak = (targetChars * 0.9f).toInt()
             val paraBreak = slice.lastIndexOf("\n\n")
             val lineBreak = slice.lastIndexOf('\n')
             val breakAt = maxOf(
-                if (paraBreak >= targetChars / 6) paraBreak else -1,
-                if (lineBreak >= targetChars / 6) lineBreak else -1
+                if (paraBreak >= minBreak) paraBreak else -1,
+                if (lineBreak >= minBreak) lineBreak else -1,
             )
             if (breakAt >= 0) {
                 end = start + breakAt + 1
@@ -1631,13 +1670,13 @@ internal fun resolveStoredCharPos(
 ): Int {
     if (contentLength <= 0) return 0
     val total = totalChars.coerceAtLeast(1)
-    return when {
-        currentPosition > 0 ->
-            resolveGlobalCharPos(currentPosition, contentLength, total)
-        readingProgress > 0f ->
-            resolveGlobalCharPos((readingProgress * total).toInt(), contentLength, total)
-        else -> 0
-    }
+    // 位置与进度严重不一致时以进度为准（历史版本把 position 按窗口长度裁剪过）。
+    val chosen = space.liushenme.markdownreader.document.resolveReadingOffset(
+        position = currentPosition,
+        progress = readingProgress,
+        totalChars = total,
+    )
+    return resolveGlobalCharPos(chosen, contentLength, total)
 }
 
 /** 将存储坐标（书签 position / totalChars）映射到当前正文字符下标。 */
@@ -1915,6 +1954,19 @@ internal fun isReaderTextViewAtScrollBottom(tv: TextView): Boolean {
 }
 
 /** 按 layout 行顶滚动到字符偏移。代码块整段是一行时，用 [quote] 或已算好的 [intraPx] 再滚到块内那一行。 */
+/**
+ * 横向分页的正文是否正好装进一屏。
+ *
+ * 行级分页按「可见高度」切页，正常纯文本页的 Layout 高度 ≤ 可视区，此时页内不需要滚动；
+ * 只有 Markdown/PDF 这种渲染后高度不可控的页才允许页内滚动定位。
+ */
+private fun pageTextViewFitsViewport(tv: TextView): Boolean {
+    val layoutHeight = tv.layout?.height ?: return false
+    // 用原始 padding：totalPaddingBottom 会把文字没占满的空白算进来，导致「永远刚好装下」。
+    val innerHeight = tv.height - tv.paddingTop - tv.paddingBottom
+    return innerHeight > 0 && layoutHeight <= innerHeight + 8
+}
+
 internal fun scrollTextViewToCharOffset(
     tv: TextView,
     charOffsetInText: Int,
@@ -2551,7 +2603,9 @@ internal fun jumpToGlobalCharInPager(
         if (tv != null) {
             assignActiveTextView(tv)
             tv.post {
-                if (pdfJumpByPageIndex) {
+                if (pdfJumpByPageIndex || pageTextViewFitsViewport(tv)) {
+                    // 行级分页的纯文本页正好一屏：目标字符一定在屏幕内，页内滚动只会把
+                    // 页首推出视口、页底留白，看起来「这一页文字很少」。
                     tv.scrollTo(0, 0)
                 } else {
                     val displayedOffset = highlightId?.let { displayedOffsetForHighlightId(tv, it) } ?: if (preferredTocEntry != null) {
@@ -2644,4 +2698,180 @@ internal fun pdfPageIndexForTocOrBookmark(
         if (idx >= 0) return idx
     }
     return PdfReaderContent.pageIndexForSourceOffset(readerContent, charPos)
+}
+
+/**
+ * 用真实排版测量「一屏能完整显示多少字」。
+ *
+ * 公式估算会因行距/段落间距偏差导致渲染溢出被裁，翻页时表现为「上一页末尾半截、
+ * 下一页接不上」。这里直接按阅读器同样的字号、行距做一次 StaticLayout，
+ * 取最后一条完整可见行的行尾偏移作为每页字数。
+ */
+internal fun measureCharsPerPageByLayout(
+    content: String,
+    textSizePx: Float,
+    widthPx: Int,
+    heightPx: Int,
+    lineSpacingMultiplier: Float,
+    probeChars: Int = 4_000,
+): Int {
+    if (content.isEmpty() || widthPx <= 0 || heightPx <= 0 || textSizePx <= 0f) return 0
+    val length = content.length.coerceAtMost(probeChars)
+    if (length <= 0) return 0
+    return try {
+        val paint = android.text.TextPaint().apply {
+            textSize = textSizePx
+            isAntiAlias = true
+        }
+        val layout = buildReaderProbeLayout(
+            content = content,
+            start = 0,
+            end = length,
+            paint = paint,
+            widthPx = widthPx,
+            lineSpacingMultiplier = lineSpacingMultiplier,
+        )
+        if (layout.lineCount <= 0) return 0
+        var line = layout.getLineForVertical(heightPx).coerceIn(0, layout.lineCount - 1)
+        while (line > 0 && layout.getLineBottom(line) > heightPx) line--
+        val chars = layout.getLineEnd(line).coerceAtLeast(0)
+        if (chars < 50) 0 else chars
+    } catch (_: Throwable) {
+        0
+    }
+}
+
+/**
+ * 与阅读页 [android.widget.TextView] 使用同一套排版参数构建探针 Layout。
+ *
+ * 两个参数必须对齐，否则分页会按偏小的行高计算、每页多塞几行，页尾被裁+翻页跳字：
+ * - `setUseLineSpacingFromFallbacks`：TextView 在 API 28+ 默认打开。CJK 正文会回退到
+ *   Noto CJK 字体，打开后行高比关闭时大 20% 左右（实测 16sp/1.5 倍行距：86px → 107px）。
+ * - `setIncludePad`：分页页 TextView 设置了 `includeFontPadding = false`
+ *   （见 `MarkdownReaderView`），探针也必须关闭，否则首/末行会多出几像素。
+ */
+private fun buildReaderProbeLayout(
+    content: CharSequence,
+    start: Int,
+    end: Int,
+    paint: android.text.TextPaint,
+    widthPx: Int,
+    lineSpacingMultiplier: Float,
+): android.text.StaticLayout {
+    val builder = android.text.StaticLayout.Builder
+        .obtain(content, start, end, paint, widthPx)
+        .setLineSpacing(0f, lineSpacingMultiplier.coerceIn(0.8f, 3f))
+        .setIncludePad(false)
+        // 与分页页 TextView 保持一致（见 MarkdownReaderView）：断行策略不同会改变行数，
+        // 分页按探针的行数切页就会与真实渲染对不上，出现页尾空一行/被裁。
+        .setBreakStrategy(android.text.Layout.BREAK_STRATEGY_SIMPLE)
+        .setHyphenationFrequency(android.text.Layout.HYPHENATION_FREQUENCY_NONE)
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+        builder.setUseLineSpacingFromFallbacks(true)
+    }
+    return builder.build()
+}
+
+/**
+ * 行级分页（对齐 Legado 的 TextChapterLayout 思路）：
+ * 用真实字号/行距/宽度建立 StaticLayout，**逐行累加高度**，累加超过可见高度就结束本页、
+ * 从当前行行首开始下一页。
+ *
+ * 这样每页正好填满屏幕「能显示的行数」，既不会因估算偏差裁掉文字（翻页跳内容），
+ * 也不会为了凑段落而留下大半屏空白。允许在段落中间分页——与主流阅读器一致。
+ *
+ * 分块（每块对齐到换行符）排版，避免对整窗正文做一次超大布局。
+ */
+internal fun splitTextToPagesByLines(
+    content: String,
+    textSizePx: Float,
+    widthPx: Int,
+    heightPx: Int,
+    lineSpacingMultiplier: Float,
+    chunkChars: Int = 6_000,
+): List<IntRange> {
+    if (content.isEmpty()) return listOf(0 until 0)
+    if (widthPx <= 0 || heightPx <= 0 || textSizePx <= 0f) return listOf(0 until content.length)
+    return try {
+        val pages = ArrayList<IntRange>(content.length / 900)
+        val paint = android.text.TextPaint().apply {
+            textSize = textSizePx
+            isAntiAlias = true
+        }
+        val spacing = lineSpacingMultiplier.coerceIn(0.8f, 3f)
+        var pageStart = 0
+        var usedHeight = 0f
+        var chunkStart = 0
+        while (chunkStart < content.length) {
+            var chunkEnd = (chunkStart + chunkChars).coerceAtMost(content.length)
+            if (chunkEnd < content.length) {
+                // 对齐到换行符，保证块内排版与整篇排版的行宽一致
+                val nl = content.indexOf('\n', chunkEnd)
+                if (nl >= 0 && nl - chunkEnd <= 400) chunkEnd = nl + 1
+            }
+            val layout = buildReaderProbeLayout(
+                content = content,
+                start = chunkStart,
+                end = chunkEnd,
+                paint = paint,
+                widthPx = widthPx,
+                lineSpacingMultiplier = spacing,
+            )
+            for (line in 0 until layout.lineCount) {
+                // StaticLayout.getLineStart 返回的是相对整段 content 的绝对偏移
+                // （Builder.obtain 的 start 已经计入），不能再加 chunkStart，
+                // 否则从第二块起页边界会被推后约一个块长：
+                // 表现为跳字、页尾整段被裁，末尾还会出现整页空白。
+                val lineStart = layout.getLineStart(line)
+                // 已经属于上一页（或页间被跳过的空行）：不再计入本页高度。
+                if (lineStart < pageStart) continue
+                val lineHeight = (layout.getLineBottom(line) - layout.getLineTop(line)).toFloat()
+                if (usedHeight > 0f && usedHeight + lineHeight > heightPx && lineStart > pageStart) {
+                    // 新页不从空行起排：页间空行既不属于上一页也不属于新页（纯空白，跳过不显示），
+                    // 新页直接顶到正文；否则每页会白丢一行、看起来没铺满。
+                    val alignedCut = firstNonBlankLineStart(content, lineStart, chunkEnd)
+                    pages += pageStart until lineStart
+                    pageStart = alignedCut
+                    usedHeight = 0f
+                    if (lineStart < pageStart) continue
+                }
+                usedHeight += lineHeight
+            }
+            chunkStart = chunkEnd
+        }
+        if (pageStart < content.length) {
+            // 正文末尾的连续空行不再单独占一页：并回上一页。
+            if (pages.isNotEmpty() && isBlankText(content, pageStart, content.length)) {
+                pages[pages.lastIndex] = pages.last().first until content.length
+            } else {
+                pages += pageStart until content.length
+            }
+        }
+        if (pages.isEmpty()) listOf(0 until content.length) else pages
+    } catch (_: Throwable) {
+        listOf(0 until content.length)
+    }
+}
+
+/** [from] 起第一行有实际内容的行首（跳过空行）；不会越过 [limit]。 */
+private fun firstNonBlankLineStart(content: String, from: Int, limit: Int): Int {
+    var pos = from
+    while (pos < limit) {
+        val nl = content.indexOf('\n', pos)
+        val lineEnd = if (nl in pos until limit) nl + 1 else limit
+        if (isBlankText(content, pos, lineEnd)) {
+            pos = lineEnd
+        } else {
+            return pos
+        }
+    }
+    return from
+}
+
+private fun isBlankText(content: String, from: Int, to: Int): Boolean {
+    if (from >= to) return true
+    for (i in from until to) {
+        if (!content[i].isWhitespace()) return false
+    }
+    return true
 }

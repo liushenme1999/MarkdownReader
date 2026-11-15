@@ -25,25 +25,44 @@ object TextEncodingDetector {
 
     fun decode(bytes: ByteArray): String {
         if (bytes.isEmpty()) return ""
+        val charsetName = detectCharsetName(bytes)
+        if (charsetName.equals("UTF-8", ignoreCase = true) && hasUtf8Bom(bytes)) {
+            val skip = 3
+            return String(bytes, skip, bytes.size - skip, StandardCharsets.UTF_8)
+        }
+        return decodeLenient(bytes, charsetName)
+            ?: String(bytes, StandardCharsets.ISO_8859_1)
+    }
+
+    /**
+     * 判定编码名（只看开头采样，避免对整篇反复试解码）。
+     *
+     * 调用方应把结果记录下来（导入时写入正文包），之后重新读取同一份源文件时直接按记录的编码
+     * 解码，不必再做一遍检测。
+     */
+    fun detectCharsetName(bytes: ByteArray): String {
+        if (bytes.isEmpty()) return "UTF-8"
 
         val bomCharset = detectBom(bytes)
-        if (bomCharset != null) {
-            val skip = bomSkipLength(bomCharset)
-            return String(bytes, skip, bytes.size - skip, bomCharset)
-        }
+        if (bomCharset != null) return bomCharset.name()
 
-        if (isValidUtf8(bytes)) {
-            return String(bytes, StandardCharsets.UTF_8)
-        }
+        // 采样判定：几 MB 的小说上对全文反复试解码既慢又容易被个别坏字节带偏。
+        val sample = if (bytes.size > SAMPLE_BYTES) bytes.copyOfRange(0, SAMPLE_BYTES) else bytes
 
-        // 大陆简体 .txt 多为 GB18030；部分机型上启发式会与单字节编码平局，这里优先接受「严格 GB18030 + 汉字密度」结果
-        val gb = tryDecode(bytes, "GB18030")
-        if (gb != null && looksLikeMainlandChinesePlainText(gb)) {
-            return gb
-        }
+        if (isValidUtf8(sample)) return "UTF-8"
 
-        return guessByHeuristic(bytes)
+        // 大陆简体 .txt 多为 GB18030。老小说常夹带个别非法双字节/被截断的半个汉字，
+        // 严格解码整篇会直接失败，随后被单字节编码抢走而显示成乱码；这里用宽松解码 + 汉字密度判定。
+        val gbSample = decodeLenient(sample, "GB18030")
+        if (gbSample != null && looksLikeMainlandChinesePlainText(gbSample)) {
+            return "GB18030"
+        }
+        return guessCharsetBySample(sample) ?: "UTF-8"
     }
+
+    private fun hasUtf8Bom(bytes: ByteArray): Boolean =
+        bytes.size >= 3 && bytes[0] == 0xEF.toByte() &&
+            bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()
 
     private fun detectBom(bytes: ByteArray): Charset? {
         if (bytes.size >= 3 &&
@@ -169,4 +188,39 @@ object TextEncodingDetector {
         }
         return n
     }
+
+
+    /** 编码判定只采样开头这么多字节，避免大文件多次全文解码。 */
+    private const val SAMPLE_BYTES = 256 * 1024
+
+    /** 宽松解码（非法字节替换为 U+FFFD），用于夹带坏字节的老文件。 */
+    private fun decodeLenient(bytes: ByteArray, charsetName: String): String? = try {
+        val cs = Charset.forName(charsetName)
+        val decoder = cs.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPLACE)
+            .onUnmappableCharacter(CodingErrorAction.REPLACE)
+        val out = CharBuffer.allocate((bytes.size * 2).coerceAtLeast(16))
+        decoder.decode(ByteBuffer.wrap(bytes), out, true)
+        decoder.flush(out)
+        out.flip()
+        out.toString()
+    } catch (_: Exception) {
+        null
+    }
+
+    /** 在常见编码中按采样文本质量挑一个（宽松解码，避免个别坏字节淘汰整体正确的中文编码）。 */
+    private fun guessCharsetBySample(sample: ByteArray): String? {
+        var best: String? = null
+        var bestScore = Int.MAX_VALUE
+        for (name in fallbackCharsetNames) {
+            val text = decodeLenient(sample, name) ?: continue
+            val score = scoreTextQuality(text)
+            if (score < bestScore) {
+                bestScore = score
+                best = name
+            }
+        }
+        return best
+    }
+
 }

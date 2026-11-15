@@ -11,7 +11,7 @@ import java.nio.charset.StandardCharsets
 import space.liushenme.markdownreader.BuildConfig
 import space.liushenme.markdownreader.R
 
-private const val MAX_TEXT_SCAN_BYTES = 8 * 1024 * 1024
+private const val MAX_TEXT_SCAN_BYTES = 24 * 1024 * 1024
 private const val MAX_URL_BYTES = 15 * 1024 * 1024
 
 /**
@@ -38,7 +38,9 @@ object BookContentLoader {
             ImportedBookFormat.HTML,
             ImportedBookFormat.CODE,
             ->
-                ExtractedBookText.plainBody(readPlainTextFromUri(context, uri))
+                readPlainTextFromUri(context, uri).let { (body, charset) ->
+                    ExtractedBookText(body = body, sourceCharset = charset)
+                }
             ImportedBookFormat.PDF ->
                 ExtractedBookText.plainBody(placeholder(context, format))
         }
@@ -57,9 +59,9 @@ object BookContentLoader {
             ImportedBookFormat.CODE,
             ->
                 ImportLoadResult(
-                    ExtractedBookText.plainBody(
-                        readPlainTextFromUri(context, uri, onPdfProgress),
-                    ),
+                    readPlainTextFromUri(context, uri, onPdfProgress).let { (body, charset) ->
+                        ExtractedBookText(body = body, sourceCharset = charset)
+                    },
                 )
             ImportedBookFormat.PDF -> {
                 val file = copyUriToCacheFile(context, uri, ".pdf")
@@ -177,10 +179,12 @@ object BookContentLoader {
         context: Context,
         uri: Uri,
         onProgress: ((read: Int, total: Int, coverJpeg: ByteArray?) -> Unit)? = null,
-    ): String {
-        val bytes = readBytesCapped(context, uri, MAX_TEXT_SCAN_BYTES, onProgress) ?: return ""
+    ): Pair<String, String?> {
+        val bytes = readBytesCapped(context, uri, MAX_TEXT_SCAN_BYTES, onProgress) ?: return "" to null
         onProgress?.invoke(bytes.size.coerceAtLeast(1), bytes.size.coerceAtLeast(1), null)
-        return TextEncodingDetector.decode(bytes)
+        // 导入时判定一次编码并随正文包记录，之后重读同一文件不必再检测。
+        val charsetName = TextEncodingDetector.detectCharsetName(bytes)
+        return TextEncodingDetector.decode(bytes) to charsetName
     }
 
     fun readBytesCapped(

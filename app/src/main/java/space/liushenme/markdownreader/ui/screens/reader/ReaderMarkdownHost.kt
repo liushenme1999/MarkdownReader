@@ -101,6 +101,10 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
+/** 分页页 TextView 缓存上限/半径：只用于划线、跳转等需要回查相邻页的场景。 */
+private const val PAGE_VIEW_CACHE_LIMIT = 48
+private const val PAGE_VIEW_CACHE_RADIUS = 12
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun ReaderPagedMarkdownHost(
@@ -142,6 +146,10 @@ internal fun ReaderPagedMarkdownHost(
 ) {
     val layoutDirection = LocalLayoutDirection.current
     val cameraDistancePx = with(LocalDensity.current) { 12f * density * 80f }
+    // 页列表为空（超长正文退回滚动前的过渡帧）时兜底成一页，避免 pages[0] 越界闪退。
+    val safePages = remember(pages, sourceContent) {
+        pages.ifEmpty { listOf(0 until sourceContent.length) }
+    }
 
     HorizontalPager(
         state = pagerState,
@@ -173,11 +181,11 @@ internal fun ReaderPagedMarkdownHost(
             else -> Modifier.fillMaxSize()
         }
 
-        val range = pages[pageIndex]
+        val range = safePages[pageIndex]
         val slice = pageSlice(sourceContent, range)
         val globalStart = range.first
-        val globalEndExclusive = if (pageIndex + 1 < pages.size) {
-            pages[pageIndex + 1].first
+        val globalEndExclusive = if (pageIndex + 1 < safePages.size) {
+            safePages[pageIndex + 1].first
         } else {
             Int.MAX_VALUE
         }
@@ -206,6 +214,14 @@ internal fun ReaderPagedMarkdownHost(
                 onReadingVerticalScroll = onReadingVerticalScroll,
                 onViewReady = { tv ->
                     pageTextViews[pageIndex] = tv
+                    // 只保留当前页附近；pageTextViews 现在按书保留（窗口追加时不能重建），
+                    // 不裁剪会把读过的每一页 TextView 都攥在内存里。
+                    if (pageTextViews.size > PAGE_VIEW_CACHE_LIMIT) {
+                        val center = pagerState.currentPage
+                        pageTextViews.keys
+                            .filter { kotlin.math.abs(it - center) > PAGE_VIEW_CACHE_RADIUS }
+                            .forEach { pageTextViews.remove(it) }
+                    }
                     onPageTextViewReady(pageIndex, tv)
                 },
                 allowVerticalScroll = false,
@@ -279,3 +295,4 @@ internal fun ReaderPageTurnSheet(
         }
     }
 }
+

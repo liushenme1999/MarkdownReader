@@ -22,7 +22,10 @@ data class ExtractedBookText(
      * `book-asset://<key>` 占位引用。落盘阶段会把这些字节写到
      * `parsed_books/<id>/assets/<key>`，并把 Markdown 中的占位替换成 `file://…`。
      */
-    val assets: Map<String, ByteArray> = emptyMap()
+    val assets: Map<String, ByteArray> = emptyMap(),
+
+    /** 导入时判定出的源文件编码（如 GB18030）；写入正文包，供后续重读源文件时直接复用。 */
+    val sourceCharset: String? = null,
 ) {
     companion object {
         fun plainBody(body: String) = ExtractedBookText(body = body, toc = emptyList(), coverImageBytes = null)

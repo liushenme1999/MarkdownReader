@@ -43,6 +43,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import space.liushenme.markdownreader.R
+import space.liushenme.markdownreader.data.repository.ReadingFormatProfile
 import kotlin.math.min
 
 /** Dialogs and sheets rendered above the document and reader chrome. */
@@ -52,6 +53,7 @@ internal fun ReaderOverlays(
     viewModel: ReaderViewModel,
     diagramPreviewBitmap: Bitmap?,
     showReaderSettings: Boolean,
+    readingProfile: ReadingFormatProfile,
     onDismissDiagramPreview: () -> Unit,
     onDismissReaderSettings: () -> Unit,
 ) {
@@ -78,6 +80,7 @@ internal fun ReaderOverlays(
             codeBlockWrap = uiState.codeBlockWrap,
             codeLineNumbers = uiState.codeLineNumbers,
             codeHighlightTheme = uiState.codeHighlightTheme,
+            readingProfile = readingProfile,
             hideSystemBars = uiState.hideSystemBars,
             pageTurnMode = uiState.pageTurnMode,
             onSelectStyle = viewModel::selectReadingStyle,

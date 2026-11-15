@@ -23,6 +23,9 @@ import java.nio.charset.StandardCharsets
 object ParsedBookStorage {
 
     const val BODY_FILE = "body.txt"
+
+    /** 导入时判定出的源文件编码，避免每次重读源文件都重新检测。 */
+    const val SOURCE_CHARSET_FILE = "source_charset.txt"
     const val TOC_FILE = "toc.json"
     const val DIAGRAM_PAYLOADS_FILE = "diagram_payloads.json"
     const val COVER_JPG = "cover.jpg"
@@ -48,6 +51,9 @@ object ParsedBookStorage {
         return runCatching {
             dir.mkdirs()
             File(dir, BODY_FILE).writeText(extracted.body, StandardCharsets.UTF_8)
+            extracted.sourceCharset?.let {
+                File(dir, SOURCE_CHARSET_FILE).writeText(it, StandardCharsets.UTF_8)
+            }
             File(dir, TOC_FILE).writeText(tocToJson(extracted.toc), StandardCharsets.UTF_8)
             writeDiagramPayloads(dir, extracted.body)
             when {
@@ -98,6 +104,55 @@ object ParsedBookStorage {
         return installed
     }
 
+    /** 正文规范化版本：升级后旧正文包需要一次性去重（章首重复标题）。 */
+    const val BODY_VERSION_FILE = "body_version.txt"
+    const val BODY_VERSION = 2
+
+    fun readBodyVersion(dir: File): Int =
+        runCatching { File(dir, BODY_VERSION_FILE).readText().trim().toInt() }.getOrDefault(0)
+
+    fun writeBodyVersion(dir: File, version: Int = BODY_VERSION) {
+        runCatching { File(dir, BODY_VERSION_FILE).writeText(version.toString()) }
+    }
+
+    /** 目录解析版本标记：解析算法升级后，旧目录需要重建一次。 */
+    const val TOC_VERSION_FILE = "toc_version.txt"
+
+    /** 当前目录解析算法版本（Legado 风格多规则解析）。 */
+    const val TOC_VERSION = 4
+
+    fun readTocVersion(dir: File): Int =
+        runCatching { File(dir, TOC_VERSION_FILE).readText().trim().toInt() }.getOrDefault(0)
+
+    fun writeTocVersion(dir: File, version: Int = TOC_VERSION) {
+        runCatching { File(dir, TOC_VERSION_FILE).writeText(version.toString()) }
+    }
+
+    /** 读取已保存目录（不存在返回 null）。 */
+    fun readToc(dir: File): List<ImportedTocEntry>? {
+        val file = File(dir, TOC_FILE)
+        if (!file.isFile) return null
+        return runCatching { tocFromJson(file.readText(StandardCharsets.UTF_8)) }
+            .getOrNull()
+            ?.takeIf { it.isNotEmpty() }
+    }
+
+    /** 覆盖写入目录（大 TXT 首次打开时重建用）。 */
+    fun writeToc(dir: File, toc: List<ImportedTocEntry>): Boolean = runCatching {
+        File(dir, TOC_FILE).writeText(tocToJson(toc), StandardCharsets.UTF_8)
+        true
+    }.getOrDefault(false)
+
+    /** 窗口模式：读取分段索引（不存在则返回 null，表示按全文加载）。 */
+    fun readTxtSegments(dir: File): List<TxtSegment>? = TxtSegmentIndex.read(dir)
+
+    /** 窗口模式：按全局字符位置读取附近若干段文本。 */
+    fun readTxtWindow(dir: File, anchorChar: Int, before: Int = 1, after: Int = 2): TxtTextWindow? {
+        val segments = TxtSegmentIndex.read(dir) ?: return null
+        val body = File(dir, BODY_FILE)
+        return TxtSegmentIndex.loadWindow(body, segments, anchorChar, before, after)
+    }
+
     fun readBundle(
         dir: File,
         importFormat: ImportedBookFormat = ImportedBookFormat.MARKDOWN,
@@ -118,17 +173,26 @@ object ParsedBookStorage {
             }
             return ExtractedBookText(body = rawBody, toc = emptyList(), coverImageBytes = null)
         }
-        loadDiagramPayloads(dir)
-        var body = materializeAssetUrls(rawBody, dir)
-        body = MarkdownPreprocessor.stripLocalRelativeImages(body)
         val tocFile = File(dir, TOC_FILE)
         val storedToc = if (tocFile.isFile) {
             runCatching { tocFromJson(tocFile.readText(StandardCharsets.UTF_8)) }.getOrElse { emptyList() }
         } else {
             emptyList()
         }
-        // materialize 会把 book-asset:// 换成更长的 file://，旧 toc.json 偏移会整体错位。
-        val toc = BookTocEnricher.alignToBody(body, storedToc)
+        // 纯文本 / HTML 没有 Markdown 图片与段落结构：跳过资产重写与全文 TOC 对齐，
+        // 这几步在几 MB 的小说上会让每次打开都多等数秒（导入慢可以接受，打开必须快）。
+        val plainLike = importFormat == ImportedBookFormat.TXT ||
+            importFormat == ImportedBookFormat.HTML
+        var body = rawBody
+        val toc = if (plainLike) {
+            storedToc
+        } else {
+            loadDiagramPayloads(dir)
+            body = materializeAssetUrls(rawBody, dir)
+            body = MarkdownPreprocessor.stripLocalRelativeImages(body)
+            // materialize 会把 book-asset:// 换成更长的 file://，旧 toc.json 偏移会整体错位。
+            BookTocEnricher.alignToBody(body, storedToc)
+        }
         if (DocumentArtifactManifest.validation(dir) == DocumentArtifactManifest.Validation.MissingManifest) {
             runCatching { writeDerivedMetadata(dir, rawBody, importFormat) }
         }

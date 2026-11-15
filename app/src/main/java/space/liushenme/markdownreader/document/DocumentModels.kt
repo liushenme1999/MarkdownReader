@@ -153,6 +153,10 @@ data class DocumentSnapshot(
     val blocks: List<DocumentBlock>,
     val chunkIndex: DocumentChunkIndex,
     val artifacts: List<DocumentArtifact> = emptyList(),
+    /** 窗口模式：content 在全书中的起始字符偏移（0 = 当前 content 即全文）。 */
+    val windowStartChar: Int = 0,
+    /** 窗口模式：全书总字符数（0 = 未知，用 content.length）。 */
+    val totalCharsGlobal: Int = 0,
 )
 
 fun BookEntity.toDocument(): Document = Document(

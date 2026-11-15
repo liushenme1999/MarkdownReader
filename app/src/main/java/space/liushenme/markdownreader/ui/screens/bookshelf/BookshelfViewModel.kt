@@ -31,6 +31,8 @@ import space.liushenme.markdownreader.importing.BookTocEnricher
 import space.liushenme.markdownreader.importing.ExtractedBookText
 import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.importing.ParsedBookStorage
+import space.liushenme.markdownreader.importing.TxtBodyNormalizer
+import space.liushenme.markdownreader.importing.TxtSegmentIndex
 import space.liushenme.markdownreader.importing.PdfReaderContent
 import space.liushenme.markdownreader.importing.UrlBookDownloader
 import space.liushenme.markdownreader.markdown.MarkdownPreprocessor
@@ -62,6 +64,9 @@ import java.io.File
 import java.util.Date
 import javax.inject.Inject
 import kotlin.random.Random
+
+/** 超过该字节数的 TXT 走「分段窗口加载」，避免打开时读取全文。 */
+private const val TXT_WINDOW_MODE_BYTES = 2L * 1024 * 1024
 
 @HiltViewModel
 class BookshelfViewModel @Inject constructor(
@@ -579,12 +584,16 @@ class BookshelfViewModel @Inject constructor(
         if (shelfGroup.isNotEmpty()) {
             shelfGroupRepository.ensureGroup(shelfGroup)
         }
-        val enriched = BookTocEnricher.enrichIfEmpty(format, extracted)
-        // prepare / 缓存改写会改字符下标，目录必须在最终正文上重算。
-        val enrichedForStore = BookTocEnricher.alignToBody(
-            format,
-            prepareImportedContent(importContext, format, enriched),
-        )
+        // 导入允许较慢，但绝不能卡死主线程：大文件（十几 MB 的小说）的目录增强、正文预处理、
+        // 内容哈希与作者提取都放到 IO 线程，否则会被系统判定 ANR 直接杀掉（表现为"导入时闪退"）。
+        val enrichedForStore = withContext(Dispatchers.IO) {
+            val enriched = BookTocEnricher.enrichIfEmpty(format, extracted)
+            // prepare / 缓存改写会改字符下标，目录必须在最终正文上重算。
+            BookTocEnricher.alignToBody(
+                format,
+                prepareImportedContent(importContext, format, enriched),
+            )
+        }
         val content = enrichedForStore.body
         val resolvedTitle = title.ifBlank { appContext.getString(R.string.book_untitled) }
         if (format.isPdf &&
@@ -612,7 +621,7 @@ class BookshelfViewModel @Inject constructor(
                 assets = enrichedForStore.assets,
             )
         }
-        val existingByHash = bookRepository.getBookByContentHash(contentHash)
+        val existingByHash = withContext(Dispatchers.IO) { bookRepository.getBookByContentHash(contentHash) }
         if (existingByHash != null) {
             bookRepository.scheduleUploadBookContent(existingByHash.id)
             if (notify) {
@@ -620,7 +629,7 @@ class BookshelfViewModel @Inject constructor(
             }
             return existingByHash.id
         }
-        val author = BookImportSupport.extractAuthorFromContent(content)
+        val author = withContext(Dispatchers.IO) { BookImportSupport.extractAuthorFromContent(content) }
         val stagingBundle = when {
             stagedAssetsDir != null -> {
                 val root = if (stagedAssetsDir.name == ParsedBookStorage.ASSETS_DIR) {
@@ -636,9 +645,16 @@ class BookshelfViewModel @Inject constructor(
             val ok = ParsedBookStorage.writeBundle(
                 dir = stagingBundle,
                 extracted = enrichedForStore,
-                coverBytes = enriched.coverImageBytes,
+                coverBytes = extracted.coverImageBytes,
                 importFormat = format,
             )
+            if (ok && format == ImportedBookFormat.TXT) {
+                // 大 TXT：额外生成分段索引，供阅读页按窗口加载（不一次性读全文）。
+                val bodyFile = File(stagingBundle, ParsedBookStorage.BODY_FILE)
+                if (bodyFile.length() > TXT_WINDOW_MODE_BYTES) {
+                    TxtSegmentIndex.build(bodyFile)?.let { TxtSegmentIndex.write(stagingBundle, it) }
+                }
+            }
             ok && ParsedBookStorage.isCompleteBundle(stagingBundle, format.storedKey)
         }
         if (!stagedOk) {
@@ -729,6 +745,14 @@ class BookshelfViewModel @Inject constructor(
     ): ExtractedBookText {
         if (format.isCode) {
             return extracted
+        }
+        if (format == ImportedBookFormat.TXT) {
+            // 网文常见「章首标题重复一次」：导入时合并，避免阅读时标题连两遍。
+            return extracted.copy(
+                body = TxtBodyNormalizer.dedupeRepeatedHeadingLines(
+                    TxtBodyNormalizer.normalizeLineEndings(extracted.body),
+                ),
+            )
         }
         if (format.usesReaderPlainBody) {
             return extracted.copy(body = MarkdownPreprocessor.stripLocalRelativeImages(extracted.body))

@@ -586,6 +586,15 @@ internal fun MarkdownReaderView(
             SafeReaderTextView(ctx).apply {
                 this.allowVerticalScroll = allowVerticalScroll
                 this.renderPlainTextBody = renderPlainText
+                // 横向分页：行级分页按「行高之和 == 可见高度」计算页面，字体 padding 会造成
+                // 页尾多出几像素把最后一行裁掉，因此分页视图统一关闭 font padding。
+                if (!allowVerticalScroll) {
+                    includeFontPadding = false
+                    // 行级分页用 StaticLayout 探针按「行」切页，断行策略必须与探针一致
+                    // （见 buildReaderProbeLayout），否则探针的行数/行高与真实渲染不同。
+                    breakStrategy = android.text.Layout.BREAK_STRATEGY_SIMPLE
+                    hyphenationFrequency = android.text.Layout.HYPHENATION_FREQUENCY_NONE
+                }
                 if (pdfPagedLayout) {
                     PdfImageLayoutHelper.applyPagedPdfTextGravity(this, centerVertically = true)
                     includeFontPadding = false
@@ -725,6 +734,11 @@ internal fun MarkdownReaderView(
                 }
             }
             textView.setTag(TAG_READER_LINE_SPACING, readerLineSpacingMultiplier)
+            if (!allowVerticalScroll) {
+                textView.includeFontPadding = false
+                textView.breakStrategy = android.text.Layout.BREAK_STRATEGY_SIMPLE
+                textView.hyphenationFrequency = android.text.Layout.HYPHENATION_FREQUENCY_NONE
+            }
             if (pdfPagedLayout) {
                 PdfImageLayoutHelper.applyPagedPdfTextGravity(textView, centerVertically = true)
                 textView.includeFontPadding = false

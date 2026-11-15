@@ -37,6 +37,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -68,6 +69,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
+import space.liushenme.markdownreader.data.repository.ReadingFormatProfile
 import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.document.DocumentFormat
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
@@ -113,6 +115,9 @@ import kotlin.math.roundToInt
 
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+/** 超过该字符数的正文禁用横向分页，改用窗口滚动（避免超大文件分页导致卡顿/闪退）。 */
+private const val HUGE_PAGED_TEXT_CHARS = 2_000_000
+
 @Composable
 fun ReaderScreen(
     navController: NavController,
@@ -181,6 +186,17 @@ fun ReaderScreen(
     val readerContent = remember(content, isPdfBook) {
         if (isPdfBook) PdfReaderContent.sanitizeStoredBody(content) else content
     }
+
+    /**
+     * 打开/恢复用的当前位置（当前窗口内的局部字符下标）。
+     *
+     * ViewModel 的阅读位置是全书字符偏移；窗口模式（TXT 分段加载）需要减去窗口起点，
+     * 否则会把全局位置当局部位置 clamp 到窗口末尾，表现为一打开就停在窗口最后几页。
+     */
+    fun restoreLocalCharPos(): Int {
+        val local = viewModel.readingCharPosForRestore() - uiState.windowStartChar
+        return local.coerceIn(0, (readerContent.length - 1).coerceAtLeast(0))
+    }
     var codeOutline by remember(codeBlockLanguage) { mutableStateOf<CodeOutline?>(null) }
     LaunchedEffect(readerContent, isCodeBook, codeBlockLanguage) {
         codeOutline = if (isCodeBook) {
@@ -203,7 +219,7 @@ fun ReaderScreen(
     val pdfRestoreAnchor = remember(readerContent, readerLoadEpoch, pdfPages) {
         PdfPageCatalog.decodeProgress(
             pdfPages,
-            viewModel.readingCharPosForRestore(),
+            restoreLocalCharPos(),
             readerContent.length,
         )
     }
@@ -224,6 +240,9 @@ fun ReaderScreen(
     var showToc by remember { mutableStateOf(false) }
     var pendingWideTocEntry by remember { mutableStateOf<MarkdownTocEntry?>(null) }
     var showTopBar by remember { mutableStateOf(false) }
+    /** 退出中：工具栏/系统栏显隐会触发分页重排，此后的页码变化不得再改写阅读位置。 */
+    val leavingReader = remember(bookId) { booleanArrayOf(false) }
+
     var readerTextSelectionActive by remember { mutableStateOf(false) }
     var externalAnnotationConsumed by remember(bookId, jumpKind, jumpPosition, jumpHighlightId, jumpBookmarkId) {
         mutableStateOf(false)
@@ -321,6 +340,98 @@ fun ReaderScreen(
 
     val totalChars = book?.totalChars?.takeIf { it > 0 } ?: content.length.coerceAtLeast(1)
 
+    /**
+     * 分页页的真实内容区尺寸（宽, 高, px）：由分页宿主的页视图尺寸减去页内留白得到。
+     *
+     * 行级分页必须按它切页：用公式估算会因行距/字体回退行高偏差导致页尾被裁或大半屏空白。
+     * 不能按 readerContent 重置：横向分页读到窗口末尾会追加下一批正文，
+     * 一旦重置就会退回估算高度，页边界整体重排、当前页跳动。
+     */
+    var realPageViewport by remember(bookId) {
+        // 复用上一次实测的页尺寸：避免每次打开都先按估算排一遍再重排（重排会让页边界位移，
+        // 退出/恢复落到不同页，看起来像「重进回到前一页」）。
+        mutableStateOf(ReaderPageViewportCache.get())
+    }
+
+    /** 分页宿主底部会加导航栏 padding（沉浸阅读时），估算高度时先扣掉，避免首帧页高偏大。 */
+    val navigationBarInsetPx = WindowInsets.navigationBars.getBottom(windowDensity)
+
+    /** 实测前用的兜底页区尺寸（窗口尺寸扣掉页内留白与导航栏）。 */
+    val fallbackPageViewport = remember(
+        windowSize,
+        navigationBarInsetPx,
+        readerBodyPaddingDp,
+        windowDensity,
+    ) {
+        val density = windowDensity.density
+        (
+            (windowSize.width - readerBodyPaddingDp * 2 * density).toInt() to
+                (windowSize.height - readerBodyPaddingDp * 2 * density - navigationBarInsetPx).toInt()
+            )
+    }
+
+    /** 排版用的 (字号px, 可用宽度px, 可用高度px)：行级分页依据真实尺寸。 */
+    val measuredLayout = remember(
+        pageTurnMode,
+        isPdfBook,
+        renderPlainText,
+        fontSize,
+        windowWidthDp,
+        windowHeightDp,
+        readerBodyPaddingDp,
+        realPageViewport,
+        fallbackPageViewport,
+    ) {
+        if (pageTurnMode == ReaderPageTurnMode.VerticalScroll || isPdfBook || !renderPlainText) {
+            null
+        } else {
+            val density = windowDensity.density
+            val textSizePx = fontSize * density * windowDensity.fontScale
+            val real = realPageViewport
+            val finalWidth = real?.first?.takeIf { it > 0 } ?: fallbackPageViewport.first
+            val finalHeight = real?.second?.takeIf { it > 0 } ?: fallbackPageViewport.second
+            if (finalWidth > 0 && finalHeight > 0) {
+                Triple(textSizePx, finalWidth, finalHeight)
+            } else {
+                null
+            }
+        }
+    }
+
+    val measuredCharsPerPage = remember(
+        readerContent,
+        pageTurnMode,
+        isPdfBook,
+        renderPlainText,
+        fontSize,
+        windowWidthDp,
+        windowHeightDp,
+        uiState.readerLineSpacingMultiplier,
+        readerBodyPaddingDp,
+    ) {
+        if (pageTurnMode == ReaderPageTurnMode.VerticalScroll || isPdfBook || !renderPlainText) {
+            0
+        } else {
+            val density = windowDensity.density
+            // TextView.setTextSize(sp) → px = sp * scaledDensity = sp * density * fontScale
+            val textSizePx = fontSize * windowDensity.density * windowDensity.fontScale
+            val usableWidth = (windowSize.width - readerBodyPaddingDp * 2 * density).toInt()
+            // 上下留白 + 导航栏 padding
+            val usableHeight =
+                (windowSize.height - readerBodyPaddingDp * 2 * density - navigationBarInsetPx).toInt()
+            val capacity = measureCharsPerPageByLayout(
+                content = readerContent,
+                textSizePx = textSizePx,
+                widthPx = usableWidth,
+                heightPx = usableHeight,
+                lineSpacingMultiplier = uiState.readerLineSpacingMultiplier,
+            )
+            // 再收 4%：宁可页尾留白，也不能裁掉文字
+            if (capacity > 0) (capacity * 0.96f).toInt() else 0
+        }
+    }
+
+
     val pageSpecs = remember(
         readerContent,
         isPdfBook,
@@ -328,19 +439,68 @@ fun ReaderScreen(
         fontSize,
         windowHeightDp,
         windowWidthDp,
+        uiState.readerLineSpacingMultiplier,
+        readerBodyPaddingDp,
+        measuredCharsPerPage,
+        measuredLayout,
     ) {
         when {
             pageTurnMode == ReaderPageTurnMode.VerticalScroll || isPdfBook -> emptyList()
+            // 超大正文（十几 MB 的小说）分页会把全文切成成百上千页并各自建 TextView，
+            // 内存与耗时都不可接受（表现为滑动后卡顿、二次打开闪退）。此时强制按窗口滚动阅读。
+            readerContent.length > HUGE_PAGED_TEXT_CHARS -> emptyList()
+            renderPlainText && measuredLayout != null -> {
+                // 纯文本：按真实行高逐行填页（对齐 Legado 的行级分页）
+                splitTextToPagesByLines(
+                    content = readerContent,
+                    textSizePx = measuredLayout.first,
+                    widthPx = measuredLayout.second,
+                    heightPx = measuredLayout.third,
+                    lineSpacingMultiplier = uiState.readerLineSpacingMultiplier,
+                )
+            }
             else -> splitMarkdownToPages(
                 readerContent,
-                estimateTargetCharsPerPage(fontSize, windowHeightDp, windowWidthDp),
+                if (measuredCharsPerPage > 0) {
+                    measuredCharsPerPage
+                } else {
+                    estimateTargetCharsPerPage(
+                        fontSize = fontSize,
+                        screenHeightDp = windowHeightDp,
+                        screenWidthDp = windowWidthDp,
+                        lineSpacingMultiplier = uiState.readerLineSpacingMultiplier,
+                        verticalPaddingDp = readerBodyPaddingDp * 2,
+                        horizontalPaddingDp = readerBodyPaddingDp,
+                    )
+                },
             )
         }
     }
-    val pageTextViews = remember(content) { mutableMapOf<Int, TextView>() }
+    // 按书保留（不能按 content）：窗口模式追加正文后仍要能找回各页 TextView，
+    // 否则当前页空窗、划线/书签定位失效。
+    val pageTextViews = remember(bookId) { mutableMapOf<Int, TextView>() }
+
+    /**
+     * 纯文本横向分页首帧还没有实测页高（[realPageViewport]）时，先用纸色遮住正文：
+     * 此时页边界是按估算高度算的，先渲染再重排会闪一下「页尾被裁」，等实测完成再露出。
+     */
+    val awaitingPageViewport = !isPdfBook &&
+        renderPlainText &&
+        pageTurnMode != ReaderPageTurnMode.VerticalScroll &&
+        pageSpecs.isNotEmpty() &&
+        realPageViewport == null
+
+    // 兜底：页视图迟迟没有上报尺寸时（极端布局时序）也把分页放出来，避免正文被遮罩卡住。
+    LaunchedEffect(awaitingPageViewport) {
+        if (awaitingPageViewport) {
+            kotlinx.coroutines.delay(400)
+            if (realPageViewport == null) realPageViewport = fallbackPageViewport
+        }
+    }
     val pagerState = rememberPagerState(
         pageCount = { pageSpecs.size.coerceAtLeast(1) },
     )
+
 
     // ===== 章节惰性渲染窗口（仅 VerticalScroll 模式生效）=====
     val documentChunkIndex = uiState.documentSnapshot?.chunkIndex
@@ -361,10 +521,7 @@ fun ReaderScreen(
         } else if (pageTurnMode != ReaderPageTurnMode.VerticalScroll) {
             0 to readerContent.length
         } else {
-            val targetChar = viewModel.readingCharPosForRestore().coerceIn(
-                0,
-                (readerContent.length - 1).coerceAtLeast(0),
-            )
+            val targetChar = restoreLocalCharPos()
             computeReadingWindow(chapterBoundaries, targetChar, readerContent.length)
         }
     }
@@ -374,6 +531,14 @@ fun ReaderScreen(
     var displayWindowEndChar by remember(readerContent, readerLoadEpoch) {
         mutableIntStateOf(initialDisplayWindow.second)
     }
+    /**
+     * 目录跳转到「当前窗口之外」的章节：先重载窗口，等新正文/分页就绪后再执行跳转。
+     * 值是被跳转章节在全book中的全局字符偏移。
+     */
+    // 不能按 readerContent 重置：跳转会先按目标位置重载窗口，正文一换这里就被清空，
+    // 挂起的跳转随之丢失（表现为跳到书末目录后仍停在窗口开头）。
+    var pendingGlobalTocJump by remember(bookId) { mutableStateOf<Int?>(null) }
+
     /** 向上/向下扩窗后，按全书字符锚点恢复视口，避免跳到章节顶部。 */
     var pendingScrollRestoreGlobalChar by remember(readerContent) { mutableStateOf<Int?>(null) }
     var pendingScrollRestoreBookmarkPreview by remember(readerContent) { mutableStateOf<String?>(null) }
@@ -868,14 +1033,30 @@ fun ReaderScreen(
         val top = currentTopGlobalChar() ?: return null
         val bottom = currentBottomGlobalChar() ?: top
         val window = currentDisplayWindow()
+        // 窗口模式下 currentTopGlobalChar/DisplayWindow 是窗口内局部坐标，
+        // 而目录 sourceOffset 是全书坐标：不换算会把当前章节算成书首前几章，
+        // 顶栏章节名会一直停在旧章节（并把错误的偏移写进 visibleChapterOffset）。
+        val base = if (uiState.totalCharsGlobal > 0) uiState.windowStartChar else 0
         return currentChapterEntryFromDisplayedViewport(
             tocEntries = tocEntries,
             textView = readerTextView.value,
-            windowStart = window.first,
-            windowEnd = window.second,
-            fallbackTopChar = top,
-            fallbackBottomChar = bottom,
+            windowStart = window.first + base,
+            windowEnd = window.second + base,
+            fallbackTopChar = top + base,
+            fallbackBottomChar = bottom + base,
         )
+    }
+
+    /**
+     * 窗口模式（TXT 分段加载）下，当前正文是否已经读到全书末尾。
+     *
+     * 窗口末尾 ≠ 全书末尾：不判断的话，读到窗口最后一页就会误弹「标记为已读完」，
+     * 进度也会被当成 100%。
+     */
+    fun windowCoversBookEnd(): Boolean {
+        val total = uiState.totalCharsGlobal
+        if (total <= 0) return true
+        return uiState.windowStartChar + readerContent.length >= total
     }
 
     fun documentReachedEnd(): Boolean {
@@ -883,6 +1064,7 @@ fun ReaderScreen(
         if (isPdfBook && pdfPages.isNotEmpty()) {
             return pdfAtEnd
         }
+        if (!windowCoversBookEnd()) return false
         if (pageTurnMode != ReaderPageTurnMode.VerticalScroll && pageSpecs.isNotEmpty()) {
             return pagerState.currentPage >= pageSpecs.lastIndex
         }
@@ -896,6 +1078,7 @@ fun ReaderScreen(
             val lastStart = pdfPages.last().sourceOffset
             return charPos >= lastStart && pdfAtEnd
         }
+        if (!windowCoversBookEnd()) return false
         if (pageTurnMode != ReaderPageTurnMode.VerticalScroll && pageSpecs.isNotEmpty()) {
             val lastStart = pageSpecs.last().first
             return charPos >= lastStart
@@ -905,6 +1088,10 @@ fun ReaderScreen(
     }
 
     fun publishVisibleReadingProgress() {
+        // 首次定位还没完成：此时视口顶是窗口第一页，上报会把打开位置改写成窗口起点。
+        if (viewModel.hasPendingRestoreChar()) return
+        // 横向分页的位置只由「页码变化」驱动；页视图就绪/重排时上报会把被动变化的页码写成进度。
+        if (!isPdfBook && pageTurnMode != ReaderPageTurnMode.VerticalScroll) return
         val codeViewport = if (isCodeBook && pageTurnMode == ReaderPageTurnMode.VerticalScroll) {
             (readerTextView.value as? SafeReaderTextView)
                 ?.fullScreenCodeViewportSourceOffsets()
@@ -922,7 +1109,11 @@ fun ReaderScreen(
             estimated,
             documentReachedEnd(),
             bottom,
-            if (isCodeBook) null else currentChapterEntryNow()?.sourceOffset,
+            if (isCodeBook || uiState.totalCharsGlobal > 0) {
+                null
+            } else {
+                currentChapterEntryNow()?.sourceOffset
+            },
         )
     }
 
@@ -973,13 +1164,14 @@ fun ReaderScreen(
         isPdfBook,
     ) {
         if (readerContent.isEmpty()) return@LaunchedEffect
+        // 目录/书签跳转正在重载窗口：此时 session 里还是旧窗口的局部位置，
+        // 若在这里按「保存位置」恢复，会把旧位置 clamp 到新窗口里、并和真正的跳转抢 pager，
+        // 表现为跳到书末目录却停在别处。等挂起跳转自己定位。
+        if (pendingGlobalTocJump != null) return@LaunchedEffect
         if (isPdfBook || pageTurnMode == ReaderPageTurnMode.VerticalScroll || pageSpecs.isEmpty()) {
             return@LaunchedEffect
         }
-        val charPos = viewModel.readingCharPosForRestore().coerceIn(
-            0,
-            (readerContent.length - 1).coerceAtLeast(0),
-        )
+        val charPos = restoreLocalCharPos()
         jumpToGlobalCharInPager(
             scope = this,
             charPos = charPos,
@@ -1019,17 +1211,36 @@ fun ReaderScreen(
         }
     }
 
+    // 用户开始拖动翻页即视为「已接管」：清掉打开时的恢复目标，之后的页码变化正常记进度。
+    // 页高实测导致的重排不会产生 offset，因此不会误清。
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.currentPageOffsetFraction != 0f }
+            .collect { dragging ->
+                if (dragging) viewModel.clearPendingRestoreChar()
+            }
+    }
+
     LaunchedEffect(pageTurnMode, pageSpecs, pagerState, totalChars) {
         if (pageTurnMode == ReaderPageTurnMode.VerticalScroll || pageSpecs.isEmpty()) return@LaunchedEffect
         snapshotFlow { pagerState.currentPage }.distinctUntilChanged().collect { page ->
             val start = pageSpecs.getOrNull(page)?.first ?: return@collect
             val end = pageSpecs.getOrNull(page + 1)?.first ?: readerContent.length
-            viewModel.updateReadingProgressAtChar(
-                start,
-                reachedEnd = page >= pageSpecs.lastIndex,
-                bottomChar = end,
-                chapterOffset = currentChapterEntryNow()?.sourceOffset,
-            )
+            // 用户往后翻过打开时的目标页：恢复已完成，之后以实际页码为准。
+            viewModel.pendingRestoreLocalChar()?.let { pendingLocal ->
+                val targetPage = pageSpecs.indexOfLast { it.first <= pendingLocal }.coerceAtLeast(0)
+                if (page > targetPage) viewModel.clearPendingRestoreChar()
+            }
+            // 退出中/工具栏唤出时页高会变，不能把重排后的页码当成阅读位置。
+            if (!leavingReader[0] && !readerChromeVisible) {
+                viewModel.updateReadingProgressAtChar(
+                    start,
+                    reachedEnd = page >= pageSpecs.lastIndex,
+                    bottomChar = end,
+                    chapterOffset = currentChapterEntryNow()?.sourceOffset,
+                )
+            }
+            // 窗口模式：翻到窗口尾部前预取下一批，否则翻到第 N 页就再也翻不动。
+            viewModel.appendTxtWindowIfNeeded(end)
         }
     }
 
@@ -1059,6 +1270,45 @@ fun ReaderScreen(
      * 误取消恢复后 scrollY 停在 0，表现为跳回开头。
      */
     val expandRestoreGuard = remember(readerContent) { booleanArrayOf(false) }
+
+    // 窗口重载完成（readerContent / pageSpecs 已更新）后执行挂起的目录跳转。
+    LaunchedEffect(pendingGlobalTocJump, readerContent, pageSpecs, uiState.windowStartChar) {
+        val target = pendingGlobalTocJump ?: return@LaunchedEffect
+        val base = uiState.windowStartChar
+        val local = target - base
+        if (local !in 0 until readerContent.length) return@LaunchedEffect
+        pendingGlobalTocJump = null
+        if (pageTurnMode == ReaderPageTurnMode.VerticalScroll || pageSpecs.isEmpty()) {
+            if (isPdfBook) return@LaunchedEffect
+            clearPendingScrollCharOffset(readerTextView.value)
+            pendingScrollRestoreGlobalChar = null
+            pendingScrollRestoreBookmarkPreview = null
+            pendingScrollRestoreHighlightId = null
+            pendingScrollRestorePdfPageIndex = null
+            pendingScrollRestoreAnchor = null
+            pendingScrollRestoreSnapToLine = true
+            bumpScrollRestoreGeneration()
+            windowExpandInFlight = false
+            expandRestoreGuard[0] = false
+            val (winStart, winEnd) = computeTocJumpReadingWindow(
+                chapterBoundaries,
+                local,
+                readerContent.length,
+            )
+            requestReaderScrollToTop(readerTextView.value)
+            readerTextView.value?.let { if (it.scrollY != 0) it.scrollTo(0, 0) }
+            displayWindowStartChar = winStart
+            displayWindowEndChar = winEnd.coerceAtLeast(
+                (winStart + 1).coerceAtMost(readerContent.length),
+            )
+            viewModel.updateReadingProgressAtChar(local, reachedEnd = false)
+        } else {
+            val page = pageSpecs.indexOfLast { it.first <= local }.coerceAtLeast(0)
+            pagerState.scrollToPage(page)
+            viewModel.updateReadingProgressAtChar(local, reachedEnd = false)
+        }
+    }
+
 
     /** TextView 侧 snap/置顶已完成后揭罩，并取消仍在跑的 Compose restore，避免二次滚动。 */
     fun onReaderOpenPositionReady() {
@@ -1157,10 +1407,7 @@ fun ReaderScreen(
             return@LaunchedEffect
         }
         if (isPdfBook) {
-            val targetChar = viewModel.readingCharPosForRestore().coerceIn(
-                0,
-                (readerContent.length - 1).coerceAtLeast(0),
-            )
+            val targetChar = restoreLocalCharPos()
             coverUntilPositionRestore = true
             readerOpenDbg("cover=true reason=pdfInit target=$targetChar epoch=$readerLoadEpoch")
             pendingScrollRestoreBookmarkPreview = null
@@ -1173,6 +1420,7 @@ fun ReaderScreen(
                 readerContent.length,
             )
             lastScrollTopGlobalChar[0] = targetChar
+            viewModel.clearPendingRestoreChar()
             return@LaunchedEffect
         }
         if (pageTurnMode != ReaderPageTurnMode.VerticalScroll) {
@@ -1180,10 +1428,7 @@ fun ReaderScreen(
             displayWindowEndChar = readerContent.length
             return@LaunchedEffect
         }
-        val targetChar = viewModel.readingCharPosForRestore().coerceIn(
-            0,
-            (readerContent.length - 1).coerceAtLeast(0),
-        )
+        val targetChar = restoreLocalCharPos()
         val (start, end) = computeReadingWindow(chapterBoundaries, targetChar, readerContent.length)
         displayWindowStartChar = start
         displayWindowEndChar = end
@@ -1198,6 +1443,7 @@ fun ReaderScreen(
         pendingScrollRestorePdfPageIndex = null
         pendingScrollRestoreBookmarkPreview = viewModel.readingPreviewForRestore()
         pendingScrollRestoreHighlightId = null
+        viewModel.clearPendingRestoreChar()
         stashSavedPositionSnapForPendingRestore(
             sourceOffset = targetChar,
             windowStart = start,
@@ -1647,15 +1893,15 @@ fun ReaderScreen(
         systemBarsVisible = !hideSystemBarsNow,
     )
     val persistVisibleProgressNow by rememberUpdatedState {
+        leavingReader[0] = true
         val tv = readerTextView.value
         val preview = if (isPdfBook) {
             null
         } else {
             tv?.let { previewPlainTextFromTextViewTop(it) }
         }
-        val topChar = currentTopGlobalChar()
-            ?: lastScrollTopGlobalChar[0].takeIf { it >= 0 }
-        viewModel.dispatch(ReaderEvent.PersistVisibleProgress(topChar, preview))
+        // 位置以会话内阅读位置为准（退出时系统栏显隐会触发分页重排，pager 可能先跳页）。
+        viewModel.persistCurrentReadingPositionNow(preview)
     }
 
     DisposableEffect(lifecycleOwner, bookId) {
@@ -1722,6 +1968,14 @@ fun ReaderScreen(
     )
     // 横屏常驻目录栏只给 Markdown/纯文本用：PDF 按页阅读、目录即页码，常驻栏会挤压页面版面，
     // 因此 PDF 横屏不再展示左侧导航（目录仍可从底栏「目录」按钮打开）。
+    // 当前书籍的阅读样式档位：决定阅读页设置面板展示哪些分组。
+    val readingProfile = when {
+        isPdfBook -> ReadingFormatProfile.PDF
+        isCodeBook -> ReadingFormatProfile.CODE
+        renderHtml -> ReadingFormatProfile.HTML
+        renderPlainText -> ReadingFormatProfile.PLAIN_TEXT
+        else -> ReadingFormatProfile.MARKDOWN
+    }
     val wideReaderNavigation = uiState.showTocInLandscape &&
         isLandscapeWindow(windowSize.width, windowSize.height) &&
         tocEntries.isNotEmpty() &&
@@ -1896,7 +2150,11 @@ fun ReaderScreen(
                                                 onReaderOpenPositionReady()
                                             },
                                         )
-                                    } else if (pageTurnMode == ReaderPageTurnMode.VerticalScroll) {
+                                    } else if (pageTurnMode == ReaderPageTurnMode.VerticalScroll ||
+                                        pageSpecs.isEmpty()
+                                    ) {
+                                        // 纯文本窗口模式内容很短、以及超长正文被禁用分页（pageSpecs 为空）
+                                        // 时都走滚动窗口，避免横向分页只有一「页」、翻不动也滚不了。
                                         MarkdownReaderView(
                                             content = displayedContent,
                                             renderPlainText = renderPlainText,
@@ -1988,6 +2246,8 @@ fun ReaderScreen(
                                                         null
                                                     }
                                                     if (estimated != null) {
+                                                        // 窗口模式：接近窗口末尾时异步追加下一批正文
+                                                        viewModel.appendTxtWindowIfNeeded(estimated)
                                                         if (publishViewport) {
                                                             lastScrollTopGlobalChar[0] = estimated
                                                             lastCodeViewportPublishMs[0] = now
@@ -2077,52 +2337,82 @@ fun ReaderScreen(
                                             onOpenPositionReady = ::onReaderOpenPositionReady,
                                         )
                                     } else {
-                                        ReaderPagedMarkdownHost(
-                                            sourceContent = readerContent,
-                                            pages = pageSpecs,
-                                            pageTurnMode = pageTurnMode,
-                                            pagerState = pagerState,
-                                            theme = currentTheme,
-                                            fontSize = fontSize,
-                                            readerPaddingDp = readerBodyPaddingDp,
-                                            readerPaddingHorizontalDp = readerHorizontalPaddingDp,
-                                            readerPaddingTopDp = readerPaddingTopDp,
-                                            readerLineSpacingMultiplier = readerBodyLineSpacing,
-                                            highlights = highlights,
-                                            pageTextViews = pageTextViews,
-                                            renderPlainText = renderPlainText,
-                                            modifier = Modifier.fillMaxSize(),
-                                            onHighlightMenuClick = onHighlightMenuClick,
-                                            resolveExistingHighlightId = ::resolveExistingHighlightId,
-                                            onRemoveHighlightClick = onRemoveHighlightClick,
-                                            onReadingVerticalScroll = onReaderVerticalScroll,
-                                            onSwipeDownBookmark = onReaderSwipeBookmark,
-                                            onCenterTap = {
-                                                if (!readerTextSelectionActive) showTopBar = !showTopBar
-                                            },
-                                            onDiagramTap = { bitmap ->
-                                                if (!isPdfBook) {
-                                                    showTopBar = false
-                                                    diagramPreviewBitmap = bitmap
-                                                }
-                                            },
-                                            onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange,
-                                            onPageTextViewReady = { pageIdx, tv ->
-                                                if (pageIdx == pagerState.currentPage) {
-                                                    readerTextView.value = tv
-                                                    tv.post { publishVisibleReadingProgress() }
-                                                }
-                                            },
-                                            pdfFullWidthImages = isPdfBook,
-                                            codeBlockWrap = codeBlockWrap,
-                                            codeHighlightTheme = codeHighlightTheme,
-                                            codeBlockLanguage = codeBlockLanguage,
-                                            codeLineNumbers = codeLineNumbers,
-                                            userScrollEnabled = !pdfPageZoomed,
-                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .onSizeChanged { size ->
+                                                    // 分页可用高度 = 页视图尺寸 - 页内留白。
+                                                    // 不能用 TextView.getTotalPaddingTop/Bottom 反推：它会把
+                                                    // 「文字没填满时剩余的竖直空白」算进去，量出来是当前页文字高度，
+                                                    // 反哺分页会让每翻一页少一行，页面越翻越短。
+                                                    val density = windowDensity.density
+                                                    val horizontal = (readerHorizontalPaddingDp * density).toInt()
+                                                    val vertical = ((readerPaddingTopDp + readerBodyPaddingDp) *
+                                                        density).toInt()
+                                                    val w = size.width - horizontal * 2
+                                                    val h = size.height - vertical
+                                                    val current = realPageViewport
+                                                    if (w > 0 && h > 0) {
+                                                        // 只在沉浸阅读（工具栏收起、系统栏隐藏）时缓存：
+                                                        // 唤出工具栏会让页区变矮，缓存它会让下次打开先按窄页排一遍。
+                                                        if (!readerChromeVisible) {
+                                                            ReaderPageViewportCache.put(w, h)
+                                                        }
+                                                        if (current == null || current.first != w ||
+                                                            current.second != h
+                                                        ) {
+                                                            realPageViewport = w to h
+                                                        }
+                                                    }
+                                                },
+                                        ) {
+                                            ReaderPagedMarkdownHost(
+                                                sourceContent = readerContent,
+                                                pages = pageSpecs,
+                                                pageTurnMode = pageTurnMode,
+                                                pagerState = pagerState,
+                                                theme = currentTheme,
+                                                fontSize = fontSize,
+                                                readerPaddingDp = readerBodyPaddingDp,
+                                                readerPaddingHorizontalDp = readerHorizontalPaddingDp,
+                                                readerPaddingTopDp = readerPaddingTopDp,
+                                                readerLineSpacingMultiplier = readerBodyLineSpacing,
+                                                highlights = highlights,
+                                                pageTextViews = pageTextViews,
+                                                renderPlainText = renderPlainText,
+                                                modifier = Modifier.fillMaxSize(),
+                                                onHighlightMenuClick = onHighlightMenuClick,
+                                                resolveExistingHighlightId = ::resolveExistingHighlightId,
+                                                onRemoveHighlightClick = onRemoveHighlightClick,
+                                                onReadingVerticalScroll = onReaderVerticalScroll,
+                                                onSwipeDownBookmark = onReaderSwipeBookmark,
+                                                onCenterTap = {
+                                                    if (!readerTextSelectionActive) showTopBar = !showTopBar
+                                                },
+                                                onDiagramTap = { bitmap ->
+                                                    if (!isPdfBook) {
+                                                        showTopBar = false
+                                                        diagramPreviewBitmap = bitmap
+                                                    }
+                                                },
+                                                onReaderTextSelectionActiveChange = onReaderTextSelectionActiveChange,
+                                                onPageTextViewReady = { pageIdx, tv ->
+                                                    if (pageIdx == pagerState.currentPage) {
+                                                        readerTextView.value = tv
+                                                        tv.post { publishVisibleReadingProgress() }
+                                                    }
+                                                },
+                                                pdfFullWidthImages = isPdfBook,
+                                                codeBlockWrap = codeBlockWrap,
+                                                codeHighlightTheme = codeHighlightTheme,
+                                                codeBlockLanguage = codeBlockLanguage,
+                                                codeLineNumbers = codeLineNumbers,
+                                                userScrollEnabled = !pdfPageZoomed,
+                                            )
+                                        }
                                     }
                                     // 打开书/书签定位完成前遮住正文，避免先露出窗口开头（更早章节）再跳回。
-                                    if (coverUntilPositionRestore) {
+                                    if (coverUntilPositionRestore || awaitingPageViewport) {
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxSize()
@@ -2140,6 +2430,7 @@ fun ReaderScreen(
         viewModel = viewModel,
         diagramPreviewBitmap = diagramPreviewBitmap,
         showReaderSettings = showReaderSettingsSheet,
+        readingProfile = readingProfile,
         onDismissDiagramPreview = { diagramPreviewBitmap = null },
         onDismissReaderSettings = {
             showReaderSettingsSheet = false
@@ -2149,6 +2440,18 @@ fun ReaderScreen(
 
     fun jumpToReaderChar(target: AnnotationJumpTarget) {
         if (readerContent.isEmpty()) return
+        // 窗口模式：书签/划线可能在当前窗口之外，先把窗口重载到目标位置再跳，
+        // 否则 annotationSourceOffset 会把全局位置 clamp 到窗口边界，落到错误的位置。
+        val windowBase = uiState.windowStartChar
+        if (uiState.totalCharsGlobal > 0 && target.sourceOffset - windowBase !in 0 until readerContent.length) {
+            // 显式跳转优先于打开时的恢复目标，避免窗口重载后又被拉回原位置。
+            viewModel.clearPendingRestoreChar()
+            pendingGlobalTocJump = target.sourceOffset
+            showToc = false
+            pendingWideTocEntry = null
+            scope.launch { viewModel.ensureLocalCharForGlobal(target.sourceOffset) }
+            return
+        }
         val contentLen = readerContent.length
         // 注解锚点已经是当前正文的源码坐标，不能再按历史 totalChars 二次缩放。
         val charPos = annotationSourceOffset(target, contentLen)
@@ -2444,7 +2747,24 @@ fun ReaderScreen(
         },
         onDeleteBookmark = { viewModel.dispatch(ReaderEvent.DeleteBookmark(it)) },
         onDeleteHighlight = { viewModel.dispatch(ReaderEvent.DeleteHighlight(it)) },
-        onTocEntryClick = { entry ->
+        onTocEntryClick = tocJump@{ entry ->
+            // 窗口模式：目标章节可能不在当前已加载的窗口内。直接 clamp 会落到窗口末页，
+            // 表现为「跳到后面的章节后只能往前翻、翻不到下一页」。这里先重载窗口再跳。
+            val windowBase = uiState.windowStartChar
+            val windowedContent = uiState.totalCharsGlobal > 0
+            val localTarget = entry.sourceOffset - windowBase
+            if (windowedContent && readerContent.isNotEmpty() &&
+                localTarget !in 0 until readerContent.length
+            ) {
+                viewModel.clearPendingRestoreChar()
+                pendingGlobalTocJump = entry.sourceOffset
+                showToc = false
+                if (immersiveReading) showTopBar = false
+                scope.launch { viewModel.ensureLocalCharForGlobal(entry.sourceOffset) }
+                return@tocJump
+            }
+            // 目录跳转是显式操作：取消打开时挂起的恢复目标，避免之后再被拉回原位置。
+            viewModel.clearPendingRestoreChar()
             if (readerContent.isNotEmpty()) {
                 val contentLen = readerContent.length
                 val charPos = entry.sourceOffset.coerceIn(0, (contentLen - 1).coerceAtLeast(0))
@@ -2631,3 +2951,4 @@ internal fun findHighlightIdForDisplayedSelection(
             kotlin.math.abs(h.startPosition - displayedStart) <= 2
     }?.id
 }
+

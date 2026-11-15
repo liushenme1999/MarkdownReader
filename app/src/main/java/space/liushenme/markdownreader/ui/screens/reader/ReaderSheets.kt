@@ -78,6 +78,7 @@ import androidx.navigation.NavController
 import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.local.entity.HighlightEntity
 import space.liushenme.markdownreader.importing.ImportedBookFormat
+import space.liushenme.markdownreader.data.repository.ReadingFormatProfile
 import space.liushenme.markdownreader.markdown.CodeHighlightTheme
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
 import space.liushenme.markdownreader.ui.components.CodeHighlightThemeGrid
@@ -184,6 +185,7 @@ internal fun ReaderSettingsSheet(
     codeBlockWrap: Boolean,
     codeLineNumbers: Boolean,
     codeHighlightTheme: CodeHighlightTheme,
+    readingProfile: ReadingFormatProfile,
     hideSystemBars: Boolean,
     pageTurnMode: ReaderPageTurnMode,
     onSelectStyle: (Int) -> Unit,
@@ -234,7 +236,7 @@ internal fun ReaderSettingsSheet(
                 }
             }
 
-            Column {
+            if (readingProfile.usesCodeStyle) Column {
                 ReaderSettingsSectionTitle(
                     stringResource(R.string.reading_settings_section_code_appearance),
                 )
@@ -269,7 +271,7 @@ internal fun ReaderSettingsSheet(
                 }
             }
 
-            Column {
+            if (readingProfile.usesTypography) Column {
                 ReaderSettingsSectionTitle(
                     stringResource(R.string.reading_settings_section_typography),
                 )

@@ -50,6 +50,10 @@ data class ReaderUiState(
     val lastHighlightColorArgb: Int = 0,
     val lastHighlightStyle: HighlightStyle = HighlightStyle.DEFAULT,
     val showMarkFinishedPrompt: Boolean = false,
+    /** 窗口模式：当前正文在全书中的起始字符偏移（0 = 全文模式）。 */
+    val windowStartChar: Int = 0,
+    /** 窗口模式：全书总字符数（0 = 全文模式）。 */
+    val totalCharsGlobal: Int = 0,
 ) {
     val loadError: String?
         get() = when (val state = loadState) {

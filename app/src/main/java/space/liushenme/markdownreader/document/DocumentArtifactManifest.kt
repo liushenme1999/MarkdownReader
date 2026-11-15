@@ -15,14 +15,23 @@ data class DocumentArtifactManifest(
 ) {
     enum class Validation { Valid, MissingManifest, MissingBody, BodyMismatch, MissingArtifact, ArtifactMismatch }
 
-    fun validate(bundleDir: File): Validation {
+    /**
+     * 校验正文包完整性。
+     *
+     * [verifyChecksums] 默认关闭：正文动辄十几 MB，每次打开都对 body.txt 与附件重算 SHA-256
+     * 会让首帧卡死数秒（实测被系统判定 ANR）。默认只做「文件存在 + 尺寸一致」的廉价校验，
+     * 深度校验留给修复/诊断路径显式调用。
+     */
+    fun validate(bundleDir: File, verifyChecksums: Boolean = false): Validation {
         val body = File(bundleDir, ParsedBookStorage.BODY_FILE)
         if (!body.isFile) return Validation.MissingBody
-        if (body.length() != bodyBytes || sha256(body) != bodyChecksum) return Validation.BodyMismatch
+        if (body.length() != bodyBytes) return Validation.BodyMismatch
+        if (verifyChecksums && sha256(body) != bodyChecksum) return Validation.BodyMismatch
         artifacts.forEach { artifact ->
             val file = File(bundleDir, artifact.relativePath)
             if (!file.isFile) return Validation.MissingArtifact
             if (file.length() != artifact.byteSize) return Validation.ArtifactMismatch
+            if (!verifyChecksums) return@forEach
             val verifyChecksum = artifact.kind !in setOf(
                 DocumentArtifact.Kind.Image,
                 DocumentArtifact.Kind.PdfPage,
