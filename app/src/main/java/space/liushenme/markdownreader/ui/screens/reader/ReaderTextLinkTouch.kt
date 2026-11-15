@@ -30,22 +30,63 @@ internal object ReaderTextLinkTouch {
 
         findLinkedDrawableClickableSpan(textView, spannable, x, y)?.let { return it }
 
-        val offset = textView.getOffsetForPosition(x, y).coerceIn(0, length - 1)
-        spanAtOffset(spannable, offset)?.let { return it }
-
         val layout = textView.layout ?: return null
+        val contentX = x - textView.totalPaddingLeft
+        if (contentX < 0f) return null
+        val maxContentX = (textView.width - textView.totalPaddingLeft - textView.totalPaddingRight)
+        if (maxContentX > 0 && contentX > maxContentX) return null
         val contentY = (y + textView.scrollY - textView.totalPaddingTop).toInt().coerceAtLeast(0)
         val line = layout.getLineForVertical(contentY).coerceIn(0, layout.lineCount - 1)
-        val lineStart = layout.getLineStart(line)
+        // 点在行间空白/正文下方时不能命中：getLineForVertical 会把越界坐标夹到最近一行。
+        if (contentY < layout.getLineTop(line) || contentY > layout.getLineBottom(line)) return null
+        val lineStart = layout.getLineStart(line).coerceIn(0, length)
         val lineEnd = layout.getLineEnd(line).coerceAtMost(length)
+
+        // 先按点击位置换算的字符偏移命中（双向文本下最精确）。
+        val offset = textView.getOffsetForPosition(x, y).coerceIn(0, length - 1)
+        spanAtOffset(spannable, offset)?.let { span ->
+            if (isSpanAtHorizontal(layout, spannable, span, line, contentX)) return span
+        }
+
+        // 兜底：仅在「该 span 在本行的横向字形范围内」时命中。
+        // 旧实现只要本行存在链接就返回，导致点同一行任意位置都会跳转。
         return spannable.getSpans(lineStart, lineEnd, ClickableSpan::class.java)
             .asSequence()
             .filter { span ->
                 val start = spannable.getSpanStart(span)
                 val end = spannable.getSpanEnd(span)
-                start < lineEnd && end > lineStart
+                start < lineEnd && end > lineStart &&
+                    isSpanAtHorizontal(layout, spannable, span, line, contentX)
             }
             .maxByOrNull { spannable.getSpanEnd(it) - spannable.getSpanStart(it) }
+    }
+
+    /** 点击点是否落在 [span] 在当前行显示出来的字形横向范围内。 */
+    private fun isSpanAtHorizontal(
+        layout: Layout,
+        spannable: Spanned,
+        span: ClickableSpan,
+        line: Int,
+        contentX: Float,
+    ): Boolean {
+        val lineStart = layout.getLineStart(line)
+        val lineEnd = layout.getLineEnd(line)
+        val spanStart = spannable.getSpanStart(span)
+        val spanEnd = spannable.getSpanEnd(span)
+        if (spanStart < 0 || spanEnd <= spanStart) return false
+        val startInLine = maxOf(spanStart, lineStart)
+        val endInLine = minOf(spanEnd, lineEnd)
+        if (endInLine <= startInLine) return false
+        val left = layout.getPrimaryHorizontal(startInLine)
+        // endInLine 落在行尾时，getPrimaryHorizontal(endInLine) 可能是下一行行首，改用行右边界。
+        val right = if (endInLine >= lineEnd) {
+            layout.getLineRight(line)
+        } else {
+            layout.getPrimaryHorizontal(endInLine)
+        }
+        val minX = minOf(left, right)
+        val maxX = maxOf(left, right)
+        return contentX >= minX && contentX <= maxX
     }
 
     /**
