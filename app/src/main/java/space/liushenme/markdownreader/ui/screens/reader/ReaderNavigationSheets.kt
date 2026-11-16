@@ -43,6 +43,9 @@ internal fun ReaderNavigationSheets(
     onTocEntryClick: (MarkdownTocEntry) -> Unit,
     onDismissMarks: () -> Unit,
     onDismissToc: () -> Unit,
+    isTocEntryFoldable: ((MarkdownTocEntry) -> Boolean)? = null,
+    isTocEntryFolded: ((MarkdownTocEntry) -> Boolean)? = null,
+    onToggleTocFold: ((MarkdownTocEntry) -> Unit)? = null,
 ) {
     if (showMarks) {
         val context = LocalContext.current
@@ -91,6 +94,9 @@ internal fun ReaderNavigationSheets(
             currentEntry = tocState.currentEntry,
             onEntryClick = onTocEntryClick,
             onDismiss = onDismissToc,
+            isFoldable = isTocEntryFoldable,
+            isFolded = isTocEntryFolded,
+            onToggleFold = onToggleTocFold,
         )
     }
 }

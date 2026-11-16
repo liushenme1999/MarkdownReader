@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>网页 JS 交互测试</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", sans-serif; padding: 24px; line-height: 1.8; background:#fbf7ef; color:#222; }
+  h1 { font-size: 24px; }
+  button { display:block; width:100%; margin:12px 0; padding:14px; font-size:16px; border-radius:10px; border:1px solid #b08968; background:#fff; }
+  button:active { background:#f3ece1; }
+  .result { margin:16px 0; padding:12px; border-radius:10px; background:#fff; border:1px solid #e5dccd; min-height:24px; }
+</style>
+</head>
+<body>
+  <h1>网页 JS 交互测试</h1>
+  <p>用于验证页面内按钮、alert / confirm / prompt 弹窗、DOM 更新是否生效。</p>
+
+  <div class="result" id="status">等待操作…</div>
+
+  <button onclick="document.getElementById('status').textContent='✅ 普通按钮点击生效（纯 JS，无弹窗）'">1. 普通按钮（不弹窗）</button>
+  <button onclick="alert('这是 alert 弹窗'); document.getElementById('status').textContent='✅ alert 已关闭'">2. alert 弹窗</button>
+  <button onclick="var ok=confirm('这是 confirm 弹窗，点确定或取消'); document.getElementById('status').textContent = ok ? '✅ confirm 返回 true（你点了确定）' : '✅ confirm 返回 false（你点了取消）'">3. confirm 弹窗</button>
+  <button onclick="var v=prompt('请输入一段文字','默认内容'); document.getElementById('status').textContent = v===null ? '✅ prompt 已取消' : ('✅ prompt 返回：' + v)">4. prompt 输入框</button>
+  <button onclick="var n=Number(document.getElementById('count').textContent)+1; document.getElementById('count').textContent=n">5. 计数器（DOM 更新）</button>
+  <div class="result">计数：<span id="count">0</span></div>
+  <button onclick="document.getElementById('status').textContent='✅ 内联 onclick 与外部函数都正常'">6. 刷新状态</button>
+</body>
+</html>

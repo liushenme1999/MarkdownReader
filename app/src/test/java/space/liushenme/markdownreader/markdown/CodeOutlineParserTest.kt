@@ -142,4 +142,28 @@ class CodeOutlineParserTest {
         assertTrue(CodeOutlineParser.parse(source, "html").definitions.isEmpty())
         assertTrue(CodeOutlineParser.parse(source, "json").definitions.isEmpty())
     }
+
+    @Test
+    fun offsetOfLine_mapsDefinitionStartLineToSourceOffset() {
+        val source = """
+            class Demo {
+                fun first() {
+                    println("a")
+                }
+
+                fun second() {
+                    println("b")
+                }
+            }
+        """.trimIndent()
+
+        val outline = CodeOutlineParser.parse(source, "kotlin")
+        val second = outline.definitions.first { it.text.contains("fun second") }
+
+        val lineStart = outline.offsetOfLine(second.startLine)
+        assertTrue(source.substring(lineStart).trimStart().startsWith("fun second"))
+        assertEquals(second.startLine, outline.lineAtOffset(lineStart))
+        assertEquals(0, outline.offsetOfLine(1))
+        assertTrue(outline.offsetOfLine(999) in 0..source.length)
+    }
 }

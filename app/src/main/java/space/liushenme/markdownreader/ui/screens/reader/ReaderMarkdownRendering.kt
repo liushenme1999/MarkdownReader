@@ -1120,6 +1120,8 @@ internal fun shouldSkipBringPointIntoViewForVisibleTallLine(
     return lineBottom > scrollY && lineTop < scrollY + innerHeight
 }
 
+private const val CODE_ANCHOR_RESTORE_ATTEMPTS = 6
+
 internal data class FullScreenCodeViewportRestore(
     val anchor: CodeSourceAnchor,
     val horizontalScrollX: Int,
@@ -1216,6 +1218,8 @@ internal open class SafeReaderTextView(context: Context) : TextView(context) {
     private var cachedCodeViewportOriginY = Float.NaN
     private var cachedCodeViewport: CodeSourceViewport? = null
     private var pendingFullScreenCodeViewportRestore: FullScreenCodeViewportRestore? = null
+    /** 上次全屏代码 layout 的宽度：只有宽度变化（旋转/分屏）才需要按源码锚点重定位。 */
+    private var lastFullScreenCodeLayoutWidth = -1
 
     fun registerDraftHighlight(highlightId: Long) {
         if (highlightId < 0L) activeDraftHighlightIds += highlightId
@@ -2308,6 +2312,84 @@ internal open class SafeReaderTextView(context: Context) : TextView(context) {
         return true
     }
 
+    private fun retryCodeSourceAnchorRestore(anchor: CodeSourceAnchor, attemptsLeft: Int) {
+        if (applyCodeSourceAnchorAfterLayout(anchor)) return
+        if (attemptsLeft <= 0) return
+        post { retryCodeSourceAnchorRestore(anchor, attemptsLeft - 1) }
+    }
+
+    /** 当前源码视口锚点（全屏代码专用；与字符行锚点无关）。 */
+    internal fun captureCodeSourceAnchor(): CodeSourceAnchor? {
+        refreshCodeViewportRedrawState()
+        val span = fullScreenCodeSpan ?: return null
+        if (layout == null) return null
+        val origin = codeSpanOrigin(span) ?: return null
+        val viewportTop = (scrollY - totalPaddingTop).toFloat()
+        return span.sourceAnchorAtLayoutY(
+            contentY = viewportTop,
+            originTop = origin.second,
+            paint = paint,
+        )
+    }
+
+    /**
+     * layout 完成后按源码锚点还原视口（旋转/分屏/系统栏变化）。
+     * 代码行由 span 排版，不能走 TextView 的字符行锚点补偿。
+     */
+    internal fun applyCodeSourceAnchorAfterLayout(anchor: CodeSourceAnchor): Boolean {
+        val span = fullScreenCodeSpan ?: return false
+        val textLayout = layout ?: return false
+        span.prepareForTouch(paint, codeBlockViewportWidth())
+        if (textLayout.height < span.contentHeight(paint)) return false
+        val origin = codeSpanOrigin(span) ?: return false
+        val innerY = span.layoutYForSourceAnchor(
+            anchor = anchor,
+            originTop = origin.second,
+            paint = paint,
+        ) ?: return false
+        val innerHeight = (height - totalPaddingTop - totalPaddingBottom).coerceAtLeast(0)
+        val maxScroll = (textLayout.height - innerHeight).coerceAtLeast(0)
+        val target = (totalPaddingTop + innerY).roundToInt().coerceIn(0, maxScroll)
+        if (target != scrollY) super.scrollTo(scrollX, target)
+        return true
+    }
+
+    /** 打开代码书时的「上次阅读位置」：等 layout 就绪后一次性滚到源码偏移。 */
+    internal fun applyPendingCodeSourceOffset(): Boolean {
+        val pending = getTag(R.id.reader_pending_code_source_offset) as? Int ?: return false
+        val ok = scrollFullScreenCodeToSourceOffset(pending)
+        if (!ok) return false
+        setTag(R.id.reader_pending_code_source_offset, null)
+        return true
+    }
+
+    internal fun setPendingCodeSourceOffset(offset: Int) {
+        setTag(R.id.reader_pending_code_source_offset, offset)
+    }
+
+    /** 把全屏代码文档滚动到指定源码偏移（行首）。 */
+    fun scrollFullScreenCodeToSourceOffset(sourceOffset: Int, inLineOffsetPx: Float = 0f): Boolean {
+        refreshCodeViewportRedrawState()
+        val span = fullScreenCodeSpan ?: return false
+        val textLayout = layout ?: return false
+        span.prepareForTouch(paint, codeBlockViewportWidth())
+        if (textLayout.height < span.contentHeight(paint)) return false
+        val origin = codeSpanOrigin(span) ?: return false
+        val innerY = span.layoutYForSourceAnchor(
+            anchor = CodeSourceAnchor(
+                sourceOffset = sourceOffset.coerceAtLeast(0),
+                inLineOffsetPx = inLineOffsetPx,
+            ),
+            originTop = origin.second,
+            paint = paint,
+        ) ?: return false
+        val innerHeight = (height - totalPaddingTop - totalPaddingBottom).coerceAtLeast(0)
+        val maxScroll = (textLayout.height - innerHeight).coerceAtLeast(0)
+        val target = (totalPaddingTop + innerY).roundToInt().coerceIn(0, maxScroll)
+        if (target != scrollY) super.scrollTo(scrollX, target)
+        return true
+    }
+
     private fun codeBlockViewportWidth(): Int =
         (width - totalPaddingLeft - totalPaddingRight).coerceAtLeast(0)
 
@@ -3135,6 +3217,36 @@ internal open class SafeReaderTextView(context: Context) : TextView(context) {
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         // 目录跳转置顶优先：目标章节即首行，首帧就压在顶部，避免闪一下再跳。
         val scrollToTop = hasReaderScrollToTop(this)
+        // 全屏代码：layout 会因旋转/分屏/系统栏变化触发，而代码行由 span 自己排版、
+        // viewportAnchorChar 在代码模式下从不更新。必须在 super 前按「源码锚点」抓当前视口，
+        // 否则后面会用打开时的旧字符行做补偿，表现为横屏下滑后被拉回原位。
+        val codeLayoutWidth = right - left
+        val codeWidthChanged = hasFullScreenCodeDocument &&
+            lastFullScreenCodeLayoutWidth > 0 &&
+            lastFullScreenCodeLayoutWidth != codeLayoutWidth
+        val codeRelayoutAnchor = if (codeWidthChanged && !scrollToTop) {
+            captureCodeSourceAnchor()
+        } else {
+            null
+        }
+        if (hasFullScreenCodeDocument) {
+            lastFullScreenCodeLayoutWidth = codeLayoutWidth
+            super.onLayout(changed, left, top, right, bottom)
+            if (scrollToTop) {
+                if (scrollY != 0) super.scrollTo(0, 0)
+                signalOpenPositionReady("onLayoutScrollToTop")
+                return
+            }
+            if (applyPendingCodeSourceOffset()) return
+            codeRelayoutAnchor?.let { anchor ->
+                // 布局过程中 span 的临时高度可能还没跟上（换宽/换行时），
+                // 一帧内重试几次，否则 scrollY 会被 layout 重置到顶部。
+                retryCodeSourceAnchorRestore(anchor, CODE_ANCHOR_RESTORE_ATTEMPTS)
+                return
+            }
+            return
+        }
+        val snapTextLen0 = viewportAnchorTextLen
         val hasSnapStash = !scrollToTop && hasPendingSavedPositionSnap(this)
         val hasExpandStash = !scrollToTop && !hasSnapStash && hasPendingSourceScrollRestore(this)
         // 快照必须在 super.onLayout 之前抓：布局过程中的内部 scrollTo 会经 onScrollChanged 污染锚点。

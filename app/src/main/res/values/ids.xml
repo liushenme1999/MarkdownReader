@@ -28,6 +28,7 @@
     <item name="reader_pending_expand_fingerprint_start" type="id" />
     <!-- 目录跳转置顶意图：目标章节即窗口首行，只需 scrollY=0，独立于 offset/anchor 恢复 -->
     <item name="reader_pending_scroll_to_top" type="id" />
+    <item name="reader_pending_code_source_offset" type="id" />
     <!-- 打开书/书签：首帧 draw 前按源码位置+预览 snap，避免先露出窗口开头再跳 -->
     <item name="reader_pending_snap_restore" type="id" />
 </resources>

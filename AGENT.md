@@ -135,7 +135,21 @@ adb shell am instrument -w -r \
 - 表格单元格由 `ReaderTableRowSpan`（ReplacementSpan）内部 `StaticLayout` 绘制，外层取不到链接；
   表格内链接必须走 `ReaderTableLinkTouch`（按 Markwon 绘制原点换算进单元格）。
 
-### 6.4 其它
+### 6.4 代码文件阅读（大纲 / 折叠 / 历史）
+
+- 代码文档是**单个 `ReaderScrollableCodeBlockSpan`**，文本只有一个 `\uFFFC` 占位符：
+  任何「按字符偏移」的定位/进度对代码都无效，必须走源码偏移。
+- 滚动位置：`SafeReaderTextView.fullScreenCodeViewportSourceOffsets()` 给出可视区源码偏移；
+  恢复用 `scrollFullScreenCodeToSourceOffset()` / `applyPendingCodeSourceOffset()`。
+- `onLayout` 只在**宽度变化**（旋转/分屏）时按源码锚点还原，否则任何布局都会把滚动位置拉回去。
+- 打开时的恢复目标要在 init 窗口 effect 里先存到 `codeRestoreTarget`（该 effect 会清掉 VM 的
+  `pendingRestoreGlobalChar`，晚读就拿不到目标）。
+- 大纲：`CodeOutlineParser` + `tocEntries`（`offsetOfLine` 换算偏移），点击走 `scrollFullScreenCodeToSourceOffset`。
+- 折叠：`CodeFoldTransformer` 生成「显示文本 + 行/偏移映射」，折叠区渲染成「⋯ 已折叠 N 行」；
+  保存进度用 `displayOffsetToSourceOffset`，恢复/跳转用 `sourceOffsetToDisplayOffset`。
+  折叠时隐藏行号（显示行号会与源码行号错位）。
+
+### 6.5 其它
 
 - 「标记为已读完」提示必须等用户真实翻页/滑动后才允许弹（短文档打开即到底，不能一进来就弹）。
 - 章节名/目录 offset 用全书坐标；`visibleChapterOffset` 只存全书 offset。

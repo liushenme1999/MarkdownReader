@@ -78,6 +78,7 @@ import space.liushenme.markdownreader.importing.ImportedBookFormat
 import space.liushenme.markdownreader.importing.HtmlDocumentSupport
 import space.liushenme.markdownreader.importing.ParsedBookStorage
 import space.liushenme.markdownreader.importing.PdfReaderContent
+import space.liushenme.markdownreader.markdown.CodeFoldTransformer
 import space.liushenme.markdownreader.markdown.CodeOutline
 import space.liushenme.markdownreader.markdown.CodeOutlineParser
 import space.liushenme.markdownreader.markdown.CodeHighlightTheme
@@ -208,6 +209,27 @@ fun ReaderScreen(
             null
         }
     }
+    // 代码折叠：以「源码起始行」为 key，按目录里的函数粒度折叠/展开。
+    var collapsedCodeStartLines by remember(bookId) { mutableStateOf<Set<Int>>(emptySet()) }
+    // 打开代码文件时算出的恢复目标：init 窗口的 effect 会清掉 VM 的 pending 目标，
+    // 这里先存一份，供代码书自己的源码锚点恢复使用。
+    var codeRestoreTarget by remember(bookId, readerLoadEpoch) { mutableStateOf<Int?>(null) }
+    val foldedCodeSource = remember(readerContent, codeOutline, collapsedCodeStartLines, isCodeBook) {
+        if (!isCodeBook) {
+            null
+        } else {
+            codeOutline?.let {
+                CodeFoldTransformer.transform(readerContent, it, collapsedCodeStartLines)
+            }
+        }
+    }
+    val codeDisplayContent = foldedCodeSource?.text ?: readerContent
+    // 折叠后显示行号会与实际源码行号错位：有折叠时隐藏行号，避免误导。
+    val renderCodeLineNumbers = codeLineNumbers && collapsedCodeStartLines.isEmpty()
+    fun codeDisplayToSourceOffset(displayOffset: Int): Int =
+        foldedCodeSource?.displayOffsetToSourceOffset(displayOffset) ?: displayOffset
+    fun codeSourceToDisplayOffset(sourceOffset: Int): Int =
+        foldedCodeSource?.sourceOffsetToDisplayOffset(sourceOffset) ?: sourceOffset
     val codeBreadcrumbLine = remember(bookId, readerContent) { mutableIntStateOf(1) }
     val pdfPages = remember(readerContent, isPdfBook, bookId) {
         if (!isPdfBook) {
@@ -284,14 +306,28 @@ fun ReaderScreen(
         structuredToc,
         isPdfBook,
         isCodeBook,
+        codeOutline,
         context,
     ) {
+        if (isCodeBook) {
+            // 代码大纲：与 VS Code 的 Outline 一致，按 class/函数声明层级生成可跳转目录。
+            val outline: CodeOutline = codeOutline ?: return@remember emptyList()
+            return@remember outline.definitions.mapNotNull { definition ->
+                val title = definition.text.trim()
+                if (title.isEmpty()) return@mapNotNull null
+                MarkdownTocEntry(
+                    level = (definition.depth + 1).coerceIn(1, 6),
+                    title = title,
+                    sourceOffset = outline.offsetOfLine(definition.startLine),
+                    rawTitle = title,
+                )
+            }
+        }
         if (isPdfBook) {
             return@remember PdfReaderContent.tocEntriesFromBody(readerContent, context).map {
                 MarkdownTocEntry(level = it.level, title = it.title, sourceOffset = it.sourceOffset, rawTitle = it.rawTitle)
             }
         }
-        if (isCodeBook) return@remember emptyList()
         val stored = structuredToc.orEmpty()
         when {
             // ViewModel 打开时已按最终正文对齐过 sourceOffset；空则现场解析。
@@ -590,7 +626,7 @@ fun ReaderScreen(
             codeBlockWrap = codeBlockWrap,
             codeHighlightTheme = codeHighlightTheme,
             codeBlockLanguage = codeBlockLanguage,
-            codeLineNumbers = codeLineNumbers,
+            codeLineNumbers = renderCodeLineNumbers,
         )
         stashPendingSavedPositionSnap(
             readerTextView.value,
@@ -608,7 +644,14 @@ fun ReaderScreen(
         )
     }
 
-    val displayedContent = remember(readerContent, displayWindowStartChar, displayWindowEndChar) {
+    val displayedContent = remember(
+        readerContent,
+        displayWindowStartChar,
+        displayWindowEndChar,
+        codeDisplayContent,
+        isCodeBook,
+    ) {
+        if (isCodeBook) return@remember codeDisplayContent
         when {
             readerContent.isEmpty() -> ""
             displayWindowStartChar >= readerContent.length -> ""
@@ -1015,6 +1058,7 @@ fun ReaderScreen(
                 (readerTextView.value as? SafeReaderTextView)
                     ?.fullScreenCodeViewportSourceOffsets()
                     ?.top
+                    ?.let { codeDisplayToSourceOffset(it) }
                     ?: 0
             } else {
                 0
@@ -1099,11 +1143,13 @@ fun ReaderScreen(
             null
         }
         val estimated = codeViewport?.let {
-            (displayWindowStartChar + it.top).coerceIn(0, readerContent.length)
+            (displayWindowStartChar + codeDisplayToSourceOffset(it.top))
+                .coerceIn(0, readerContent.length)
         } ?: currentTopGlobalChar() ?: return
         refreshCodeBreadcrumbLine(knownGlobalSourceOffset = estimated)
         val bottom = codeViewport?.let {
-            (displayWindowStartChar + it.bottom).coerceIn(estimated, readerContent.length)
+            (displayWindowStartChar + codeDisplayToSourceOffset(it.bottom))
+                .coerceIn(estimated, readerContent.length)
         } ?: currentBottomGlobalChar()
         viewModel.updateVisibleReadingProgress(
             estimated,
@@ -1150,7 +1196,7 @@ fun ReaderScreen(
             codeBlockWrap = codeBlockWrap,
             codeHighlightTheme = codeHighlightTheme,
             codeBlockLanguage = codeBlockLanguage,
-            codeLineNumbers = codeLineNumbers,
+            codeLineNumbers = renderCodeLineNumbers,
         )
     }
 
@@ -1196,7 +1242,7 @@ fun ReaderScreen(
             codeBlockWrap = codeBlockWrap,
             codeHighlightTheme = codeHighlightTheme,
             codeBlockLanguage = codeBlockLanguage,
-            codeLineNumbers = codeLineNumbers,
+            codeLineNumbers = renderCodeLineNumbers,
         )
         viewModel.setFinishPromptEnabled(true)
         viewModel.onDocumentEndChanged(reachedEndForChar(charPos))
@@ -1383,6 +1429,32 @@ fun ReaderScreen(
         tv.post { refreshCodeBreadcrumbLine(force = true) }
     }
 
+    // 代码文件的「上次阅读位置」：源码是单个 ReplacementSpan，普通字符 offset 恢复对它无效，
+    // 必须等 span 排版就绪后按源码锚点滚动一次。
+    LaunchedEffect(
+        bookId,
+        readerLoadEpoch,
+        isCodeBook,
+        readerContent,
+        coverUntilPositionRestore,
+        readerTextView.value,
+    ) {
+        if (!isCodeBook || readerContent.isEmpty() || coverUntilPositionRestore) {
+            return@LaunchedEffect
+        }
+        val sourceTarget = codeRestoreTarget ?: return@LaunchedEffect
+        val target = codeSourceToDisplayOffset(sourceTarget)
+        val tv = readerTextView.value as? SafeReaderTextView ?: return@LaunchedEffect
+        tv.setPendingCodeSourceOffset(target)
+        repeat(40) {
+            if (tv.applyPendingCodeSourceOffset()) {
+                publishVisibleReadingProgress()
+                return@LaunchedEffect
+            }
+            delay(50)
+        }
+    }
+
     LaunchedEffect(showTopBar) {
         scrollAccumForHideChrome[0] = 0
     }
@@ -1446,6 +1518,7 @@ fun ReaderScreen(
         pendingScrollRestorePdfPageIndex = null
         pendingScrollRestoreBookmarkPreview = viewModel.readingPreviewForRestore()
         pendingScrollRestoreHighlightId = null
+        if (isCodeBook) codeRestoreTarget = targetChar
         viewModel.clearPendingRestoreChar()
         stashSavedPositionSnapForPendingRestore(
             sourceOffset = targetChar,
@@ -2236,7 +2309,8 @@ fun ReaderScreen(
                                                         null
                                                     }
                                                     val codeTop = codeViewport?.let {
-                                                        (displayWindowStartChar + it.top)
+                                                        (displayWindowStartChar +
+                                                            codeDisplayToSourceOffset(it.top))
                                                             .coerceIn(0, readerContent.length)
                                                     }
                                                     if (refreshBreadcrumb) {
@@ -2249,6 +2323,7 @@ fun ReaderScreen(
                                                     } else {
                                                         null
                                                     }
+
                                                     if (estimated != null) {
                                                         // 窗口模式：接近窗口末尾时异步追加下一批正文
                                                         viewModel.appendTxtWindowIfNeeded(estimated)
@@ -2256,7 +2331,8 @@ fun ReaderScreen(
                                                             lastScrollTopGlobalChar[0] = estimated
                                                             lastCodeViewportPublishMs[0] = now
                                                             val bottom = codeViewport?.let {
-                                                                (displayWindowStartChar + it.bottom)
+                                                                (displayWindowStartChar +
+                                                                    codeDisplayToSourceOffset(it.bottom))
                                                                     .coerceIn(estimated, readerContent.length)
                                                             } ?: currentBottomGlobalChar()
                                                             viewModel.updateVisibleReadingProgress(
@@ -2337,7 +2413,7 @@ fun ReaderScreen(
                                             codeBlockWrap = codeBlockWrap,
                                             codeHighlightTheme = codeHighlightTheme,
                                             codeBlockLanguage = codeBlockLanguage,
-                                            codeLineNumbers = codeLineNumbers,
+                                            codeLineNumbers = renderCodeLineNumbers,
                                             onOpenPositionReady = ::onReaderOpenPositionReady,
                                         )
                                     } else {
@@ -2410,7 +2486,7 @@ fun ReaderScreen(
                                                 codeBlockWrap = codeBlockWrap,
                                                 codeHighlightTheme = codeHighlightTheme,
                                                 codeBlockLanguage = codeBlockLanguage,
-                                                codeLineNumbers = codeLineNumbers,
+                                                codeLineNumbers = renderCodeLineNumbers,
                                                 userScrollEnabled = !pdfPageZoomed,
                                             )
                                         }
@@ -2526,7 +2602,7 @@ fun ReaderScreen(
                 codeBlockWrap = codeBlockWrap,
                 codeHighlightTheme = codeHighlightTheme,
                 codeBlockLanguage = codeBlockLanguage,
-                codeLineNumbers = codeLineNumbers,
+                codeLineNumbers = renderCodeLineNumbers,
             )
         } else if (navigationPlan is ReaderNavigationPlan.PdfVertical) {
             pendingScrollRestoreGlobalChar = null
@@ -2751,7 +2827,43 @@ fun ReaderScreen(
         },
         onDeleteBookmark = { viewModel.dispatch(ReaderEvent.DeleteBookmark(it)) },
         onDeleteHighlight = { viewModel.dispatch(ReaderEvent.DeleteHighlight(it)) },
+        isTocEntryFoldable = { entry -> isCodeBook && codeOutline != null },
+        isTocEntryFolded = { entry ->
+            val line = codeOutline?.lineAtOffset(entry.sourceOffset) ?: 0
+            line in collapsedCodeStartLines
+        },
+        onToggleTocFold = { entry ->
+            val line = codeOutline?.lineAtOffset(entry.sourceOffset) ?: 0
+            if (line > 0) {
+                collapsedCodeStartLines = if (line in collapsedCodeStartLines) {
+                    collapsedCodeStartLines - line
+                } else {
+                    collapsedCodeStartLines + line
+                }
+            }
+        },
         onTocEntryClick = tocJump@{ entry ->
+            if (isCodeBook) {
+                // 代码大纲跳转：源码是单个 ReplacementSpan，普通字符 offset 不适用，
+                // 直接按行锚点滚动；渲染未就绪时短暂重试。
+                viewModel.clearPendingRestoreChar()
+                showToc = false
+                if (immersiveReading) showTopBar = false
+                val target = entry.sourceOffset.coerceIn(0, (readerContent.length - 1).coerceAtLeast(0))
+                viewModel.updateReadingProgressAtChar(
+                    target,
+                    reachedEnd = reachedEndForChar(target),
+                )
+                val displayTarget = codeSourceToDisplayOffset(target)
+                scope.launch {
+                    val tv = readerTextView.value as? SafeReaderTextView ?: return@launch
+                    repeat(20) {
+                        if (tv.scrollFullScreenCodeToSourceOffset(displayTarget)) return@launch
+                        delay(50)
+                    }
+                }
+                return@tocJump
+            }
             // 窗口模式：目标章节可能不在当前已加载的窗口内。直接 clamp 会落到窗口末页，
             // 表现为「跳到后面的章节后只能往前翻、翻不到下一页」。这里先重载窗口再跳。
             val windowBase = uiState.windowStartChar
@@ -2830,7 +2942,7 @@ fun ReaderScreen(
                         codeBlockWrap = codeBlockWrap,
                         codeHighlightTheme = codeHighlightTheme,
                         codeBlockLanguage = codeBlockLanguage,
-                        codeLineNumbers = codeLineNumbers,
+                        codeLineNumbers = renderCodeLineNumbers,
                     )
                 } else if (navigationPlan is ReaderNavigationPlan.PdfVertical) {
                     pendingScrollRestoreGlobalChar = null

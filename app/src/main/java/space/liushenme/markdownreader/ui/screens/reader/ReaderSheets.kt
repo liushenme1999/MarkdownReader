@@ -519,6 +519,9 @@ internal fun TocSheet(
     currentEntry: MarkdownTocEntry? = null,
     onEntryClick: (MarkdownTocEntry) -> Unit,
     onDismiss: () -> Unit,
+    isFoldable: ((MarkdownTocEntry) -> Boolean)? = null,
+    isFolded: ((MarkdownTocEntry) -> Boolean)? = null,
+    onToggleFold: ((MarkdownTocEntry) -> Unit)? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val listState = rememberLazyListState()
@@ -596,6 +599,21 @@ internal fun TocSheet(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f)
                             )
+                            if (onToggleFold != null && isFoldable?.invoke(entry) == true) {
+                                val folded = isFolded?.invoke(entry) == true
+                                Text(
+                                    text = stringResource(
+                                        if (folded) R.string.reader_code_fold_expand
+                                        else R.string.reader_code_fold_collapse,
+                                    ),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable { onToggleFold(entry) }
+                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                )
+                            }
                         }
                         if (index < entries.lastIndex) {
                             HorizontalDivider(

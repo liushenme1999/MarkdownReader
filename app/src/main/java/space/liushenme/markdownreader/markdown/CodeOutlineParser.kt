@@ -37,6 +37,13 @@ class CodeOutline internal constructor(
     fun pathAtOffset(offset: Int): List<CodeDefinition> =
         pathAtLine(lineAtOffset(offset))
 
+    /** 1-based 行号对应的源码字符偏移（行首）。越界时夹到首/末行。 */
+    fun offsetOfLine(line: Int): Int {
+        if (lineStarts.isEmpty()) return 0
+        val index = (line - 1).coerceIn(0, lineStarts.lastIndex)
+        return lineStarts[index]
+    }
+
     /** Returns a 1-based line number for [offset]. */
     fun lineAtOffset(offset: Int): Int {
         if (lineStarts.isEmpty()) return 1
