@@ -133,4 +133,25 @@ class ReaderSettingsRepositoryTest {
         const val CODE_HIGHLIGHT_THEME_KEY = "reader_code_highlight_theme@markdown"
         const val CODE_LINE_NUMBERS_KEY = "reader_code_line_numbers@markdown"
     }
+
+    @Test
+    fun showTocInLandscape_isIndependentPerFormatAndFallsBackToLegacyKey() = runBlocking {
+        repository.setShowTocInLandscapeFor(ReadingFormatProfile.PLAIN_TEXT, false)
+        repository.setShowTocInLandscapeFor(ReadingFormatProfile.MARKDOWN, true)
+
+        val fresh = ReaderSettingsRepository(context)
+        assertTrue(fresh.showTocInLandscapeFor(ReadingFormatProfile.MARKDOWN).first())
+        assertFalse(fresh.showTocInLandscapeFor(ReadingFormatProfile.PLAIN_TEXT).first())
+        // 未单独设置过的格式沿用默认值
+        assertTrue(fresh.showTocInLandscapeFor(ReadingFormatProfile.HTML).first())
+
+        // 旧全局键作为回退：存量用户升级后各格式沿用升级前的选择
+        readerPreferencesDataStore(context).edit { prefs ->
+            prefs[booleanPreferencesKey("reader_show_toc_in_landscape")] = false
+        }
+        val migrated = ReaderSettingsRepository(context)
+        assertFalse(migrated.showTocInLandscapeFor(ReadingFormatProfile.CODE).first())
+        // 已显式设置过的格式不受旧全局键影响
+        assertTrue(migrated.showTocInLandscapeFor(ReadingFormatProfile.MARKDOWN).first())
+    }
 }

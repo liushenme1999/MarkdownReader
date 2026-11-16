@@ -69,6 +69,7 @@ class ReaderSettingsRepository @Inject constructor(
         val codeBlockWrap = booleanPreferencesKey(KEY_CODE_BLOCK_WRAP.name + suffix)
         val codeLineNumbers = booleanPreferencesKey(KEY_CODE_LINE_NUMBERS.name + suffix)
         val codeHighlightTheme = stringPreferencesKey(KEY_CODE_HIGHLIGHT_THEME.name + suffix)
+        val showTocInLandscape = booleanPreferencesKey(KEY_SHOW_TOC_IN_LANDSCAPE.name + suffix)
     }
 
     private val formatPrefKeys: Map<ReadingFormatProfile, FormatPrefKeys> =
@@ -177,9 +178,16 @@ class ReaderSettingsRepository @Inject constructor(
     }
 
     /** 横屏阅读时是否显示左侧目录栏；默认开启，竖屏布局不会使用该开关。 */
-    val showTocInLandscape: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[KEY_SHOW_TOC_IN_LANDSCAPE] ?: DEFAULT_SHOW_TOC_IN_LANDSCAPE
-    }
+    /** 横屏目录栏：按文件格式独立保存（旧全局键作为回退，存量用户沿用升级前选择）。 */
+    fun showTocInLandscapeFor(profile: ReadingFormatProfile): Flow<Boolean> =
+        dataStore.data.map { prefs ->
+            val k = formatPrefKeys.getValue(profile)
+            prefs[k.showTocInLandscape]
+                ?: prefs[KEY_SHOW_TOC_IN_LANDSCAPE]
+                ?: DEFAULT_SHOW_TOC_IN_LANDSCAPE
+        }
+
+    val showTocInLandscape: Flow<Boolean> = withProfile { showTocInLandscapeFor(it) }
 
     /** 上次选用的划线颜色 ARGB；缺省为默认黄。 */
     val lastHighlightColorArgb: Flow<Int> = dataStore.data.map { prefs ->
@@ -325,10 +333,15 @@ class ReaderSettingsRepository @Inject constructor(
         }
     }
 
-    suspend fun setShowTocInLandscape(show: Boolean) {
+    suspend fun setShowTocInLandscapeFor(profile: ReadingFormatProfile, show: Boolean) {
         dataStore.edit { prefs ->
-            prefs[KEY_SHOW_TOC_IN_LANDSCAPE] = show
+            prefs[formatPrefKeys.getValue(profile).showTocInLandscape] = show
         }
+    }
+
+    /** 写入「当前阅读档位」的横屏目录栏开关。 */
+    suspend fun setShowTocInLandscape(show: Boolean) {
+        setShowTocInLandscapeFor(activeProfile(), show)
     }
 
     suspend fun setLastHighlightPreference(colorArgb: Int, style: HighlightStyle) {
