@@ -1216,7 +1216,10 @@ fun ReaderScreen(
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.currentPageOffsetFraction != 0f }
             .collect { dragging ->
-                if (dragging) viewModel.clearPendingRestoreChar()
+                if (dragging) {
+                    viewModel.clearPendingRestoreChar()
+                    viewModel.notifyUserInteraction()
+                }
             }
     }
 
@@ -2041,6 +2044,7 @@ fun ReaderScreen(
             }
                         // 长按选区走系统复制/全选菜单，不在此弹出划线顶栏。
                         val onReaderVerticalScroll: (Int) -> Unit = { deltaPx ->
+                            if (deltaPx > 0) viewModel.notifyUserInteraction()
                             if (immersiveReading && showTopBar) {
                                 scrollAccumForHideChrome[0] += deltaPx
                                 if (scrollAccumForHideChrome[0] >= hideChromeScrollThresholdPx) {

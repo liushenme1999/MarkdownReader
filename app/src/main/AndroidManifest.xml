@@ -43,24 +43,14 @@
             </intent-filter>
 
             <!-- 文件管理器 / 其他应用：用其他应用打开。
-                 不再逐个枚举 MIME：不同 ROM 把 .kt/.go/.rs/.sh/.yaml 报成 text/*、
-                 application/* 甚至 application/octet-stream，逐个声明会漏。
-                 统一按 text/* + 常见 application 类型收口，真正的格式判定由扩展名白名单完成。 -->
+                 不按 MIME 枚举：实测同一批源码文件会被不同 ROM 报成 null / video/mp2ts /
+                 application/rls-services+xml，任何白名单都会漏。这里收 */*，
+                 真正的可读性由 BookImportSupport 按扩展名判定，误选会提示「不支持该格式」。 -->
             <intent-filter android:label="@string/open_with_label">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="content" />
-                <data android:mimeType="text/*" />
-                <data android:mimeType="application/pdf" />
-                <data android:mimeType="application/json" />
-                <data android:mimeType="application/xml" />
-                <data android:mimeType="application/yaml" />
-                <data android:mimeType="application/x-yaml" />
-                <data android:mimeType="application/toml" />
-                <data android:mimeType="application/ini" />
-                <data android:mimeType="application/javascript" />
-                <data android:mimeType="application/typescript" />
-                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="*/*" />
             </intent-filter>
             <!-- 分享到本应用 -->
             <intent-filter android:label="@string/open_with_label">
@@ -77,6 +67,10 @@
                 <data android:mimeType="application/javascript" />
                 <data android:mimeType="application/typescript" />
                 <data android:mimeType="application/octet-stream" />
+                <!-- 部分 ROM 把 .ts 报成 video/mp2ts、.rs 报成 rls-services+xml -->
+                <data android:mimeType="video/mp2t" />
+                <data android:mimeType="video/mp2ts" />
+                <data android:mimeType="application/rls-services+xml" />
             </intent-filter>
         </activity>
     </application>

@@ -835,6 +835,11 @@ class ReaderViewModel @Inject constructor(
         session.onDocumentEndChanged(atEnd)
     }
 
+    /** 用户真实翻页/滑动后调用：允许在到达书末时提示「标记为已读完」。 */
+    fun notifyUserInteraction() {
+        session.markUserInteraction()
+    }
+
     fun markAsFinished() {
         val contentLen = effectiveTotalChars()
         if (contentLen <= 0) return

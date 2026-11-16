@@ -8,23 +8,13 @@ import java.net.URI
 object BookImportSupport {
 
     /**
-     * 系统文件选择器 MIME 过滤：Markdown / TXT / PDF / HTML + 常见源码文件。
-     * 不含 application/octet-stream，避免其它二进制文件混入列表；目录仍可正常浏览进入。
-     * 代码文件扩展名与语言映射见 [CodeFileLanguage]（单一清单来源）。
+     * 文件选择器不再按 MIME 过滤：不同 ROM 对同一扩展名给出的 MIME 完全不可靠。
+     * 实测（Android 15 / MIUI）：
+     *   .kt / .go / .swift → null，.ts → video/mp2ts，.rs → application/rls-services+xml
+     * 任何白名单都会漏，漏掉的表现就是「文件在选择器里灰掉/不显示，导入不了」。
+     * 选择后由 [isUnsupportedPick] 按扩展名白名单判定，非书籍文件会得到「不支持该格式」提示。
      */
-    val importMimeTypes: Array<String> = arrayOf(
-        "text/markdown",
-        "text/x-markdown",
-        "text/plain",
-        "application/pdf",
-        "text/html",
-        "text/x-html",
-        *CodeFileLanguage.importMimeTypes,
-        // 兜底：Android 无法识别的扩展名（.kt/.go/.rs/.sh/.yaml…）常被系统报成
-        // application/octet-stream。不放行这一项时，系统文件选择器会把这些文件置灰/隐藏，
-        // 表现为「明明有文件却选不中 / 导入不了」。真正是否可导入仍由扩展名白名单判定。
-        "application/octet-stream",
-    )
+    val importMimeTypes: Array<String> = arrayOf("*/*")
 
     private val SUPPORTED_EXTENSIONS = setOf(
         "md", "markdown", "mdown", "mkd",
@@ -62,10 +52,14 @@ object BookImportSupport {
      */
     fun isUnsupportedPick(fileName: String?, mime: String?): Boolean {
         val ext = fileName?.substringAfterLast('.', "")?.trim()?.lowercase().orEmpty()
+        // 扩展名是唯一可靠的判定依据：白名单内一律放行（哪怕系统报成 video/*、null）。
         if (ext in SUPPORTED_EXTENSIONS) return false
+        if (ext.isNotEmpty()) return true
+        // 无扩展名（README 之类）：只有明确声明是文本类才放行
         val normalizedMime = mime?.lowercase()?.trim().orEmpty()
-        if (ext.isEmpty()) return false
-        return normalizedMime.isEmpty() || normalizedMime == "application/octet-stream"
+        return !(normalizedMime.contains("markdown") ||
+            normalizedMime.contains("plain") ||
+            normalizedMime.contains("html"))
     }
 
     fun detectFormat(fileName: String?, mime: String?): ImportedBookFormat {

@@ -17,12 +17,13 @@ class ImportPickerCompatibilityTest {
     )
 
     @Test
-    fun pickerAcceptsOctetStreamForUnknownTypedSourceFiles() {
+    fun pickerDoesNotFilterByMimeSoRomQuirksCannotHideFiles() {
+        // 实测 .ts → video/mp2ts、.rs → application/rls-services+xml、.kt → null，
+        // 任何 MIME 白名单都会漏，因此选择器必须放开为 */*，由扩展名兜底。
         assertTrue(
-            "缺少 application/octet-stream 兜底，未知 MIME 的源码文件无法选中",
-            "application/octet-stream" in BookImportSupport.importMimeTypes,
+            "选择器仍在按 MIME 过滤，ROM 报错 MIME 的文件会被隐藏",
+            "*/*" in BookImportSupport.importMimeTypes,
         )
-        assertTrue("text/* 未覆盖", "text/plain" in BookImportSupport.importMimeTypes)
     }
 
     @Test
@@ -36,6 +37,13 @@ class ImportPickerCompatibilityTest {
                 "$ext 被误判为不可导入（picker 已放开 octet-stream=$hasOctet）",
                 BookImportSupport.isUnsupportedPick(name, "application/octet-stream"),
             )
+            // 真实设备上出现过的「错误 MIME」也必须放行
+            for (mime in listOf(null, "video/mp2ts", "application/rls-services+xml", "text/plain")) {
+                assertFalse(
+                    "$ext 在 MIME=$mime 下被误判为不可导入",
+                    BookImportSupport.isUnsupportedPick(name, mime),
+                )
+            }
             assertTrue("$ext 未识别为源码", BookImportSupport.detectFormat(name, null).isCode)
         }
     }
@@ -49,6 +57,10 @@ class ImportPickerCompatibilityTest {
         assertTrue(
             "无 MIME 的未知扩展名应拒绝",
             BookImportSupport.isUnsupportedPick("data.bin", null),
+        )
+        assertTrue(
+            "压缩包应拒绝",
+            BookImportSupport.isUnsupportedPick("archive.zip", "application/zip"),
         )
         assertFalse(
             "无扩展名但声明 text/plain 仍允许",

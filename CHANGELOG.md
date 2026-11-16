@@ -11,6 +11,9 @@
 - 部分源码文件在系统文件选择器里置灰/不可选，导入不了：Android 对 `.kt/.go/.rs/.sh/.yaml` 等扩展名常报成 `application/octet-stream`，导入白名单缺少这一项。现已补上兜底，并补齐 `text/x-sh`、`text/x-shellscript`、`application/x-shellscript`、`application/yaml`、`text/yaml`、`application/x-toml`、`application/x-typescript` 等常见别名
 - 文件管理器「用其他应用打开」对源码文件不出现本应用：菜单里逐个枚举 MIME 会漏，改为按 `text/*` + 常见 `application/*` 类型收口，格式是否可读仍由扩展名白名单判定
 - 放开 `octet-stream` 后误选 APK/压缩包会被当作文本导入：新增 `isUnsupportedPick` 拦截，改为提示「不支持该格式」
+- 文件选择器不再按 MIME 过滤（改为 `*/*` + 扩展名白名单）：实测同一批源码文件会被系统报成 `null` / `video/mp2ts` / `application/rls-services+xml`，任何 MIME 白名单都会漏
+- 「用其他应用打开」对源码文件不出现本应用：`VIEW` 过滤器改为 `*/*`，是否可读由扩展名判定；`SEND` 补齐 `video/mp2ts`、`application/rls-services+xml` 等 ROM 异常 MIME
+- 打开一页读完的短文档（源码/说明页）立刻弹「标记为已读完」：改为只有用户真正翻页/滑动到结尾才提示
 
 ### 测试
 

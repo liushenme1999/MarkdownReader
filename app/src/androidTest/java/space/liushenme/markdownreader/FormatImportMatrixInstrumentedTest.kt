@@ -28,15 +28,18 @@ import space.liushenme.markdownreader.importing.PdfReaderContent
 class FormatImportMatrixInstrumentedTest {
 
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
+    /** 被测应用上下文（真实 ContentResolver / PdfRenderer / 缓存目录）。 */
     private val context: Context = instrumentation.targetContext
+    /** 测试 APK 上下文：样本文件打在 androidTest 的 assets 里。 */
+    private val testContext: Context = instrumentation.context
 
     private fun samples(): List<String> {
-        val names = requireNotNull(context.assets.list("samples")) { "samples missing" }
+        val names = requireNotNull(testContext.assets.list("samples")) { "samples missing" }
         return names.filter { !it.startsWith(".") }.sorted()
     }
 
     private fun readSample(name: String): ByteArray =
-        context.assets.open("samples/$name").use { it.readBytes() }
+        testContext.assets.open("samples/$name").use { it.readBytes() }
 
     /** 与系统文件选择器一致的 MIME 推断（部分扩展名无法识别时为 null）。 */
     private fun systemMimeOf(name: String): String? {
@@ -106,9 +109,15 @@ class FormatImportMatrixInstrumentedTest {
                             failures += "$name: 代码语言未识别"
                         } else {
                             // 代码正文必须原样保留（换行、缩进、长行）
-                            assertTrue("$name: 代码正文被裁剪", body.length > bytes.size / 4)
-                            assertTrue("$name: 代码缩进丢失", body.contains("    ") || body.contains("\t"))
-                            val firstLine = bytes.decodeToString().lineSequence().first { it.isNotBlank() }
+                            val raw = bytes.decodeToString()
+                            assertTrue("$name: 代码正文被裁剪", body.length > raw.length * 0.9)
+                            if (raw.contains("    ") && !body.contains("    ")) {
+                                failures += "$name: 代码缩进丢失"
+                            }
+                            if (raw.contains("\t") && !body.contains("\t")) {
+                                failures += "$name: 代码制表符丢失"
+                            }
+                            val firstLine = raw.lineSequence().first { it.isNotBlank() }
                             if (firstLine.isNotBlank() && !body.contains(firstLine.take(20))) {
                                 failures += "$name: 代码首行内容不匹配"
                             }

@@ -34,12 +34,32 @@ class ReaderSessionControllerTest {
         assertFalse(controller.showMarkFinishedPrompt.value)
 
         controller.setFinishPromptEnabled(true)
+        // 打开即到底（短文档）不算用户读到底：不能一进来就弹「标记为已读完」
+        assertFalse(controller.showMarkFinishedPrompt.value)
+
+        controller.markUserInteraction()
         assertTrue(controller.showMarkFinishedPrompt.value)
 
         controller.dismissFinishPrompt()
         assertFalse(controller.showMarkFinishedPrompt.value)
         controller.onDocumentEndChanged(true)
         assertFalse(controller.showMarkFinishedPrompt.value)
+    }
+
+    @Test
+    fun documentAtEnd_doesNotPromptUntilUserInteracts() {
+        val controller = ReaderSessionController()
+        controller.restoreBookState(0.5f, 500, 1_000, "")
+        controller.setFinishPromptEnabled(true)
+
+        // 打开时视口就在结尾，但用户还没动过：不能立刻弹
+        controller.onDocumentEndChanged(true)
+        controller.updateVisibleProgress(900, reachedEnd = true, bottomChar = 1_000, contentLength = 1_000)
+        assertFalse("未交互就弹已读完", controller.showMarkFinishedPrompt.value)
+
+        // 用户真正操作后（翻页/滑动）才允许提示
+        controller.markUserInteraction()
+        assertTrue("用户操作后应提示", controller.showMarkFinishedPrompt.value)
     }
 
     @Test

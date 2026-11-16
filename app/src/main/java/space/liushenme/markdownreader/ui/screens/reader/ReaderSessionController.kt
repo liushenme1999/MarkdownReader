@@ -42,6 +42,13 @@ internal class ReaderSessionController(
     private var finishedLatch = false
     private var finishPromptDismissedThisSession = false
     private var finishPromptEnabled = false
+
+    /**
+     * 本会话内用户是否真正翻过页/滑动过。
+     * 短文档（一页读完的代码文件、说明页）打开即「到底」，不应立刻弹「标记为已读完」，
+     * 否则看起来像打开就出错。只有用户自己翻/滑到结尾才提示。
+     */
+    private var userInteractedThisSession = false
     val canPersistProgress: Boolean
         get() = finishPromptEnabled
 
@@ -58,6 +65,7 @@ internal class ReaderSessionController(
         lastKnownReachedEnd = false
         finishedLatch = false
         finishPromptDismissedThisSession = false
+        userInteractedThisSession = false
         finishPromptEnabled = false
     }
 
@@ -151,6 +159,11 @@ internal class ReaderSessionController(
         return snapshot(contentLength)
     }
 
+    fun markUserInteraction() {
+        userInteractedThisSession = true
+        maybeShowMarkFinishedPrompt()
+    }
+
     fun setFinishPromptEnabled(enabled: Boolean) {
         finishPromptEnabled = enabled
         if (enabled) maybeShowMarkFinishedPrompt() else _showMarkFinishedPrompt.value = false
@@ -225,6 +238,7 @@ internal class ReaderSessionController(
     }
 
     private fun maybeShowMarkFinishedPrompt() {
+        if (!userInteractedThisSession) return
         if (!finishPromptEnabled || !lastKnownReachedEnd || finishPromptDismissedThisSession) return
         if (finishedLatch || _readingProgress.value.isFinishedReading()) return
         _showMarkFinishedPrompt.value = true
