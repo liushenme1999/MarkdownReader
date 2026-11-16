@@ -1303,6 +1303,10 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
+    fun setShowTocInLandscape(show: Boolean) {
+        viewModelScope.launch { readerSettingsRepository.setShowTocInLandscape(show) }
+    }
+
     fun setCodeBlockWrap(enabled: Boolean) {
         viewModelScope.launch {
             readerSettingsRepository.setCodeBlockWrap(enabled)

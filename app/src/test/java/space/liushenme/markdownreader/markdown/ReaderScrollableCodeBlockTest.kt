@@ -1348,4 +1348,33 @@ class ReaderScrollableCodeBlockTest {
             assertEquals(expectedHeight, span.requiredHeightForTest(paint))
         }
     }
+
+    @Test
+    fun wrapOff_scrollMaxUsesHostWidthNotApproximateViewport() {
+        val context = RuntimeEnvironment.getApplication()
+        ReaderCodeBlockSettings.wrapEnabled = false
+        // 近似视口（屏幕宽）比代码块实际绘制宽度大：旧实现用它算上限，导致右侧文字被裁。
+        ReaderCodeBlockSettings.viewportWidthPx = 1000
+        val markwon = ReaderMarkwonFactory.create(context)
+        val longLine = "val x = " + "abcdefghij".repeat(60)
+        val rendered = markwon.toMarkdown("```kotlin\n$longLine\n```")
+        val span = rendered.getSpans(0, rendered.length, ReaderScrollableCodeBlockSpan::class.java).single()
+        val paint = Paint().apply { textSize = 40f }
+        span.prepareForTouch(paint, 800)
+
+        val max = span.maxScrollX()
+        assertTrue("max must be positive", max > 0)
+        // 用宿主实宽计算的上限必须比用近似视口算出的大，否则右侧会裁字。
+        assertTrue(
+            "host-width max=$max should exceed approximated max",
+            max > span.maxScrollXForApproximateViewportForTest(),
+        )
+        // 滚到最右后，最长一行的右端必须落在可视宽度之内。
+        assertTrue(span.scrollBy(max.toFloat()))
+        assertEquals(max, span.scrollX)
+        assertTrue(
+            "right edge still clipped: scrollX=${span.scrollX} + host=800 < lineWidth",
+            span.scrollX + 800 >= span.maxLineWidthForTest(),
+        )
+    }
 }

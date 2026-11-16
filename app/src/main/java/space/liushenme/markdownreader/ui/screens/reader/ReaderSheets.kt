@@ -187,6 +187,7 @@ internal fun ReaderSettingsSheet(
     codeHighlightTheme: CodeHighlightTheme,
     readingProfile: ReadingFormatProfile,
     hideSystemBars: Boolean,
+    showTocInLandscape: Boolean,
     pageTurnMode: ReaderPageTurnMode,
     onSelectStyle: (Int) -> Unit,
     onAddStyle: ((Int) -> Unit) -> Unit,
@@ -200,6 +201,7 @@ internal fun ReaderSettingsSheet(
     onCodeLineNumbersChange: (Boolean) -> Unit,
     onCodeHighlightThemeChange: (CodeHighlightTheme) -> Unit,
     onHideSystemBarsChange: (Boolean) -> Unit,
+    onShowTocInLandscapeChange: (Boolean) -> Unit,
     onPageTurnModeChange: (ReaderPageTurnMode) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -324,6 +326,17 @@ internal fun ReaderSettingsSheet(
                         checked = hideSystemBars,
                         onCheckedChange = onHideSystemBarsChange,
                     )
+                    // 纯文本/Markdown 横屏时可在左侧常驻目录栏；PDF 与代码文件不适用。
+                    if (readingProfile == ReadingFormatProfile.PLAIN_TEXT ||
+                        readingProfile == ReadingFormatProfile.MARKDOWN
+                    ) {
+                        ReaderSettingsSwitchRow(
+                            title = stringResource(R.string.reader_show_toc_in_landscape),
+                            summary = stringResource(R.string.reader_show_toc_in_landscape_summary),
+                            checked = showTocInLandscape,
+                            onCheckedChange = onShowTocInLandscapeChange,
+                        )
+                    }
                 }
             }
 

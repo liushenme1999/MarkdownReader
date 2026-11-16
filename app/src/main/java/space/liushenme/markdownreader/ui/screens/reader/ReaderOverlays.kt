@@ -82,6 +82,7 @@ internal fun ReaderOverlays(
             codeHighlightTheme = uiState.codeHighlightTheme,
             readingProfile = readingProfile,
             hideSystemBars = uiState.hideSystemBars,
+            showTocInLandscape = uiState.showTocInLandscape,
             pageTurnMode = uiState.pageTurnMode,
             onSelectStyle = viewModel::selectReadingStyle,
             onAddStyle = viewModel::addReadingStyle,
@@ -95,6 +96,7 @@ internal fun ReaderOverlays(
             onCodeLineNumbersChange = viewModel::setCodeLineNumbers,
             onCodeHighlightThemeChange = viewModel::setCodeHighlightTheme,
             onHideSystemBarsChange = viewModel::setHideSystemBars,
+            onShowTocInLandscapeChange = viewModel::setShowTocInLandscape,
             onPageTurnModeChange = viewModel::setPageTurnMode,
             onDismiss = onDismissReaderSettings,
         )

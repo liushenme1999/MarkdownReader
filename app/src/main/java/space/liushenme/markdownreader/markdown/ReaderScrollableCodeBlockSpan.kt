@@ -65,6 +65,10 @@ internal class ReaderScrollableCodeBlockSpan(
     private var maxLineWidth: Int = 0
     var lastViewportWidth: Int = 0
         private set
+    /** 宿主 TextView 实测的代码区宽度（已扣 padding），用于精确计算横向滚动上限。 */
+    private var hostViewportWidth: Int = 0
+    /** 最近一次真正绘制时使用的宽度；卡片内边距/外边距会让它与视口近似值不同。 */
+    private var drawnViewportWidth: Int = 0
     private var cachedLayout: StaticLayout? = null
     private var cachedTextSize: Float = -1f
     private var cachedColor: Int = 0
@@ -689,7 +693,13 @@ internal class ReaderScrollableCodeBlockSpan(
 
     fun maxScrollX(): Int {
         if (wrapEnabled) return 0
-        val viewport = resolvedViewportWidth()
+        // 必须用「代码块实际绘制宽度」而不是 ReaderCodeBlockSettings 里的近似视口：
+        // 卡片有内边距/外边距时后者偏大，算出的最大横向滚动距离偏小，
+        // 结果为「滑到最右仍有部分文字被裁掉」。
+        val viewport = when {
+            hostViewportWidth > 1 -> hostViewportWidth
+            else -> resolvedViewportWidth()
+        }
         return (maxLineWidth - viewport).coerceAtLeast(0)
     }
 
@@ -697,10 +707,21 @@ internal class ReaderScrollableCodeBlockSpan(
     fun prepareForTouch(paint: Paint, viewportPx: Int) {
         if (viewportPx > 1) {
             lastViewportWidth = viewportPx
+            hostViewportWidth = viewportPx
         }
         ensureLayout(paint)
         syncScrollX()
     }
+
+    internal fun drawnViewportWidthForTest(): Int = drawnViewportWidth
+
+    internal fun maxLineWidthForTest(): Int = maxLineWidth
+
+    /** 旧实现（用 ReaderCodeBlockSettings 近似视口）会算出的上限，仅用于回归对比。 */
+    internal fun maxScrollXForApproximateViewportForTest(): Int =
+        (maxLineWidth - resolvedViewportWidth()).coerceAtLeast(0)
+
+    internal fun hostViewportWidthForTest(): Int = hostViewportWidth
 
     private fun resolvedViewportWidth(): Int {
         // 优先用宿主下发的稳定视口宽度：lastViewportWidth 会在触摸/绘制过程中被改写，
@@ -838,6 +859,7 @@ internal class ReaderScrollableCodeBlockSpan(
     ) {
         if (viewport > 0) {
             lastViewportWidth = viewport
+            drawnViewportWidth = viewport
         }
         val layout = ensureLayout(paint)
         syncScrollX()
