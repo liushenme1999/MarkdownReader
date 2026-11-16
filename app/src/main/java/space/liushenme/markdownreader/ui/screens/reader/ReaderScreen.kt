@@ -493,6 +493,14 @@ fun ReaderScreen(
                     widthPx = measuredLayout.second,
                     heightPx = measuredLayout.third,
                     lineSpacingMultiplier = uiState.readerLineSpacingMultiplier,
+                    // 纯文本按章节分页：每章从新页开始，章节标题压在页首。
+                    // 必须用「当前窗口正文」现场解析出的偏移：目录里的 offset 可能是全书坐标，
+                    // 直接拿去切窗口内容会把断页点切到标题行中间（表现为整页只剩一个标题）。
+                    chapterStarts = if (renderPlainText) {
+                        parsePlainTextToc(readerContent).map { it.sourceOffset }
+                    } else {
+                        emptyList()
+                    },
                 )
             }
             else -> splitMarkdownToPages(

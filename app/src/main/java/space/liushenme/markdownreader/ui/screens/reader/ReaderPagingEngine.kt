@@ -2789,9 +2789,25 @@ internal fun splitTextToPagesByLines(
     heightPx: Int,
     lineSpacingMultiplier: Float,
     chunkChars: Int = 6_000,
+    /** 章节标题的起始偏移：每章强制从新的一页开始（标题压在页首）。 */
+    chapterStarts: List<Int> = emptyList(),
 ): List<IntRange> {
     if (content.isEmpty()) return listOf(0 until 0)
     if (widthPx <= 0 || heightPx <= 0 || textSizePx <= 0f) return listOf(0 until content.length)
+    val breaks = chapterStarts
+        .asSequence()
+        .filter { it in 1 until content.length }
+        // 章节偏移可能落在标题行内部（标题前有全角缩进/空白），先对齐到所在行的行首，
+        // 否则断页点会落在标题行末尾，表现为「一整页只有一个标题」。
+        .map { offset ->
+            var lineStart = offset
+            while (lineStart > 0 && content[lineStart - 1] != '\n') lineStart--
+            lineStart
+        }
+        .sorted()
+        .distinct()
+        .toList()
+    var nextBreakIndex = 0
     return try {
         val pages = ArrayList<IntRange>(content.length / 900)
         val paint = android.text.TextPaint().apply {
@@ -2826,6 +2842,20 @@ internal fun splitTextToPagesByLines(
                 // 已经属于上一页（或页间被跳过的空行）：不再计入本页高度。
                 if (lineStart < pageStart) continue
                 val lineHeight = (layout.getLineBottom(line) - layout.getLineTop(line)).toFloat()
+                // 章节起点：无条件另起一页，让章节标题落在新页第一行。
+                while (nextBreakIndex < breaks.size && breaks[nextBreakIndex] <= pageStart) {
+                    nextBreakIndex++
+                }
+                if (nextBreakIndex < breaks.size &&
+                    lineStart >= breaks[nextBreakIndex] &&
+                    lineStart > pageStart
+                ) {
+                    pages += pageStart until lineStart
+                    pageStart = lineStart
+                    usedHeight = lineHeight
+                    nextBreakIndex++
+                    continue
+                }
                 if (usedHeight > 0f && usedHeight + lineHeight > heightPx && lineStart > pageStart) {
                     // 新页不从空行起排：页间空行既不属于上一页也不属于新页（纯空白，跳过不显示），
                     // 新页直接顶到正文；否则每页会白丢一行、看起来没铺满。

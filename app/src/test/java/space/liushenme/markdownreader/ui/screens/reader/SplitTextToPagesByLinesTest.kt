@@ -75,4 +75,95 @@ class SplitTextToPagesByLinesTest {
         val median = sorted[sorted.size / 2]
         assertTrue("存在超大页：max=${sorted.last()} median=$median", sorted.last() <= median * 3)
     }
+
+    @Test
+    fun chapterStarts_forceNewPagesWithTitleAtTop() {
+        // 每章 12 行，章标题独占一行；页面高度只够约 8 行。
+        // 不强制分页时标题会落在上一页底部，这正是本次要修的问题。
+        val chapterLines = 12
+        val chapters = 6
+        val starts = ArrayList<Int>(chapters)
+        val builder = StringBuilder()
+        for (chapter in 0 until chapters) {
+            starts += builder.length
+            builder.append("第").append(chapter + 1).append("章 测试章节标题\n")
+            for (line in 1 until chapterLines) {
+                builder.append("　　第").append(chapter + 1).append("章正文第").append(line)
+                    .append("行，用于撑满页面高度。\n")
+            }
+        }
+        val content = builder.toString()
+
+        val pages = splitTextToPagesByLines(
+            content = content,
+            textSizePx = 45f,
+            widthPx = 1000,
+            heightPx = 600,
+            lineSpacingMultiplier = 1.2f,
+            chapterStarts = starts,
+        )
+
+        assertEquals(chapters, starts.size)
+        // 每个章节起点必须正好是新一页的第一行
+        val pageStarts = pages.map { it.first }.toSet()
+        for (start in starts) {
+            assertTrue("章节 $start 没有从新页开始：$pageStarts", start in pageStarts)
+        }
+        assertTrue(pages.all { it.count() > 0 })
+        val badBreaks = pages.zipWithNext().filter { (a, b) ->
+            !(b.first > a.last && content.substring(a.last + 1, b.first).isBlank())
+        }
+        assertTrue("页区间丢失正文：${badBreaks.take(3)}", badBreaks.isEmpty())
+    }
+
+    @Test
+    fun chapterStartsOutsideRange_areIgnored() {
+        val content = "第1章 标题\n" + "正文内容用于测试分页。\n".repeat(40)
+        val withoutBreaks = splitTextToPagesByLines(
+            content = content,
+            textSizePx = 45f,
+            widthPx = 1000,
+            heightPx = 600,
+            lineSpacingMultiplier = 1.2f,
+        )
+        val withOutOfRange = splitTextToPagesByLines(
+            content = content,
+            textSizePx = 45f,
+            widthPx = 1000,
+            heightPx = 600,
+            lineSpacingMultiplier = 1.2f,
+            chapterStarts = listOf(-5, 0, content.length + 10),
+        )
+        assertEquals(withoutBreaks, withOutOfRange)
+    }
+
+    @Test
+    fun chapterStartsInsideTitleLine_alignToLineStart() {
+        // TXT 章节标题常带全角缩进，解析出的偏移可能落在行中间（缩进之后）。
+        val content = buildString {
+            append("第1章 前情\n")
+            repeat(6) { append("　　第一章的正文内容，用于占满一页。\n") }
+            append("　　第2章 标题带缩进\n")
+            repeat(6) { append("　　第二章的正文内容，用于占满一页。\n") }
+            append("第3章 结尾\n")
+            repeat(6) { append("　　第三章的正文内容，用于占满一页。\n") }
+        }
+        val titleLineStart = content.indexOf("　　第2章 标题带缩进")
+        val midTitleOffset = titleLineStart + 2 // 落在全角缩进之后
+
+        val pages = splitTextToPagesByLines(
+            content = content,
+            textSizePx = 45f,
+            widthPx = 1000,
+            heightPx = 400,
+            lineSpacingMultiplier = 1.2f,
+            chapterStarts = listOf(midTitleOffset),
+        )
+
+        assertTrue("页首必须是标题行行首，而不是标题行末尾", pages.any { it.first == titleLineStart })
+        val titlePage = pages.first { it.first == titleLineStart }
+        val titlePageText = content.substring(titlePage.first, titlePage.last + 1)
+        assertTrue(titlePageText.contains("第2章 标题带缩进"))
+        assertTrue("标题页不能只有一个标题", titlePageText.contains("第二章的正文"))
+    }
 }
