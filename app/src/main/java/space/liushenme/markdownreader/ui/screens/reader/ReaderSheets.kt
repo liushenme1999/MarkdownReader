@@ -29,6 +29,8 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.rememberScrollState
@@ -43,6 +45,10 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.toArgb
@@ -408,7 +414,9 @@ internal fun BookmarksSheet(
     }
 
     ModalBottomSheet(
-        onDismissRequest = onDismiss
+        onDismissRequest = onDismiss,
+        // 半屏/全屏两段式在列表滚到底继续上滑时会先展开再回弹，看起来就是抖动。
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     ) {
         Column(
             modifier = Modifier
@@ -447,7 +455,8 @@ internal fun BookmarksSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 520.dp)
-                    .verticalScroll(listScroll)
+                    .consumeDragAtScrollEdges(listScroll)
+                    .verticalScroll(listScroll, overscrollEffect = null)
             ) {
                 when (selectedTab) {
                     ReaderMarksSheetTab.Bookmarks -> {
@@ -587,7 +596,9 @@ internal fun TocSheet(
                     state = listState,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 520.dp),
+                        .heightIn(max = 520.dp)
+                        .consumeDragAtScrollEdges(listState),
+                    overscrollEffect = null,
                 ) {
                     itemsIndexed(
                         items = entries,
@@ -957,3 +968,31 @@ private fun PendingAnchorLabel() {
     )
 }
 
+/**
+ * 弹层内列表滚到边界后，把剩余的竖向拖拽消费掉，避免继续传给 ModalBottomSheet
+ * 造成「滑到最底部再上滑时 sheet 上下弹跳」。
+ *
+ * 只在用户手指拖拽（UserInput）且列表在该方向已无法滚动时消费；
+ * 顶部 drag handle 与遮罩关闭手势不受影响。
+ */
+private fun Modifier.consumeDragAtScrollEdges(state: ScrollState): Modifier =
+    nestedScroll(object : NestedScrollConnection {
+        override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+            if (source != NestedScrollSource.UserInput) return Offset.Zero
+            val dy = available.y
+            if (dy == 0f) return Offset.Zero
+            val canScroll = if (dy > 0f) state.canScrollBackward else state.canScrollForward
+            return if (canScroll) Offset.Zero else Offset(0f, dy)
+        }
+    })
+
+private fun Modifier.consumeDragAtScrollEdges(state: LazyListState): Modifier =
+    nestedScroll(object : NestedScrollConnection {
+        override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+            if (source != NestedScrollSource.UserInput) return Offset.Zero
+            val dy = available.y
+            if (dy == 0f) return Offset.Zero
+            val canScroll = if (dy > 0f) state.canScrollBackward else state.canScrollForward
+            return if (canScroll) Offset.Zero else Offset(0f, dy)
+        }
+    })

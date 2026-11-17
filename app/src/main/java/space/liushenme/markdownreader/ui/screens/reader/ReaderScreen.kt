@@ -1287,13 +1287,19 @@ fun ReaderScreen(
                 val targetPage = pageSpecs.indexOfLast { it.first <= pendingLocal }.coerceAtLeast(0)
                 if (page > targetPage) viewModel.clearPendingRestoreChar()
             }
+            // 当前章节按「页起点全书偏移」直接推导：翻页瞬间 readerTextView 可能还是上一页，
+            // 用视图反查会把顶栏章节定到上一章（表现为「有时不更新」）。
+            val windowBase = if (uiState.totalCharsGlobal > 0) uiState.windowStartChar else 0
+            val chapterOffset = chapterOffsetAtPageStart(tocEntries, start + windowBase)
+            // 章节名与工具栏是否可见无关，先单独更新（不写库、不改进度）。
+            viewModel.updateVisibleChapterOffset(chapterOffset)
             // 退出中/工具栏唤出时页高会变，不能把重排后的页码当成阅读位置。
             if (!leavingReader[0] && !readerChromeVisible) {
                 viewModel.updateReadingProgressAtChar(
                     start,
                     reachedEnd = page >= pageSpecs.lastIndex,
                     bottomChar = end,
-                    chapterOffset = currentChapterEntryNow()?.sourceOffset,
+                    chapterOffset = chapterOffset,
                 )
             }
             // 窗口模式：翻到窗口尾部前预取下一批，否则翻到第 N 页就再也翻不动。

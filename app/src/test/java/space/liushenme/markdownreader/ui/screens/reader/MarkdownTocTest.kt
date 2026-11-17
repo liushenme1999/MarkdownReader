@@ -132,4 +132,21 @@ class MarkdownTocTest {
         )
         assertEquals("9.4 NoteTool: 结构化笔记", entry?.title)
     }
+
+    @Test
+    fun chapterOffsetAtPageStart_resolvesChapterDeterministically() {
+        val entries = listOf(
+            MarkdownTocEntry(level = 1, title = "第1章", sourceOffset = 0),
+            MarkdownTocEntry(level = 1, title = "第2章", sourceOffset = 500),
+            MarkdownTocEntry(level = 1, title = "第3章", sourceOffset = 1000),
+        )
+        assertEquals(0, chapterOffsetAtPageStart(entries, 0))
+        assertEquals(0, chapterOffsetAtPageStart(entries, 499))
+        assertEquals(500, chapterOffsetAtPageStart(entries, 500))
+        assertEquals(500, chapterOffsetAtPageStart(entries, 900))
+        assertEquals(1000, chapterOffsetAtPageStart(entries, 5000))
+        // 窗口模式：传入的是全书偏移，结果同样是全书偏移
+        assertEquals(1000, chapterOffsetAtPageStart(entries, 1000 + 12000))
+        assertEquals(null, chapterOffsetAtPageStart(emptyList(), 42))
+    }
 }

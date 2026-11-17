@@ -471,4 +471,11 @@
     <string name="format_label_default">this format</string>
     <string name="pdf_page_title">Page %1$d</string>
     <string name="footnote_section_heading">**Footnotes**</string>
+    <string name="about_crash_log">Crash log</string>
+    <string name="about_crash_log_empty">No crash logs</string>
+    <string name="about_crash_log_title">Latest crash log</string>
+    <string name="about_crash_log_share">Share</string>
+    <string name="about_crash_log_copy">Copy</string>
+    <string name="about_crash_log_copied">Copied to clipboard</string>
+    <string name="about_crash_log_cd">View crash log</string>
 </resources>

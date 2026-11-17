@@ -9,6 +9,8 @@ import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
 import space.liushenme.markdownreader.data.work.BackgroundWorkScheduler
 import space.liushenme.markdownreader.markdown.DiagramWebViewRenderer
 import space.liushenme.markdownreader.platform.AppLocaleController
+import space.liushenme.markdownreader.platform.CrashLogRecorder
+import space.liushenme.markdownreader.platform.JankWatchdog
 import space.liushenme.markdownreader.platform.MainThreadCrashGuard
 import space.liushenme.markdownreader.update.AppUpdateRepository
 import dagger.hilt.android.HiltAndroidApp
@@ -47,7 +49,10 @@ class MarkdownReaderApp : Application(), Configuration.Provider {
         super.onCreate()
         // 兜住 Android framework 已知 Editor / Selection setSpan 越界 crash，
         // 详见 [MainThreadCrashGuard] 注释；其他异常仍然正常 rethrow。
+        // 先接管未捕获异常写崩溃日志，再装主线程框架异常守护（守护不吞的异常仍会走这里）。
+        CrashLogRecorder.install(this)
         MainThreadCrashGuard.install()
+        JankWatchdog.install()
         registerActivityLifecycleCallbacks(ForegroundActivityTracker)
         registerActivityLifecycleCallbacks(LocaleSyncCallbacks())
         appScope.launch(Dispatchers.IO) {

@@ -1071,4 +1071,24 @@ class SafeReaderTextViewSelectionTest {
         assertFalse(view.isInTextSelection())
         assertFalse(view.hasVisibleTextSelection())
     }
+
+    @Test
+    fun swipeGesture_cancelsPendingSelectionLongPress() {
+        // 左右翻页时下拉加书签：手指移动超过 slop 后必须取消待定的划词长按，
+        // 否则 500ms 后会用「按下点」判定为点击并弹出划词工具条。
+        val (x, y) = offsetXYForSpan(0, 2)
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
+        try {
+            textView.onTouchEvent(down)
+            assertTrue(textView.isSelectionLongPressScheduledForTest())
+
+            textView.cancelPendingSelectionLongPressForGesture(x + 30f, y + 220f)
+
+            assertFalse(textView.isSelectionLongPressScheduledForTest())
+            assertFalse(textView.fireScheduledSelectionLongPressForTest())
+            assertFalse(textView.hasVisibleTextSelection())
+        } finally {
+            down.recycle()
+        }
+    }
 }

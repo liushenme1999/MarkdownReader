@@ -4,6 +4,7 @@ name: Android CI
 on:
   push:
     branches: [main, develop]
+    tags: ['v*']
   pull_request:
     branches: [main, develop]
   workflow_dispatch:
@@ -174,3 +175,32 @@ jobs:
         with:
           name: test-reports
           path: app/build/reports/tests/testDebugUnitTest/
+
+  detekt:
+    name: Detekt
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v6
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Run detekt
+        run: ./gradlew detekt
+
+      - name: Upload detekt reports
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: detekt-reports
+          path: |
+            build/reports/detekt/
+            app/build/reports/detekt/

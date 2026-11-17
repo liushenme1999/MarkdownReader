@@ -744,6 +744,14 @@ class ReaderViewModel @Inject constructor(
      * UI callers can keep their existing signature while all progress changes
      * now pass through the single ReaderEvent channel.
      */
+    /**
+     * 只更新顶栏「当前章节」指针：不写库、不改阅读进度。
+     * 分页翻页时即使在工具栏可见（正文重排）阶段也要让章节名跟随。
+     */
+    fun updateVisibleChapterOffset(offset: Int?) {
+        session.setVisibleChapterOffset(offset)
+    }
+
     fun updateReadingProgressAtChar(
         globalChar: Int,
         previewText: String? = null,

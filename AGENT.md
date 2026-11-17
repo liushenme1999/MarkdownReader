@@ -43,6 +43,9 @@ python3 scripts/adb_install_confirm.py path/to/x.apk
 # 启动应用
 adb shell am start -n space.liushenme.markdownreader/.MainActivity
 
+# 发版冒烟：依次打开各格式样本，检查本包崩溃/ANR
+python3 scripts/release_smoke.py
+
 # 安装 debug + 测试包，跑设备端 Instrumentation 测试
 ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --offline
 adb uninstall space.liushenme.markdownreader          # debug 与 release 签名不同，必须先卸载
@@ -171,7 +174,9 @@ adb shell am instrument -w -r \
 7. **`uiautomator dump` 偶发 `null root node`**：等 1–2 秒重试。
 8. **JVM 测试资源排除 `.java/.kt`**：矩阵样本必须放 androidTest assets，并从那里读。
 9. **debug/release 签名不同**：装 debug 前先 uninstall，数据会丢；跑完设备测试记得装回 release。
-10. **Compose UI 测试需要「空 Compose rule + 启动 Activity」**：参考 `CodePreviewDeviceAcceptanceTest` 的
+10. **崩溃日志 / 卡顿日志**：`filesDir/crash-logs/` 保存未捕获异常（我的 → 关于应用 → 崩溃日志
+    可查看/复制/分享）；卡顿看门狗用 `adb logcat -s ReaderJank` 过滤，单帧 > 400ms 输出主线程栈。
+11. **Compose UI 测试需要「空 Compose rule + 启动 Activity」**：参考 `CodePreviewDeviceAcceptanceTest` 的
     `createEmptyComposeRule()` + `launchMainActivity()` 写法，不要另起一套。
 
 ---

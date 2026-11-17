@@ -72,6 +72,21 @@ fun currentChapterEntryForViewport(
  * 横屏常驻目录的当前项。常驻目录应跟随正文视口顶部所在章节，不能因为
  * 下一个标题刚好露在视口底部，或旧的渲染层章节锚点尚未刷新而提前/滞后一章。
  */
+/**
+ * 分页模式：按「当前页在全书中的起始偏移」推导所属章节。
+ *
+ * 不依赖 TextView 布局：翻页瞬间 `readerTextView` 可能还是上一页的视图，
+ * 用视图反查会把顶栏章节名定到上一章（现象就是「有时不更新」）。
+ */
+fun chapterOffsetAtPageStart(
+    tocEntries: List<MarkdownTocEntry>,
+    globalPageStart: Int,
+): Int? {
+    if (tocEntries.isEmpty()) return null
+    val target = globalPageStart.coerceAtLeast(0)
+    return (tocEntries.lastOrNull { it.sourceOffset <= target } ?: tocEntries.first()).sourceOffset
+}
+
 fun currentChapterEntryForReaderRail(
     tocEntries: List<MarkdownTocEntry>,
     viewportTopChar: Int,

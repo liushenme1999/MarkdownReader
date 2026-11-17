@@ -1,5 +1,8 @@
 package space.liushenme.markdownreader.ui.screens.profile
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.Image
@@ -16,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -31,7 +35,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,7 +61,9 @@ import androidx.core.graphics.drawable.toBitmap
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import space.liushenme.markdownreader.BuildConfig
+import space.liushenme.markdownreader.platform.CrashLogRecorder
 import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.ui.components.ShelfStyleTopAppBar
 import space.liushenme.markdownreader.ui.components.ShelfStyleTopBarBackground
@@ -71,6 +80,12 @@ fun AboutScreen(
     val checking by viewModel.checking.collectAsState()
     val availableUpdate by viewModel.availableUpdate.collectAsState()
     val showUpdateDialog by viewModel.showUpdateDialog.collectAsState()
+    val scope = rememberCoroutineScope()
+    val cdViewCrashLog = stringResource(R.string.about_crash_log_cd)
+    var crashLogText by remember { mutableStateOf<String?>(null) }
+    var showCrashLogDialog by remember { mutableStateOf(false) }
+    val crashLogEmpty = stringResource(R.string.about_crash_log_empty)
+    val crashLogCopied = stringResource(R.string.about_crash_log_copied)
     val alreadyLatest = stringResource(R.string.about_update_already_latest)
     val checkFailed = stringResource(R.string.about_update_check_failed)
 
@@ -109,6 +124,53 @@ fun AboutScreen(
             dismissButton = {
                 TextButton(onClick = { viewModel.dismissUpdateDialog() }) {
                     Text(stringResource(R.string.action_cancel))
+                }
+            },
+        )
+    }
+
+    if (showCrashLogDialog && crashLogText != null) {
+        AlertDialog(
+            onDismissRequest = { showCrashLogDialog = false },
+            title = { Text(stringResource(R.string.about_crash_log_title)) },
+            text = {
+                Text(
+                    text = crashLogText.orEmpty(),
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    modifier = Modifier
+                        .height(360.dp)
+                        .verticalScroll(rememberScrollState()),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val text = crashLogText.orEmpty()
+                        val send = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, text)
+                        }
+                        runCatching {
+                            context.startActivity(Intent.createChooser(send, null))
+                        }
+                    },
+                ) {
+                    Text(stringResource(R.string.about_crash_log_share))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE)
+                            as? ClipboardManager
+                        clipboard?.setPrimaryClip(
+                            ClipData.newPlainText("crash-log", crashLogText.orEmpty()),
+                        )
+                        showCrashLogDialog = false
+                        scope.launch { snackbarHostState.showSnackbar(crashLogCopied) }
+                    },
+                ) {
+                    Text(stringResource(R.string.about_crash_log_copy))
                 }
             },
         )
@@ -211,7 +273,28 @@ fun AboutScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                // 崩溃日志：默认隐藏入口太深，放在版本行下方。
+                TextButton(
+                    onClick = {
+                        val text = CrashLogRecorder.readLatest(context)
+                        if (text.isNullOrBlank()) {
+                            scope.launch { snackbarHostState.showSnackbar(crashLogEmpty) }
+                        } else {
+                            crashLogText = text
+                            showCrashLogDialog = true
+                        }
+                    },
+                    modifier = Modifier.semantics {
+                        contentDescription = cdViewCrashLog
+                    },
+                ) {
+                    Text(
+                        text = stringResource(R.string.about_crash_log),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
 
                 Text(
                     text = stringResource(R.string.about_description),

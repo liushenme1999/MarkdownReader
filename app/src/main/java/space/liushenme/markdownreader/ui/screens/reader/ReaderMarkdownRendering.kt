@@ -915,15 +915,26 @@ internal fun bindReaderGesturesAndScroll(
                 }
             }
             MotionEvent.ACTION_MOVE -> {
+                val gestureDx = e.x - touchState.downX
+                val gestureDy = e.y - touchState.downY
+                // 分页模式下只要手势离开按下点，就不允许再触发划词长按：
+                // 翻页横滑、下拉加书签、斜向拖动都可能让手指停住超过 500ms，
+                // 不在这里取消的话，慢速下拉会被判成长按并弹出划词工具条。
+                if (!allowVerticalScroll &&
+                    (kotlin.math.abs(gestureDx) > slop || kotlin.math.abs(gestureDy) > slop)
+                ) {
+                    (tv as? SafeReaderTextView)?.cancelPendingSelectionLongPressForGesture(e.x, e.y)
+                }
                 // 分页（左右滑动翻页）模式的「下拉加书签」：一旦识别为向下拖动就取消长按，
                 // 否则慢速下拉会被 TextView 判成长按，错误弹出选中文案工具栏。
                 if (!allowVerticalScroll && onSwipeDownBookmark != null) {
-                    val sdx = e.x - touchState.downX
-                    val sdy = e.y - touchState.downY
+                    val sdx = gestureDx
+                    val sdy = gestureDy
                     // 向下为主（1.2 倍即可，斜向下滑也算）：取消长按、独占事件，
                     // 避免被 TextView 判成长按选中，也避免父级 HorizontalPager 抢走触发翻页。
                     if (sdy > slop && sdy > kotlin.math.abs(sdx) * 1.2f) {
                         tv?.cancelLongPress()
+                        (tv as? SafeReaderTextView)?.cancelPendingSelectionLongPressForGesture(e.x, e.y)
                         touchState.blockBookmarkSwipeGesture = false
                         touchState.downwardBookmarkSwipe = true
                         v.parent?.requestDisallowInterceptTouchEvent(true)
@@ -994,6 +1005,7 @@ internal fun bindReaderGesturesAndScroll(
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                (tv as? SafeReaderTextView)?.endTouchGestureForConsumedEvent()
                 if (!allowVerticalScroll) {
                     v.parent?.requestDisallowInterceptTouchEvent(false)
                 }
@@ -3097,6 +3109,31 @@ internal open class SafeReaderTextView(context: Context) : TextView(context) {
     }
 
     internal fun isSelectionLongPressScheduledForTest(): Boolean = selectionLongPressScheduled
+
+    /**
+     * 手势已被判定为「滑动」（翻页 / 下拉加书签 / 竖滑）时调用：
+     * 先刷新触点位置，让 [isTapGesture] 不再成立，再移除待定的划词长按回调。
+     *
+     * 只调用 View.cancelLongPress() 不够：它清不掉本类自己 postDelayed 的
+     * [startSelectionLongPressRunnable]，慢速下拉仍会在 500ms 后弹出划词工具条。
+     */
+    internal fun cancelPendingSelectionLongPressForGesture(x: Float, y: Float) {
+        lastTouchX = x
+        lastTouchY = y
+        cancelSelectionLongPress()
+    }
+
+    /**
+     * 手势层（AndroidView 的 OnTouchListener）提前消费了 UP/CANCEL 时调用：
+     * 这些事件不会再进入本类的 onTouchEvent，[pointerDown] 会一直为 true，
+     * 之后的长按划词判断（shouldHonorFingerLongClick / startSelectionLongPressRunnable）全部失效。
+     */
+    internal fun endTouchGestureForConsumedEvent() {
+        pointerDown = false
+        isVerticalScrollDrag = false
+        cancelSelectionLongPress()
+        cancelLongPress()
+    }
 
     /** 立刻执行已预约的划词，避免 Robolectric idleFor 被 Editor 0-delay 任务拖死。 */
     internal fun fireScheduledSelectionLongPressForTest(): Boolean {

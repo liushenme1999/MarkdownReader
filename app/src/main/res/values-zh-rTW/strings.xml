@@ -471,4 +471,11 @@
     <string name="format_label_default">該格式</string>
     <string name="pdf_page_title">第 %1$d 頁</string>
     <string name="footnote_section_heading">**腳註**</string>
+    <string name="about_crash_log">當機日誌</string>
+    <string name="about_crash_log_empty">尚無當機日誌</string>
+    <string name="about_crash_log_title">最近一次當機日誌</string>
+    <string name="about_crash_log_share">分享</string>
+    <string name="about_crash_log_copy">複製</string>
+    <string name="about_crash_log_copied">已複製到剪貼簿</string>
+    <string name="about_crash_log_cd">查看當機日誌</string>
 </resources>
