@@ -18,7 +18,7 @@
 | 版本 | 下载 | 大小约 |
 |------|------|--------|
 | **1.3.8** | [MD._release_1.3.8.apk](https://github.com/liushenme1999/MarkdownReader/releases/download/v1.3.8/MD._release_1.3.8.apk) | 8.4 MB |
-| 1.3.7 | [MD._release_1.3.7.apk](https://github.com/liushenme1999/MarkdownReader/releases/download/v1.3.7/MD._release_1.3.7.apk) | 8.3 MB |
+| 1.3.6 | [MD._release_1.3.6.apk](https://github.com/liushenme1999/MarkdownReader/releases/download/v1.3.6/MD._release_1.3.6.apk) | 8.2 MB |
 
 安装说明：
 
