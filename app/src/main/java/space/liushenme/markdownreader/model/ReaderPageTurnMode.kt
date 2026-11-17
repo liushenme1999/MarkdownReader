@@ -2,6 +2,7 @@ package space.liushenme.markdownreader.model
 
 import androidx.annotation.StringRes
 import space.liushenme.markdownreader.R
+import space.liushenme.markdownreader.data.repository.ReadingFormatProfile
 
 /**
  * 阅读翻页 / 浏览方式（全局偏好）。
@@ -29,6 +30,23 @@ enum class ReaderPageTurnMode(
             VerticalScroll,
             HorizontalSwipe,
         )
+
+        /**
+         * 指定格式可选的翻页方式。
+         *
+         * Markdown 只保留上下滚动：标题、表格、代码块、公式等块级元素在横向分页里会被切页，
+         * 阅读体验差，因此不再提供左右滑动。
+         */
+        fun selectableModesFor(profile: ReadingFormatProfile): List<ReaderPageTurnMode> =
+            if (profile == ReadingFormatProfile.MARKDOWN) {
+                listOf(VerticalScroll)
+            } else {
+                selectableModes
+            }
+
+        /** 该格式是否支持横向翻页（Markdown 不支持）。 */
+        fun supportsHorizontal(profile: ReadingFormatProfile): Boolean =
+            selectableModesFor(profile).contains(HorizontalSwipe)
 
         fun fromStored(raw: String?): ReaderPageTurnMode {
             val parsed = entries.find { it.name == raw } ?: VerticalScroll

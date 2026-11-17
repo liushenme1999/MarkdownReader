@@ -349,13 +349,21 @@ internal fun ReaderSettingsSheet(
                         modifier = Modifier.padding(vertical = 10.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        ReaderPageTurnMode.selectableModes.forEachIndexed { index, mode ->
+                        val pageTurnModes = ReaderPageTurnMode.selectableModesFor(readingProfile)
+                        if (pageTurnModes.size == 1) {
+                            Text(
+                                text = stringResource(R.string.reader_page_turn_markdown_only_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(bottom = 4.dp),
+                            )
+                        }
+                        pageTurnModes.forEachIndexed { index, mode ->
                             ReaderPageTurnModeOption(
                                 mode = mode,
                                 selected = mode == pageTurnMode,
                                 onClick = { onPageTurnModeChange(mode) },
-                                showDividerBelow =
-                                    index < ReaderPageTurnMode.selectableModes.lastIndex,
+                                showDividerBelow = index < pageTurnModes.lastIndex,
                             )
                         }
                     }

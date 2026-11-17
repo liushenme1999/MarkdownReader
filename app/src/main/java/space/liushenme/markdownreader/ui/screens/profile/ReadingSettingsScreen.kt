@@ -69,7 +69,7 @@ fun ReadingSettingsScreen(
     val appThemeMode by viewModel.appThemeMode.collectAsState()
     val appLanguage by viewModel.appLanguage.collectAsState()
     val activeProfile by viewModel.activeProfile.collectAsState()
-    val pageTurnModes = ReaderPageTurnMode.selectableModes
+    val pageTurnModes = ReaderPageTurnMode.selectableModesFor(activeProfile)
     val appThemeModes = AppThemeMode.entries
     val appLanguages = AppLanguage.entries
 

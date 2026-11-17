@@ -78,7 +78,15 @@ class ReaderSettingsRepository @Inject constructor(
     fun pageTurnModeFor(profile: ReadingFormatProfile): Flow<ReaderPageTurnMode> =
         dataStore.data.map { prefs ->
             val k = formatPrefKeys.getValue(profile)
-            ReaderPageTurnMode.fromStored(prefs[k.pageTurnMode] ?: prefs[KEY_PAGE_TURN_MODE])
+            val stored = ReaderPageTurnMode.fromStored(
+                prefs[k.pageTurnMode] ?: prefs[KEY_PAGE_TURN_MODE],
+            )
+            // Markdown 只支持上下滚动：即使旧偏好存的是横向，也按上下滚动打开。
+            if (profile == ReadingFormatProfile.MARKDOWN) {
+                ReaderPageTurnMode.VerticalScroll
+            } else {
+                stored
+            }
         }
 
     fun readingStyleStateFor(profile: ReadingFormatProfile): Flow<ReadingStyleState> =
@@ -214,9 +222,14 @@ class ReaderSettingsRepository @Inject constructor(
     }
 
     suspend fun setPageTurnMode(mode: ReaderPageTurnMode) {
-        val normalized = ReaderPageTurnMode.normalize(mode)
+        val profile = activeProfile.value
+        val normalized = if (profile == ReadingFormatProfile.MARKDOWN) {
+            ReaderPageTurnMode.VerticalScroll
+        } else {
+            ReaderPageTurnMode.normalize(mode)
+        }
         dataStore.edit { prefs ->
-            prefs[formatPrefKeys.getValue(activeProfile.value).pageTurnMode] = normalized.name
+            prefs[formatPrefKeys.getValue(profile).pageTurnMode] = normalized.name
         }
     }
 

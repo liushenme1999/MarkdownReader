@@ -19,6 +19,7 @@ import org.robolectric.annotation.Config
 import space.liushenme.markdownreader.data.backup.isSharedPreferenceKeyBackedUp
 import space.liushenme.markdownreader.data.preferences.readerPreferencesDataStore
 import space.liushenme.markdownreader.markdown.CodeHighlightTheme
+import space.liushenme.markdownreader.model.ReaderPageTurnMode
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
@@ -153,5 +154,25 @@ class ReaderSettingsRepositoryTest {
         assertFalse(migrated.showTocInLandscapeFor(ReadingFormatProfile.CODE).first())
         // 已显式设置过的格式不受旧全局键影响
         assertTrue(migrated.showTocInLandscapeFor(ReadingFormatProfile.MARKDOWN).first())
+    }
+
+    @Test
+    fun markdownAlwaysReadsVerticalScrollEvenIfStoredHorizontal() = runBlocking {
+        repository.setActiveProfile(ReadingFormatProfile.MARKDOWN)
+        repository.setPageTurnMode(ReaderPageTurnMode.HorizontalSwipe)
+        // Markdown 只保留上下滚动：写入被归一，读取也强制上下滚动
+        assertEquals(ReaderPageTurnMode.VerticalScroll, repository.pageTurnMode.first())
+        assertEquals(
+            ReaderPageTurnMode.VerticalScroll,
+            repository.pageTurnModeFor(ReadingFormatProfile.MARKDOWN).first(),
+        )
+
+        // 纯文本仍可左右滑动
+        repository.setActiveProfile(ReadingFormatProfile.PLAIN_TEXT)
+        repository.setPageTurnMode(ReaderPageTurnMode.HorizontalSwipe)
+        assertEquals(
+            ReaderPageTurnMode.HorizontalSwipe,
+            repository.pageTurnModeFor(ReadingFormatProfile.PLAIN_TEXT).first(),
+        )
     }
 }
