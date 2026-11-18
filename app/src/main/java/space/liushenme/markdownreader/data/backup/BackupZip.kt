@@ -27,15 +27,22 @@ object BackupZip {
     fun unzipTo(zipFile: File, destDir: File) {
         if (destDir.exists()) destDir.deleteRecursively()
         destDir.mkdirs()
+        val destRoot = destDir.canonicalFile
         ZipInputStream(BufferedInputStream(FileInputStream(zipFile))).use { zis ->
             var entry = zis.nextEntry
             while (entry != null) {
-                val outFile = File(destDir, entry.name)
-                if (entry.isDirectory) {
-                    outFile.mkdirs()
-                } else {
-                    outFile.parentFile?.mkdirs()
-                    FileOutputStream(outFile).use { output -> zis.copyTo(output) }
+                // 防 zip-slip：备份包/第三方来源的 zip 可能带 `../` 或绝对路径条目，
+                // 规范化后必须仍落在目标目录内，否则直接跳过（不能写到文件系统别处）。
+                val outFile = File(destRoot, entry.name).canonicalFile
+                val insideDest = outFile != destRoot &&
+                    outFile.path.startsWith(destRoot.path + File.separator)
+                if (insideDest) {
+                    if (entry.isDirectory) {
+                        outFile.mkdirs()
+                    } else {
+                        outFile.parentFile?.mkdirs()
+                        FileOutputStream(outFile).use { output -> zis.copyTo(output) }
+                    }
                 }
                 zis.closeEntry()
                 entry = zis.nextEntry

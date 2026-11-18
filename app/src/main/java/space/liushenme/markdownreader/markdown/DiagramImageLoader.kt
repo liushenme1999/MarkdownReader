@@ -219,7 +219,14 @@ internal object DiagramImageLoader {
             val file = diskFile(context, payloadId)
             if (!file.isFile || file.length() <= 0L) return@runCatching null
             BitmapFactory.decodeFile(file.absolutePath)
-        }.getOrNull()
+        }.getOrElse { error ->
+            // 图表位图通常很大：解码 OOM 时先释放内存缓存再返回 null（上层用占位图），
+            // 避免异常继续冒泡把整个阅读页带崩。
+            if (error is OutOfMemoryError) {
+                bitmapCache.evictAll()
+            }
+            null
+        }
 
     private fun saveDiskBitmap(context: Context, payloadId: String, bitmap: Bitmap) {
         runCatching {

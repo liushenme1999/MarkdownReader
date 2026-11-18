@@ -3,6 +3,7 @@ package space.liushenme.markdownreader.ui.screens.reader
 import android.graphics.Bitmap
 import android.graphics.Color
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
@@ -114,5 +115,26 @@ class PdfPageBitmapCacheTest {
         assertNotNull(sharp)
         assertFalse("放大重解码不得回收上一倍率的页图", base!!.isRecycled)
         assertTrue(sharp!!.width >= base.width)
+    }
+
+    @Test
+    fun byteBudget_evictsLeastRecentlyUsedWhenPixelMemoryExceedsCap() {
+        val firstPath = writePng("page-1.png", width = 200, height = 200)
+        val secondPath = writePng("page-2.png", width = 200, height = 200)
+        // 1MB 预算：一张 200x200 ARGB_8888 = 160KB，三张才会超
+        val cache = PdfPageBitmapCache(maxEntries = 8, maxBytes = 320L * 1024L)
+        val first = cache.decode(firstPath, 200)
+        val second = cache.decode(secondPath, 200)
+        assertNotNull(first)
+        assertNotNull(second)
+        assertTrue("缓存字节数不应超过预算", cache.cachedBytesForTest() <= 320L * 1024L)
+        assertFalse("按预算淘汰同样只丢引用", first!!.isRecycled)
+    }
+
+    @Test
+    fun defaultMaxBytes_isOneEighthOfHeapWithFloor() {
+        val expected = (Runtime.getRuntime().maxMemory() / 8)
+            .coerceAtLeast(16L * 1024L * 1024L)
+        assertEquals(expected, PdfPageBitmapCache.defaultMaxBytes())
     }
 }

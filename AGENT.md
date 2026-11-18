@@ -176,7 +176,9 @@ adb shell am instrument -w -r \
 9. **debug/release 签名不同**：装 debug 前先 uninstall，数据会丢；跑完设备测试记得装回 release。
 10. **崩溃日志 / 卡顿日志**：`filesDir/crash-logs/` 保存未捕获异常（我的 → 关于应用 → 崩溃日志
     可查看/复制/分享）；卡顿看门狗用 `adb logcat -s ReaderJank` 过滤，单帧 > 400ms 输出主线程栈。
-11. **Compose UI 测试需要「空 Compose rule + 启动 Activity」**：参考 `CodePreviewDeviceAcceptanceTest` 的
+11. **debug 包开启 StrictMode**：主线程读写磁盘/网络会在 logcat 打 `StrictMode policy violation`，
+    release 不启用；新增代码请避免主线程 IO。
+12. **Compose UI 测试需要「空 Compose rule + 启动 Activity」**：参考 `CodePreviewDeviceAcceptanceTest` 的
     `createEmptyComposeRule()` + `launchMainActivity()` 写法，不要另起一套。
 
 ---

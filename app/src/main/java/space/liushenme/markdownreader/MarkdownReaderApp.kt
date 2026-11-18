@@ -2,7 +2,9 @@ package space.liushenme.markdownreader
 
 import android.app.Activity
 import android.app.Application
+import android.os.Build
 import android.os.Bundle
+import android.os.StrictMode
 import androidx.work.Configuration
 import space.liushenme.markdownreader.data.local.BookContentHashBackfill
 import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
@@ -42,6 +44,28 @@ class MarkdownReaderApp : Application(), Configuration.Provider {
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
+    /**
+     * 仅 debug 包开启主线程 IO 检测：新增代码若在主线程读写磁盘/网络，
+     * logcat 会直接打出 `StrictMode policy violation`（不崩溃、不影响 release）。
+     */
+    private fun installDebugStrictMode() {
+        if (!BuildConfig.DEBUG || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        StrictMode.setThreadPolicy(
+            StrictMode.ThreadPolicy.Builder()
+                .detectDiskReads()
+                .detectDiskWrites()
+                .detectNetwork()
+                .penaltyLog()
+                .build(),
+        )
+        StrictMode.setVmPolicy(
+            StrictMode.VmPolicy.Builder()
+                .detectLeakedClosableObjects()
+                .penaltyLog()
+                .build(),
+        )
+    }
+
     @Volatile
     private var localeSyncStarted = false
 
@@ -49,6 +73,7 @@ class MarkdownReaderApp : Application(), Configuration.Provider {
         super.onCreate()
         // 兜住 Android framework 已知 Editor / Selection setSpan 越界 crash，
         // 详见 [MainThreadCrashGuard] 注释；其他异常仍然正常 rethrow。
+        installDebugStrictMode()
         // 先接管未捕获异常写崩溃日志，再装主线程框架异常守护（守护不吞的异常仍会走这里）。
         CrashLogRecorder.install(this)
         MainThreadCrashGuard.install()

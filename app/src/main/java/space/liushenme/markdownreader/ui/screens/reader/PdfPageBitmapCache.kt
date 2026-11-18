@@ -21,11 +21,15 @@ internal data class PdfBitmapKey(val path: String, val targetWidth: Int)
  */
 internal class PdfPageBitmapCache(
     private val maxEntries: Int = ReaderMediaCache.policy.pdfBitmapEntries,
+    /** 像素内存上限：默认取可用堆的 1/8，避免高倍率页图把进程撑爆。 */
+    private val maxBytes: Long = defaultMaxBytes(),
 ) {
+    private var cachedBytes: Long = 0L
+
     private val cache = object : LinkedHashMap<PdfBitmapKey, Bitmap>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PdfBitmapKey, Bitmap>?): Boolean {
             // 只淘汰引用；位图可能仍在屏幕上绘制，不能 recycle。
-            return size > maxEntries
+            return false
         }
     }
 
@@ -36,8 +40,18 @@ internal class PdfPageBitmapCache(
         cache[key]?.takeIf { !it.isRecycled }?.let { return it }
         val file = File(path)
         if (!file.isFile) return null
-        val decoded = decodeScaled(file, width) ?: return null
+        val decoded = Companion.decodeScaled(file, width)
+            // OOM 时清空缓存再按一半宽度重试：只返回 null 会让整页空白，
+            // 降采样重试至少能显示可读的页图。
+            ?: run {
+                cache.clear()
+                cachedBytes = 0L
+                Companion.decodeScaled(file, (width / 2).coerceAtLeast(1))
+            }
+            ?: return null
         cache[key] = decoded
+        cachedBytes += decoded.byteCount.toLong()
+        trimToBudget()
         return decoded
     }
 
@@ -45,7 +59,7 @@ internal class PdfPageBitmapCache(
     fun retain(keep: Set<PdfBitmapKey>) {
         val stale = cache.keys.filterNot { it in keep }.toList()
         for (key in stale) {
-            cache.remove(key)
+            cache.remove(key)?.let { cachedBytes -= it.byteCount.toLong() }
         }
     }
 
@@ -54,16 +68,35 @@ internal class PdfPageBitmapCache(
     fun retainPaths(paths: Set<String>) {
         val stale = cache.keys.filterNot { it.path in paths }.toList()
         for (key in stale) {
-            cache.remove(key)
+            cache.remove(key)?.let { cachedBytes -= it.byteCount.toLong() }
         }
     }
 
     @Synchronized
     fun clear() {
         cache.clear()
+        cachedBytes = 0L
     }
 
+    /** 按 LRU 顺序淘汰到「条目数 + 像素内存」双上限以内。 */
+    @Synchronized
+    private fun trimToBudget() {
+        val iterator = cache.entries.iterator()
+        while (iterator.hasNext() && (cache.size > maxEntries || (maxBytes > 0 && cachedBytes > maxBytes))) {
+            val entry = iterator.next()
+            cachedBytes -= entry.value.byteCount.toLong()
+            iterator.remove()
+        }
+    }
+
+    @Synchronized
+    internal fun cachedBytesForTest(): Long = cachedBytes
+
     companion object {
+        /** 可用堆的 1/8，至少 16MB，避免小内存设备上限制过紧。 */
+        internal fun defaultMaxBytes(): Long =
+            (Runtime.getRuntime().maxMemory() / 8).coerceAtLeast(16L * 1024L * 1024L)
+
         fun decodeBounds(path: String): Pair<Int, Int>? {
             val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(path, opts)
@@ -83,7 +116,7 @@ internal class PdfPageBitmapCache(
             return sample.coerceAtLeast(1)
         }
 
-        private fun decodeScaled(file: File, targetWidth: Int): Bitmap? {
+        internal fun decodeScaled(file: File, targetWidth: Int): Bitmap? {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(file.absolutePath, bounds)
             val srcW = bounds.outWidth

@@ -44,8 +44,8 @@ android {
         applicationId = "space.liushenme.markdownreader"
         minSdk = 24
         targetSdk = 35
-        versionCode = 42
-        versionName = "1.4.0"
+        versionCode = 43
+        versionName = "1.4.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

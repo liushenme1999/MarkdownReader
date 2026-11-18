@@ -4,6 +4,26 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [1.4.1] - 2026-11-18
+
+### 稳定性（P1）
+- **PDF 页图缓存加像素内存上限**：从只限 8 条改为「条数 + 可用堆 1/8 字节预算」双上限，
+  超出按 LRU 淘汰；解码 OOM 时清空缓存并降采样重试一次，避免整页空白
+- **图表位图 OOM 兜底**：解码 OOM 时释放内存缓存并回退占位图，不再把阅读页带崩
+- **备份包解压防 zip-slip**：`BackupZip.unzipTo` 规范化路径，拒绝 `../` 与绝对路径条目；
+  新增 zip 往返 / 恶意条目单测
+- **Room 升级脚本回归测试**：暴露 `AppDatabase.MIGRATIONS`，新增 17→18、18→19
+  真实 SQLite 迁移测试（新列存在 + 旧数据不丢）
+- **debug 包 StrictMode**：主线程磁盘/网络访问打 `StrictMode policy violation` 日志，release 不启用
+
+### 说明
+- 阅读页重组优化（把 viewportTopChar 等高频状态从顶层 uiState 拆出）属于较大重构，
+  先用 1.4.0 的 `ReaderJank` 看门狗做基线测量后再动，避免为性能引入位置类回归
+
+### 测试
+- 新增单测 8 个：PDF 缓存字节预算 ×2、备份 zip ×4、数据库迁移 ×2
+- 全量单测 689 例通过、detekt 通过
+
 ## [1.4.0] - 2026-11-18
 
 ### 修复
