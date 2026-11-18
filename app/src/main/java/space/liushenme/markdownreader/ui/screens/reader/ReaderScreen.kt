@@ -2115,12 +2115,31 @@ fun ReaderScreen(
                 // 浏览器式标题/地址栏：常驻，不随沉浸模式隐藏。
                 var htmlTitle by remember(bookId) { mutableStateOf<String?>(null) }
                 var htmlUrl by remember(bookId) { mutableStateOf("") }
-                var htmlReload by remember(bookId) { mutableStateOf<(() -> Unit)?>(null) }
+                var htmlController by remember(bookId) {
+                    mutableStateOf<HtmlViewerController?>(null)
+                }
+                var htmlToc by remember(bookId) { mutableStateOf<List<HtmlTocEntry>>(emptyList()) }
+                var showHtmlToc by remember(bookId) { mutableStateOf(false) }
+                if (showHtmlToc) {
+                    HtmlTocSheet(
+                        entries = htmlToc,
+                        onSelect = { entry ->
+                            showHtmlToc = false
+                            htmlController?.scrollToAnchor(entry.anchorId)
+                        },
+                        onDismiss = { showHtmlToc = false },
+                    )
+                }
                 Column(Modifier.fillMaxSize()) {
                     ReaderHtmlAddressBar(
                         title = htmlTitle ?: (book?.title ?: readingTitleFallback),
                         url = htmlUrl,
-                        onReload = htmlReload,
+                        onOpenToc = if (htmlToc.isNotEmpty()) {
+                            { showHtmlToc = true }
+                        } else {
+                            null
+                        },
+                        onReload = htmlController?.reload,
                     )
                     ReaderHtmlBody(
                         html = readerContent,
@@ -2128,7 +2147,8 @@ fun ReaderScreen(
                         baseUrl = htmlBaseUrl,
                         onTitleChanged = { htmlTitle = it },
                         onUrlChanged = { htmlUrl = it },
-                        onReloadReady = { htmlReload = it },
+                        onTocReady = { htmlToc = it },
+                        onControllerReady = { htmlController = it },
                         onScrollProgress = { fraction ->
                             val now = System.currentTimeMillis()
                             if (now - htmlProgressSaveMs >= 250L) {

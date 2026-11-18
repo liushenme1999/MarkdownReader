@@ -4,37 +4,32 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
-## [1.4.3] - 2026-11-18
-
-### 修复
-- **导入的 HTML/H5 页面按钮全部失效**：本地页面原先用 `loadDataWithBaseURL(null, ...)` 加载，
-  origin 为 opaque，页面初始化时访问 `localStorage` 会抛 SecurityError，整个脚本中断，
-  后续按钮监听器都没挂上。现在给每个 HTML 书籍一个合成 https origin
-  （`https://mdreader.local/book/<id>/`），localStorage / clipboard 等 API 正常工作
-
-### 改进（HTML 浏览器式交互）
-- 阅读页顶部新增**常驻地址/标题栏**：显示页面 `<title>`、当前地址与刷新按钮
-- `window.print()` 接系统打印（打印/导出 PDF 按钮可用）
-- `navigator.clipboard` 不可用时回退原生剪贴板
-- 支持 `<input type=file>` 文件选择、`target=_blank`/`window.open`、下载链接交给系统
-- 页面 JS 报错写入 logcat（`HtmlReader`），便于排查按钮无响应
-
-### 测试
-- 真机导入《AI客诉分析台》验证：深色/浅色切换、目录面板、打印（打开系统打印）、
-  地址栏标题与 URL 均正常
-- 全量单测 696 例通过、detekt 通过
-
-## [1.4.2] - 2026-11-18
+## [1.4.2] - 2026-11-19
 
 ### 修复
 - **翻 1-2 页后再加书签会误删上一页的书签**：去掉按字符窗口（300~1500 字）去重的逻辑，
   改为按「当前可见范围」判定——同一页/同一屏内再加书签才取消，翻页后加书签正常新增
-- 分页与滚动模式分别用当前页范围 / 视口范围（全书坐标）判断，避免长书里 1-2 页仍落在旧窗口内
+- **导入的 HTML/H5 页面按钮全部失效**：本地页面原先用 `loadDataWithBaseURL(null, ...)` 加载，
+  origin 为 opaque，页面初始化访问 `localStorage` 会抛 SecurityError，整个脚本中断，
+  按钮监听器都没挂上。现在给每个 HTML 书籍一个合成 https origin
+  （`https://mdreader.local/book/<id>/`）
+- **HTML 页面自带目录弹层高度只有一条标题**：WebView 里 `1vh` 会算成 0（`innerHeight` 正常），
+  页面用 `max-height:62vh` 的固定定位目录面板因此塌成 0；注入兜底脚本按视口高度补 px 上限
+
+### 改进（HTML 浏览器式交互）
+- 阅读页顶部新增**常驻地址/标题栏**：显示页面 `<title>`、当前地址与刷新按钮
+- 地址栏新增**原生目录**按钮：提取页面 h1~h4 生成底部目录，点击跳转（页面自带目录不可用时兜底）
+- `window.print()` 接系统打印（打印/导出 PDF 按钮可用）
+- `navigator.clipboard` 不可用时回退原生剪贴板
+- 支持 `<input type=file>` 文件选择、`target=_blank`/`window.open`、下载链接交给系统
+- 页面 JS 报错写入 logcat（`HtmlReader`），便于排查按钮无响应
+- HTML 书籍不再显示沉浸式章节条（用浏览器栏替代）
 
 ### 测试
-- 新增 `ReaderBookmarkToggleTest`（7 例）：同页取消、翻页新增、旧窗口回归、无范围时按同位置、
-  多书签取可见范围内首个、空列表、范围反转
-- 全量单测 696 例通过、detekt 通过
+- 新增 `ReaderBookmarkToggleTest`（7 例）、`HtmlTocParseTest`（5 例）
+- 真机验证：翻页加书签保留旧书签、同页再加取消；《AI客诉分析台》深色切换、目录弹层
+  （页面目录高度正常 + 原生目录）、打印（系统打印页）、地址栏标题/URL；7 格式冒烟 PASS
+- 全量单测通过、detekt 通过
 
 ## [1.4.1] - 2026-11-18
 

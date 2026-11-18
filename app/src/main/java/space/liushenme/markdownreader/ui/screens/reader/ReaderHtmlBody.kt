@@ -54,6 +54,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlin.math.max
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.outlined.Toc
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import space.liushenme.markdownreader.R
 
 /**
@@ -93,6 +101,29 @@ private val READER_JS_SHIM = """
         };
       }
     }
+    // 修复 vh 塌陷导致的目录面板高度为 0：某些页面用 max-height:62vh 做弹层，
+    // 但 WebView 里 vh 可能算成 0（innerHeight 正常），面板只剩标题、内容被裁掉。
+    // 仅在「固定定位且 max-height 近似 0」时按 innerHeight 的 72% 补一个 px 上限。
+    function mdReaderRepairTocPanels() {
+      try {
+        var els = document.querySelectorAll('.toc, #tocPanel, [class*="toc-panel"], [class*="tocPanel"]');
+        for (var i = 0; i < els.length; i++) {
+          var el = els[i];
+          var cs = getComputedStyle(el);
+          if (cs.position !== 'fixed') continue;
+          var rect = el.getBoundingClientRect();
+          if (cs.display === 'none' || rect.height <= 0) continue;
+          var mh = parseFloat(cs.maxHeight);
+          if (!mh || mh < 50) {
+            el.style.maxHeight = Math.round((window.innerHeight || 800) * 0.72) + 'px';
+            el.style.overflow = 'auto';
+          }
+        }
+      } catch (e) {}
+    }
+    document.addEventListener('click', function(){ setTimeout(mdReaderRepairTocPanels, 30); }, true);
+    window.addEventListener('resize', mdReaderRepairTocPanels);
+    setTimeout(mdReaderRepairTocPanels, 600);
   } catch (e) {}
 })();
 """.trimIndent()
@@ -100,6 +131,42 @@ private val READER_JS_SHIM = """
 /**
  * JS ↔ 原生桥接：只暴露「打印当前页」和「写入剪贴板」两个能力，不暴露任何文件/网络访问。
  */
+/**
+ * 等 WebView 真正有尺寸后再 load。
+ *
+ * 在 Composable 的 factory 阶段 WebView 还没 measure，此时 loadDataWithBaseURL 会让页面
+ * 的 initial containing block 记成 0×0 —— 之后 `1vh` 永远等于 0（innerHeight 明明有值），
+ * 页面上所有用 `vh` 的高度限制都会塌成 0：典型表现就是固定定位的目录面板只剩标题、
+ * 内容区被 max-height:0 裁掉。等有尺寸再加载就能拿到正确的视口高度。
+ */
+private fun WebView.loadHtmlWhenSized(baseUrl: String, html: String) {
+    fun load() {
+        loadDataWithBaseURL(baseUrl, html, "text/html", "UTF-8", baseUrl)
+    }
+    if (width > 0 && height > 0) {
+        load()
+        return
+    }
+    addOnLayoutChangeListener(object : android.view.View.OnLayoutChangeListener {
+        override fun onLayoutChange(
+            view: android.view.View,
+            left: Int,
+            top: Int,
+            right: Int,
+            bottom: Int,
+            oldLeft: Int,
+            oldTop: Int,
+            oldRight: Int,
+            oldBottom: Int,
+        ) {
+            if (view.width > 0 && view.height > 0) {
+                view.removeOnLayoutChangeListener(this)
+                load()
+            }
+        }
+    })
+}
+
 private class ReaderHtmlBridge(private val webView: WebView) {
     @JavascriptInterface
     fun printPage() {
@@ -169,7 +236,8 @@ internal fun ReaderHtmlBody(
     onScrollProgress: (Float) -> Unit,
     onTitleChanged: (String) -> Unit = {},
     onUrlChanged: (String) -> Unit = {},
-    onReloadReady: ((() -> Unit)?) -> Unit = {},
+    onTocReady: (List<HtmlTocEntry>) -> Unit = {},
+    onControllerReady: (HtmlViewerController?) -> Unit = {},
 ) {
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var fileChooserCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
@@ -189,7 +257,18 @@ internal fun ReaderHtmlBody(
         factory = { context ->
             WebView(context).also { webView ->
                 webViewRef = webView
-                onReloadReady { webView.reload() }
+                onControllerReady(
+                    HtmlViewerController(
+                        reload = { webView.reload() },
+                        scrollToAnchor = { anchorId ->
+                            val quoted = org.json.JSONObject.quote(anchorId)
+                            webView.evaluateJavascript(
+                                "try{document.getElementById($quoted).scrollIntoView({block:'start'});}catch(e){}",
+                                null,
+                            )
+                        },
+                    ),
+                )
                 webView.settings.apply {
                     javaScriptEnabled = true
                     domStorageEnabled = true
@@ -235,6 +314,11 @@ internal fun ReaderHtmlBody(
                         // 兜底：window.print / navigator.clipboard 在 WebView 里不一定可用，
                         // 用原生能力补上，避免页面按钮点了没反应。
                         view.evaluateJavascript(READER_JS_SHIM, null)
+                        // 提取页面目录：页面自带的目录面板在 WebView 里不一定好用，
+                        // 这里再提供一个原生底部目录，保证一定能看到完整目录。
+                        view.evaluateJavascript(READER_TOC_JS) { raw ->
+                            onTocReady(parseHtmlToc(raw))
+                        }
                     }
                 }
                 // 页面内的 alert / confirm / prompt 默认会被 WebView 直接丢弃（onJsAlert 返回 false
@@ -373,34 +457,54 @@ internal fun ReaderHtmlBody(
                     onScrollProgress((scrollY / maxScroll).coerceIn(0f, 1f))
                 }
                 webView.tag = html
-                webView.loadDataWithBaseURL(
-                    baseUrl,
-                    html,
-                    "text/html",
-                    "UTF-8",
-                    baseUrl,
-                )
+                webView.loadHtmlWhenSized(baseUrl, html)
             }
         },
         update = { webView ->
             if (webView.tag != html) {
                 webView.tag = html
-                webView.loadDataWithBaseURL(
-                    baseUrl,
-                    html,
-                    "text/html",
-                    "UTF-8",
-                    baseUrl,
-                )
+                webView.loadHtmlWhenSized(baseUrl, html)
             }
         },
         onRelease = { webView ->
             if (webViewRef == webView) webViewRef = null
-            onReloadReady(null)
+            onControllerReady(null)
             webView.destroy()
         },
     )
 }
+
+/** HTML 页面的目录条目（由页面 h1~h4 提取）。 */
+internal data class HtmlTocEntry(
+    val title: String,
+    val level: Int,
+    val anchorId: String,
+)
+
+/** 暴露给 Compose 的 WebView 控制能力。 */
+internal class HtmlViewerController(
+    val reload: () -> Unit,
+    val scrollToAnchor: (String) -> Unit,
+)
+
+/** 收集页面标题（h1~h4），没有 id 的补一个稳定 id。 */
+private val READER_TOC_JS = """
+(function(){
+  try {
+    var heads = document.querySelectorAll('h1,h2,h3,h4');
+    var out = [];
+    for (var i = 0; i < heads.length; i++) {
+      var h = heads[i];
+      if (!h.id) { h.id = 'mdreader-h-' + i; }
+      var t = (h.innerText || h.textContent || '').replace(/\s+/g, ' ')
+        .replace(/^#+\s*/, '').replace(/#+\s*$/, '').trim();
+      if (!t) continue;
+      out.push({ t: t.substring(0, 120), l: parseInt(h.tagName.substring(1), 10) || 2, i: h.id });
+    }
+    return JSON.stringify(out);
+  } catch (e) { return '[]'; }
+})()
+""".trimIndent()
 
 /**
  * 浏览器式标题 / 地址栏（HTML 书籍专用，常驻显示）。
@@ -413,6 +517,7 @@ internal fun ReaderHtmlBody(
 internal fun ReaderHtmlAddressBar(
     title: String,
     url: String,
+    onOpenToc: (() -> Unit)?,
     onReload: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
@@ -431,6 +536,14 @@ internal fun ReaderHtmlAddressBar(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            if (onOpenToc != null) {
+                IconButton(onClick = onOpenToc, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        imageVector = Icons.Outlined.Toc,
+                        contentDescription = stringResource(R.string.reader_html_toc),
+                    )
+                }
+            }
             if (onReload != null) {
                 IconButton(onClick = onReload, modifier = Modifier.size(36.dp)) {
                     Icon(
@@ -447,5 +560,79 @@ internal fun ReaderHtmlAddressBar(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+    }
+}
+
+/** 解析 [READER_TOC_JS] 的返回值（JSON 字符串，可能被再包一层引号）。 */
+internal fun parseHtmlToc(raw: String?): List<HtmlTocEntry> {
+    if (raw.isNullOrBlank() || raw == "null") return emptyList()
+    val json = runCatching {
+        val unquoted = org.json.JSONTokener(raw).nextValue()
+        when (unquoted) {
+            is String -> unquoted
+            is org.json.JSONArray -> unquoted.toString()
+            else -> return emptyList()
+        }
+    }.getOrElse { return emptyList() }
+    val array = runCatching { org.json.JSONArray(json) }.getOrElse { return emptyList() }
+    val result = ArrayList<HtmlTocEntry>(array.length())
+    for (i in 0 until array.length()) {
+        val item = array.optJSONObject(i) ?: continue
+        val title = item.optString("t").trim()
+        val anchor = item.optString("i").trim()
+        if (title.isEmpty() || anchor.isEmpty()) continue
+        result += HtmlTocEntry(
+            title = title,
+            level = item.optInt("l", 2).coerceIn(1, 6),
+            anchorId = anchor,
+        )
+    }
+    return result
+}
+
+/**
+ * 原生目录底部弹层（HTML 书籍）。
+ *
+ * 页面自带的 TOC 面板依赖各页面的 CSS，在 WebView 里经常高度异常；
+ * 这里用兜底目录保证一定能看到完整目录并跳转。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun HtmlTocSheet(
+    entries: List<HtmlTocEntry>,
+    onSelect: (HtmlTocEntry) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        Text(
+            text = stringResource(R.string.reader_html_toc),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+        )
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 520.dp)
+                .padding(bottom = 24.dp),
+        ) {
+            items(entries) { entry ->
+                val indent = ((entry.level - 1).coerceIn(0, 3) * 16).dp
+                Text(
+                    text = entry.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelect(entry) }
+                        .padding(start = 20.dp + indent, end = 20.dp, top = 10.dp, bottom = 10.dp),
+                )
+            }
+        }
     }
 }
