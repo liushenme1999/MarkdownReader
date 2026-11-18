@@ -299,6 +299,8 @@ class ReaderViewModel @Inject constructor(
                     toggleBookmarkAtSwipeInternal(
                         previewForAdd = event.previewText,
                         positionForAdd = event.positionForAdd,
+                        rangeStart = event.rangeStart,
+                        rangeEnd = event.rangeEnd,
                     )?.let { added ->
                         _effects.emit(ReaderEffect.BookmarkToggled(added))
                     }
@@ -1035,11 +1037,15 @@ class ReaderViewModel @Inject constructor(
     suspend fun toggleBookmarkAtSwipe(
         previewForAdd: String? = null,
         positionForAdd: Int? = null,
-    ): Boolean? = toggleBookmarkAtSwipeInternal(previewForAdd, positionForAdd)
+        rangeStart: Int? = null,
+        rangeEnd: Int? = null,
+    ): Boolean? = toggleBookmarkAtSwipeInternal(previewForAdd, positionForAdd, rangeStart, rangeEnd)
 
     private suspend fun toggleBookmarkAtSwipeInternal(
         previewForAdd: String? = null,
         positionForAdd: Int? = null,
+        rangeStart: Int? = null,
+        rangeEnd: Int? = null,
     ): Boolean? {
         val book = _book.value ?: return null
         val total = book.totalChars.coerceAtLeast(1)
@@ -1061,8 +1067,14 @@ class ReaderViewModel @Inject constructor(
             snapshot.position,
             if (isPdf) "" else snapshot.previewText,
         )
-        val window = (total / 40).coerceIn(300, 1500)
-        val near = bookmarks.value.find { abs(it.position - pos) <= window }
+        // 只在「当前可见范围」内取消书签；不再用大字符窗口去重，
+        // 否则翻 1-2 页后加书签会把上一页的书签删掉。
+        val near = findBookmarkToToggle(
+            bookmarks = bookmarks.value,
+            position = pos,
+            rangeStart = rangeStart?.coerceAtLeast(0),
+            rangeEnd = rangeEnd?.coerceAtLeast(0),
+        )
 
         return if (near != null) {
             bookmarkRepository.deleteBookmark(near)

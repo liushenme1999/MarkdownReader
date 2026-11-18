@@ -48,6 +48,9 @@ sealed interface ReaderEvent {
     data class ToggleBookmarkAtSwipe(
         val previewText: String? = null,
         val positionForAdd: Int? = null,
+        /** 当前可见范围（全书坐标）：范围内已有书签则取消，否则新增。 */
+        val rangeStart: Int? = null,
+        val rangeEnd: Int? = null,
     ) : ReaderEvent
 }
 

@@ -2158,10 +2158,30 @@ fun ReaderScreen(
                                     documentReachedEnd(),
                                 )
                             }
+                            // 「同页/同屏再次加书签 = 取消」判定用当前可见范围（全书坐标）：
+                            // 不能用字符窗口，否则翻 1-2 页后加书签会把上一页的书签删掉。
+                            val bookmarkBase =
+                                if (uiState.totalCharsGlobal > 0) uiState.windowStartChar else 0
+                            var bookmarkRangeStart: Int? = null
+                            var bookmarkRangeEnd: Int? = null
+                            if (pageTurnMode != ReaderPageTurnMode.VerticalScroll &&
+                                pageSpecs.isNotEmpty()
+                            ) {
+                                val page = pagerState.currentPage.coerceIn(0, pageSpecs.lastIndex)
+                                bookmarkRangeStart = pageSpecs[page].first + bookmarkBase
+                                bookmarkRangeEnd =
+                                    (pageSpecs.getOrNull(page + 1)?.first ?: readerContent.length) +
+                                    bookmarkBase
+                            } else if (uiState.viewportBottomChar > uiState.viewportTopChar) {
+                                bookmarkRangeStart = uiState.viewportTopChar
+                                bookmarkRangeEnd = uiState.viewportBottomChar
+                            }
                             viewModel.dispatch(
                                 ReaderEvent.ToggleBookmarkAtSwipe(
                                     previewText = preview,
                                     positionForAdd = topChar,
+                                    rangeStart = bookmarkRangeStart,
+                                    rangeEnd = bookmarkRangeEnd,
                                 )
                             )
                         }
