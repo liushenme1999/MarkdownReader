@@ -184,6 +184,8 @@ fun ReaderScreen(
             importFormat?.isHtml == true ||
             HtmlDocumentSupport.looksLikeHtmlBody(content)
         )
+    // 本地 HTML 的合成 origin：给页面一个真实的 https 来源，localStorage / clipboard 才能用。
+    val htmlBaseUrl = remember(bookId) { "https://mdreader.local/book/$bookId/" }
     val readerContent = remember(content, isPdfBook) {
         if (isPdfBook) PdfReaderContent.sanitizeStoredBody(content) else content
     }
@@ -2110,23 +2112,38 @@ fun ReaderScreen(
         ) {
             if (renderHtml) {
                 var htmlProgressSaveMs by remember(readerContent) { mutableLongStateOf(0L) }
-                ReaderHtmlBody(
-                    html = readerContent,
-                    modifier = Modifier.fillMaxSize(),
-                    onScrollProgress = { fraction ->
-                        val now = System.currentTimeMillis()
-                        if (now - htmlProgressSaveMs >= 250L) {
-                            htmlProgressSaveMs = now
-                            val progressChar = (fraction * (readerContent.length - 1).coerceAtLeast(0))
-                                .roundToInt()
-                            lastScrollTopGlobalChar[0] = progressChar
-                            viewModel.updateReadingProgressAtChar(
-                                progressChar,
-                                reachedEnd = fraction >= 0.999f,
-                            )
-                        }
-                    },
-                )
+                // 浏览器式标题/地址栏：常驻，不随沉浸模式隐藏。
+                var htmlTitle by remember(bookId) { mutableStateOf<String?>(null) }
+                var htmlUrl by remember(bookId) { mutableStateOf("") }
+                var htmlReload by remember(bookId) { mutableStateOf<(() -> Unit)?>(null) }
+                Column(Modifier.fillMaxSize()) {
+                    ReaderHtmlAddressBar(
+                        title = htmlTitle ?: (book?.title ?: readingTitleFallback),
+                        url = htmlUrl,
+                        onReload = htmlReload,
+                    )
+                    ReaderHtmlBody(
+                        html = readerContent,
+                        modifier = Modifier.weight(1f),
+                        baseUrl = htmlBaseUrl,
+                        onTitleChanged = { htmlTitle = it },
+                        onUrlChanged = { htmlUrl = it },
+                        onReloadReady = { htmlReload = it },
+                        onScrollProgress = { fraction ->
+                            val now = System.currentTimeMillis()
+                            if (now - htmlProgressSaveMs >= 250L) {
+                                htmlProgressSaveMs = now
+                                val progressChar =
+                                    (fraction * (readerContent.length - 1).coerceAtLeast(0)).roundToInt()
+                                lastScrollTopGlobalChar[0] = progressChar
+                                viewModel.updateReadingProgressAtChar(
+                                    progressChar,
+                                    reachedEnd = fraction >= 0.999f,
+                                )
+                            }
+                        },
+                    )
+                }
                 return@ReaderContent
             }
                         // 长按选区走系统复制/全选菜单，不在此弹出划线顶栏。
@@ -2186,7 +2203,8 @@ fun ReaderScreen(
                             )
                         }
                         // 沉浸模式章节小标题常驻，不随大顶栏/底栏显隐改变布局（避免点击唤出工具栏时正文跳动）
-                        val showImmersiveChapterBar = immersiveReading && !isPdfBook && !isCodeBook
+                        val showImmersiveChapterBar =
+                            immersiveReading && !isPdfBook && !isCodeBook && !renderHtml
                         val readerPaddingTopDp = if (showImmersiveChapterBar) {
                             minOf(ReaderChapterStripBodyTopPaddingDp, readerPaddingDp)
                         } else {

@@ -4,6 +4,26 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [1.4.3] - 2026-11-18
+
+### 修复
+- **导入的 HTML/H5 页面按钮全部失效**：本地页面原先用 `loadDataWithBaseURL(null, ...)` 加载，
+  origin 为 opaque，页面初始化时访问 `localStorage` 会抛 SecurityError，整个脚本中断，
+  后续按钮监听器都没挂上。现在给每个 HTML 书籍一个合成 https origin
+  （`https://mdreader.local/book/<id>/`），localStorage / clipboard 等 API 正常工作
+
+### 改进（HTML 浏览器式交互）
+- 阅读页顶部新增**常驻地址/标题栏**：显示页面 `<title>`、当前地址与刷新按钮
+- `window.print()` 接系统打印（打印/导出 PDF 按钮可用）
+- `navigator.clipboard` 不可用时回退原生剪贴板
+- 支持 `<input type=file>` 文件选择、`target=_blank`/`window.open`、下载链接交给系统
+- 页面 JS 报错写入 logcat（`HtmlReader`），便于排查按钮无响应
+
+### 测试
+- 真机导入《AI客诉分析台》验证：深色/浅色切换、目录面板、打印（打开系统打印）、
+  地址栏标题与 URL 均正常
+- 全量单测 696 例通过、detekt 通过
+
 ## [1.4.2] - 2026-11-18
 
 ### 修复

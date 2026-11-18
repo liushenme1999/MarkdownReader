@@ -478,4 +478,5 @@
     <string name="about_crash_log_copy">複製</string>
     <string name="about_crash_log_copied">已複製到剪貼簿</string>
     <string name="about_crash_log_cd">查看當機日誌</string>
+    <string name="reader_html_reload">重新整理頁面</string>
 </resources>
