@@ -355,6 +355,15 @@
     <string name="about_format_code">  - 源码文件 (.py / .js / .ts / .java 等)</string>
     <string name="about_format_pdf">  - PDF (.pdf)</string>
     <string name="about_description">一款轻量级的 Markdown 阅读器，支持阅读统计、笔记管理等功能。</string>
+    <!-- 首次启动隐私政策同意 -->
+    <string name="privacy_consent_title">欢迎使用 MD阅读器</string>
+    <string name="privacy_consent_summary">我们非常重视你的个人信息保护。开始使用前，请阅读并同意以下内容：\n\n· 本应用为本地阅读工具，不收集 IMEI、OAID、位置、通讯录、短信等信息；\n· 核心阅读功能离线可用；\n· 联网仅用于你主动发起的文档导入、图片加载、GitHub 导入、WebDAV 备份与版本检查；\n· 你可以随时在系统设置中管理权限，或卸载应用删除本地数据。</string>
+    <string name="privacy_consent_read_agreement">《用户协议》</string>
+    <string name="privacy_consent_read_privacy">《隐私政策》</string>
+    <string name="privacy_consent_hint">点击「同意并继续」即表示你已阅读并同意上述协议</string>
+    <string name="privacy_consent_agree">同意并继续</string>
+    <string name="privacy_consent_disagree">不同意</string>
+    <string name="privacy_consent_close">关闭</string>
     <!-- APP ICP 备案号（须可点击跳转工信部备案系统） -->
     <string name="icp_filing_number" translatable="false">京ICP备2024097076号-3A</string>
     <string name="icp_beian_url" translatable="false">https://beian.miit.gov.cn/</string>
@@ -372,6 +381,25 @@
     <string name="profile_menu_notes_subtitle">管理阅读笔记与标注</string>
     <string name="profile_menu_reading_settings">阅读设置</string>
     <string name="profile_menu_reading_settings_subtitle">语言、外观、主题、字体、行距、翻页</string>
+    <string name="profile_menu_language">语言</string>
+    <string name="profile_menu_appearance">外观</string>
+    <string name="profile_menu_service_agreement">服务协议</string>
+    <string name="profile_menu_service_agreement_subtitle">用户协议、隐私政策与个人信息说明</string>
+    <string name="profile_menu_personal_info">个人信息收集清单</string>
+    <string name="profile_menu_personal_info_subtitle">按场景了解会处理哪些信息</string>
+    <string name="profile_menu_app_permissions">应用权限</string>
+    <string name="profile_menu_app_permissions_subtitle">查看应用申请的系统权限</string>
+    <string name="language_value_zh_cn">中文（简体）</string>
+    <string name="language_value_zh_tw">中文（繁體）</string>
+    <string name="language_value_en">English</string>
+    <string name="theme_value_system">系统</string>
+    <string name="theme_value_light">亮色</string>
+    <string name="theme_value_dark">深色</string>
+    <string name="language_dialog_title">选择语言</string>
+    <string name="appearance_dialog_title">选择外观</string>
+    <string name="legal_web_open_in_browser">在浏览器中打开</string>
+    <string name="legal_web_load_failed">页面加载失败，请检查网络后重试</string>
+    <string name="legal_web_retry">重试</string>
     <string name="profile_menu_backup_restore">备份与恢复</string>
     <string name="profile_menu_backup_restore_subtitle">WebDAV 远程备份与恢复</string>
 

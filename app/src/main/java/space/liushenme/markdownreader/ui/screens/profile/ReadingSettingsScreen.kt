@@ -32,10 +32,7 @@ import androidx.navigation.NavController
 import space.liushenme.markdownreader.R
 import space.liushenme.markdownreader.data.repository.ReadingFormatProfile
 import space.liushenme.markdownreader.markdown.CodeHighlightTheme
-import space.liushenme.markdownreader.model.AppLanguage
-import space.liushenme.markdownreader.model.AppThemeMode
 import space.liushenme.markdownreader.model.ReaderPageTurnMode
-import space.liushenme.markdownreader.ui.components.AppThemeModeOption
 import space.liushenme.markdownreader.ui.components.CodeHighlightThemeGrid
 import space.liushenme.markdownreader.ui.components.ReaderPageTurnModeOption
 import space.liushenme.markdownreader.ui.components.ReaderSettingsChoiceOption
@@ -66,12 +63,8 @@ fun ReadingSettingsScreen(
     val hideSystemBars by viewModel.hideSystemBars.collectAsState()
     val showTocInLandscape by viewModel.showTocInLandscape.collectAsState()
     val pageTurnMode by viewModel.pageTurnMode.collectAsState()
-    val appThemeMode by viewModel.appThemeMode.collectAsState()
-    val appLanguage by viewModel.appLanguage.collectAsState()
     val activeProfile by viewModel.activeProfile.collectAsState()
     val pageTurnModes = ReaderPageTurnMode.selectableModesFor(activeProfile)
-    val appThemeModes = AppThemeMode.entries
-    val appLanguages = AppLanguage.entries
 
     Scaffold(
         containerColor = pageBg,
@@ -103,45 +96,6 @@ fun ReadingSettingsScreen(
                 active = activeProfile,
                 onSelect = viewModel::selectProfile,
             )
-
-            Column {
-                ReaderSettingsSectionTitle(stringResource(R.string.reading_settings_section_language))
-                ReaderSettingsGroupCard {
-                    Column(
-                        modifier = Modifier.padding(vertical = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        appLanguages.forEachIndexed { index, language ->
-                            ReaderSettingsChoiceOption(
-                                title = stringResource(language.labelRes),
-                                icon = Icons.Default.Language,
-                                selected = language == appLanguage,
-                                onClick = { viewModel.setAppLanguage(language) },
-                                showDividerBelow = index < appLanguages.lastIndex,
-                            )
-                        }
-                    }
-                }
-            }
-
-            Column {
-                ReaderSettingsSectionTitle(stringResource(R.string.reading_settings_section_appearance))
-                ReaderSettingsGroupCard {
-                    Column(
-                        modifier = Modifier.padding(vertical = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        appThemeModes.forEachIndexed { index, mode ->
-                            AppThemeModeOption(
-                                mode = mode,
-                                selected = mode == appThemeMode,
-                                onClick = { viewModel.setAppThemeMode(mode) },
-                                showDividerBelow = index < appThemeModes.lastIndex,
-                            )
-                        }
-                    }
-                }
-            }
 
             Column {
                 ReaderSettingsSectionTitle(stringResource(R.string.reading_settings_section_reading_theme))

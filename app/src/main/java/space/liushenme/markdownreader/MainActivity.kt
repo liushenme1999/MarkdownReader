@@ -53,7 +53,10 @@ import androidx.navigation.compose.rememberNavController
 import space.liushenme.markdownreader.intent.IncomingFileIntent
 import space.liushenme.markdownreader.navigation.AppNavHost
 import space.liushenme.markdownreader.navigation.AppRoutes
+import space.liushenme.markdownreader.data.repository.PrivacyConsentRepository
 import space.liushenme.markdownreader.navigation.MarkdownLinkNavigation
+import space.liushenme.markdownreader.ui.screens.consent.PrivacyConsentScreen
+import space.liushenme.markdownreader.ui.screens.consent.PrivacyConsentViewModel
 import space.liushenme.markdownreader.ui.components.CompactMainBottomBar
 import space.liushenme.markdownreader.ui.components.CompactMainBottomNavItem
 import space.liushenme.markdownreader.ui.components.ExternalLinkWarningDialog
@@ -83,9 +86,15 @@ private data class PendingExternalLink(
 class MainActivity : AppCompatActivity() {
 
     private val appSettingsViewModel: AppSettingsViewModel by viewModels()
+    private val privacyConsentViewModel: PrivacyConsentViewModel by viewModels()
 
     @Inject
     lateinit var backupManager: BackupManager
+
+    @Inject
+    lateinit var privacyConsentRepository: PrivacyConsentRepository
+
+    private var remoteBackupChecked = false
 
     override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean {
         when (ev.actionMasked) {
@@ -108,22 +117,45 @@ class MainActivity : AppCompatActivity() {
         setContent {
             val themeMode by appSettingsViewModel.appThemeMode.collectAsStateWithLifecycle()
             val darkTheme = themeMode.resolveDarkTheme()
+            val consentState by privacyConsentViewModel.consentState.collectAsStateWithLifecycle()
 
             ApplySystemBarStyles(darkTheme = darkTheme)
 
             MarkdownReaderTheme(darkTheme = darkTheme) {
-                MainAppContent(
-                    pendingOpenUri = pendingOpenUri,
-                    onPendingOpenUriConsumed = { pendingOpenUri = null },
-                )
+                when (consentState) {
+                    // DataStore 尚未读出：先空白一帧，避免先闪一下弹窗再跳进书架。
+                    null -> Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background,
+                    ) {}
+                    false -> PrivacyConsentScreen(
+                        onAgree = {
+                            privacyConsentViewModel.accept()
+                            (application as MarkdownReaderApp).startPostConsentWork()
+                            checkRemoteBackupOnLaunch()
+                        },
+                        onDisagree = { finishAffinity() },
+                    )
+                    true -> MainAppContent(
+                        pendingOpenUri = pendingOpenUri,
+                        onPendingOpenUriConsumed = { pendingOpenUri = null },
+                    )
+                }
             }
         }
         if (savedInstanceState == null) {
-            checkRemoteBackupOnLaunch()
+            lifecycleScope.launch {
+                // 未同意隐私政策前不做任何联网检查。
+                if (privacyConsentRepository.isAccepted()) {
+                    checkRemoteBackupOnLaunch()
+                }
+            }
         }
     }
 
     private fun checkRemoteBackupOnLaunch() {
+        if (remoteBackupChecked) return
+        remoteBackupChecked = true
         lifecycleScope.launch {
             val newer = withContext(Dispatchers.IO) {
                 backupManager.findNewerRemoteBackup()

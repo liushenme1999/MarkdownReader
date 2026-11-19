@@ -34,6 +34,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import space.liushenme.markdownreader.R
+import space.liushenme.markdownreader.model.AppLanguage
+import space.liushenme.markdownreader.model.AppThemeMode
 import space.liushenme.markdownreader.navigation.AppRoutes
 import space.liushenme.markdownreader.ui.components.ShelfStyleTopBarBackground
 import space.liushenme.markdownreader.ui.components.shelfStylePageBackground
@@ -54,8 +56,12 @@ fun ProfileScreen(
     val totalReadingDays by viewModel.totalReadingDays.collectAsState()
     val continuousReadingDays by viewModel.continuousReadingDays.collectAsState()
     val availableUpdate by viewModel.availableUpdate.collectAsState()
+    val appLanguage by viewModel.appLanguage.collectAsState()
+    val appThemeMode by viewModel.appThemeMode.collectAsState()
 
     var showClearCacheDialog by remember { mutableStateOf(false) }
+    var showLanguageDialog by remember { mutableStateOf(false) }
+    var showAppearanceDialog by remember { mutableStateOf(false) }
 
     // 清理缓存确认对话框
     if (showClearCacheDialog) {
@@ -100,6 +106,32 @@ fun ProfileScreen(
                     Text(stringResource(R.string.action_cancel))
                 }
             }
+        )
+    }
+
+    if (showLanguageDialog) {
+        SingleChoiceDialog(
+            title = stringResource(R.string.language_dialog_title),
+            options = AppLanguage.entries.map { stringResource(it.valueLabelRes) },
+            selectedIndex = AppLanguage.entries.indexOf(appLanguage),
+            onSelect = { index ->
+                viewModel.setAppLanguage(AppLanguage.entries[index])
+                showLanguageDialog = false
+            },
+            onDismiss = { showLanguageDialog = false },
+        )
+    }
+
+    if (showAppearanceDialog) {
+        SingleChoiceDialog(
+            title = stringResource(R.string.appearance_dialog_title),
+            options = AppThemeMode.entries.map { stringResource(it.shortLabelRes) },
+            selectedIndex = AppThemeMode.entries.indexOf(appThemeMode),
+            onSelect = { index ->
+                viewModel.setAppThemeMode(AppThemeMode.entries[index])
+                showAppearanceDialog = false
+            },
+            onDismiss = { showAppearanceDialog = false },
         )
     }
 
@@ -252,7 +284,6 @@ fun ProfileScreen(
                     ProfileMenuItem(
                         icon = Icons.Default.EditNote,
                         title = stringResource(R.string.profile_menu_notes),
-                        subtitle = stringResource(R.string.profile_menu_notes_subtitle),
                         onClick = { navController.navigate(AppRoutes.NOTES) }
                     )
                     HorizontalDivider(
@@ -264,8 +295,31 @@ fun ProfileScreen(
                     ProfileMenuItem(
                         icon = Icons.Default.Settings,
                         title = stringResource(R.string.profile_menu_reading_settings),
-                        subtitle = stringResource(R.string.profile_menu_reading_settings_subtitle),
                         onClick = { navController.navigate(AppRoutes.READING_SETTINGS) }
+                    )
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = 56.dp, end = 16.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                    )
+                    // 语言
+                    ProfileValueMenuItem(
+                        icon = Icons.Default.Language,
+                        title = stringResource(R.string.profile_menu_language),
+                        value = stringResource(appLanguage.valueLabelRes),
+                        onClick = { showLanguageDialog = true },
+                    )
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = 56.dp, end = 16.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                    )
+                    // 外观
+                    ProfileValueMenuItem(
+                        icon = Icons.Default.Palette,
+                        title = stringResource(R.string.profile_menu_appearance),
+                        value = stringResource(appThemeMode.shortLabelRes),
+                        onClick = { showAppearanceDialog = true },
                     )
                     HorizontalDivider(
                         modifier = Modifier.padding(start = 56.dp, end = 16.dp),
@@ -276,7 +330,6 @@ fun ProfileScreen(
                     ProfileMenuItem(
                         icon = Icons.Default.CloudSync,
                         title = stringResource(R.string.profile_menu_backup_restore),
-                        subtitle = stringResource(R.string.profile_menu_backup_restore_subtitle),
                         onClick = { navController.navigate(AppRoutes.BACKUP_RESTORE) }
                     )
                 }
@@ -302,7 +355,6 @@ fun ProfileScreen(
                     ProfileMenuItem(
                         icon = Icons.Default.DeleteSweep,
                         title = stringResource(R.string.profile_menu_clear_cache),
-                        subtitle = stringResource(R.string.profile_menu_clear_cache_subtitle),
                         onClick = { showClearCacheDialog = true }
                     )
                     HorizontalDivider(
@@ -311,21 +363,9 @@ fun ProfileScreen(
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
                     )
                     ProfileMenuItem(
-                        icon = Icons.Default.Description,
-                        title = stringResource(R.string.profile_menu_user_agreement),
-                        subtitle = stringResource(R.string.profile_menu_user_agreement_subtitle),
-                        onClick = { navController.navigate(AppRoutes.USER_AGREEMENT) }
-                    )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(start = 56.dp, end = 16.dp),
-                        thickness = 0.5.dp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
-                    )
-                    ProfileMenuItem(
-                        icon = Icons.Default.PrivacyTip,
-                        title = stringResource(R.string.profile_menu_privacy_policy),
-                        subtitle = stringResource(R.string.profile_menu_privacy_policy_subtitle),
-                        onClick = { navController.navigate(AppRoutes.PRIVACY_POLICY) }
+                        icon = Icons.Default.Policy,
+                        title = stringResource(R.string.profile_menu_service_agreement),
+                        onClick = { navController.navigate(AppRoutes.SERVICE_AGREEMENT) }
                     )
                     HorizontalDivider(
                         modifier = Modifier.padding(start = 56.dp, end = 16.dp),
@@ -335,7 +375,6 @@ fun ProfileScreen(
                     ProfileMenuItem(
                         icon = Icons.Default.Info,
                         title = stringResource(R.string.profile_menu_about),
-                        subtitle = stringResource(R.string.profile_menu_about_subtitle),
                         showBadge = availableUpdate != null,
                         badgeContentDescription = stringResource(R.string.profile_about_update_badge_cd),
                         onClick = { navController.navigate(AppRoutes.ABOUT) }
@@ -403,8 +442,8 @@ private fun OverviewDataItem(
 private fun ProfileMenuItem(
     icon: ImageVector,
     title: String,
-    subtitle: String,
     onClick: () -> Unit,
+    subtitle: String? = null,
     showBadge: Boolean = false,
     badgeContentDescription: String? = null,
 ) {
@@ -447,11 +486,13 @@ private fun ProfileMenuItem(
                     )
                 }
             }
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-            )
+            if (!subtitle.isNullOrBlank()) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
+            }
         }
         Icon(
             Icons.AutoMirrored.Filled.KeyboardArrowRight,
@@ -460,6 +501,87 @@ private fun ProfileMenuItem(
             tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
         )
     }
+}
+
+@Composable
+private fun ProfileValueMenuItem(
+    icon: ImageVector,
+    title: String,
+    value: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            modifier = Modifier.size(24.dp),
+            tint = MaterialTheme.colorScheme.primary,
+        )
+        Spacer(modifier = Modifier.width(16.dp))
+        Text(
+            title,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            maxLines = 1,
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Icon(
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
+        )
+    }
+}
+
+@Composable
+private fun SingleChoiceDialog(
+    title: String,
+    options: List<String>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title, fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                options.forEachIndexed { index, label ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(index) }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = index == selectedIndex,
+                            onClick = { onSelect(index) },
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(label, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        },
+    )
 }
 
 private fun formatCacheBytes(bytes: Long): String = when {

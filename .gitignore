@@ -104,3 +104,6 @@ app/build-system/
 # Local venv (软著 Word 生成脚本等)
 .venv-softzhu/
 软著申请/
+
+# 应用宝上架材料（含联系方式、签名指纹、备案信息，不提交）
+docs/上架应用宝/

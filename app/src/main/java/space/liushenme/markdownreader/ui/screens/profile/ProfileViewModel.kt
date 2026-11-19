@@ -5,8 +5,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import space.liushenme.markdownreader.data.repository.AppCacheRepository
 import space.liushenme.markdownreader.data.repository.IReadingProgressRepository
+import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
 import space.liushenme.markdownreader.data.repository.UserProfile
 import space.liushenme.markdownreader.data.repository.UserProfileRepository
+import space.liushenme.markdownreader.model.AppLanguage
+import space.liushenme.markdownreader.model.AppThemeMode
 import space.liushenme.markdownreader.update.AppUpdateRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -18,6 +21,7 @@ import kotlinx.coroutines.launch
 class ProfileViewModel @Inject constructor(
     private val userProfileRepository: UserProfileRepository,
     private val appCacheRepository: AppCacheRepository,
+    private val readerSettingsRepository: ReaderSettingsRepository,
     readingProgressRepository: IReadingProgressRepository,
     appUpdateRepository: AppUpdateRepository,
 ) : ViewModel() {
@@ -55,6 +59,26 @@ class ProfileViewModel @Inject constructor(
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = appUpdateRepository.availableUpdate.value,
     )
+
+    val appLanguage = readerSettingsRepository.appLanguage.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = AppLanguage.DEFAULT,
+    )
+
+    val appThemeMode = readerSettingsRepository.appThemeMode.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = AppThemeMode.SYSTEM,
+    )
+
+    fun setAppLanguage(language: AppLanguage) {
+        viewModelScope.launch { readerSettingsRepository.setAppLanguage(language) }
+    }
+
+    fun setAppThemeMode(mode: AppThemeMode) {
+        viewModelScope.launch { readerSettingsRepository.setAppThemeMode(mode) }
+    }
 
     fun setNickname(nickname: String) {
         viewModelScope.launch { userProfileRepository.setNickname(nickname) }

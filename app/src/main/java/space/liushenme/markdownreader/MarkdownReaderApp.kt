@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.os.StrictMode
 import androidx.work.Configuration
 import space.liushenme.markdownreader.data.local.BookContentHashBackfill
+import space.liushenme.markdownreader.data.repository.PrivacyConsentRepository
 import space.liushenme.markdownreader.data.repository.ReaderSettingsRepository
 import space.liushenme.markdownreader.data.work.BackgroundWorkScheduler
 import space.liushenme.markdownreader.markdown.DiagramWebViewRenderer
@@ -42,7 +43,13 @@ class MarkdownReaderApp : Application(), Configuration.Provider {
     @Inject
     lateinit var backgroundWorkScheduler: BackgroundWorkScheduler
 
+    @Inject
+    lateinit var privacyConsentRepository: PrivacyConsentRepository
+
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    @Volatile
+    private var postConsentWorkStarted = false
 
     /**
      * 仅 debug 包开启主线程 IO 检测：新增代码若在主线程读写磁盘/网络，
@@ -83,9 +90,24 @@ class MarkdownReaderApp : Application(), Configuration.Provider {
         appScope.launch(Dispatchers.IO) {
             bookContentHashBackfill.runIfNeeded()
         }
+        // 隐私同意前不联网、不注册后台任务：版本检查与自动备份都推迟到用户同意之后。
         appScope.launch {
-            appUpdateRepository.refresh()
+            if (privacyConsentRepository.isAccepted()) {
+                startPostConsentWork()
+            }
         }
+    }
+
+    /**
+     * 隐私同意后才允许执行的联网与后台任务：版本检查、每日自动备份注册、启动时的自动备份。
+     *
+     * 由 [onCreate]（已完成同意）或首次启动弹窗点「同意并继续」后调用，用
+     * [postConsentWorkStarted] 保证只执行一次。
+     */
+    fun startPostConsentWork() {
+        if (postConsentWorkStarted) return
+        postConsentWorkStarted = true
+        appScope.launch { appUpdateRepository.refresh() }
         backgroundWorkScheduler.ensurePeriodicBackupScheduled()
         backgroundWorkScheduler.enqueueAutoBackup()
     }

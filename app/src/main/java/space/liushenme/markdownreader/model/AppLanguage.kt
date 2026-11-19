@@ -9,10 +9,11 @@ import space.liushenme.markdownreader.R
 enum class AppLanguage(
     val tag: String,
     @StringRes val labelRes: Int,
+    @StringRes val valueLabelRes: Int,
 ) {
-    ZH_CN("zh-CN", R.string.language_zh_cn),
-    ZH_TW("zh-TW", R.string.language_zh_tw),
-    EN("en", R.string.language_en),
+    ZH_CN("zh-CN", R.string.language_zh_cn, R.string.language_value_zh_cn),
+    ZH_TW("zh-TW", R.string.language_zh_tw, R.string.language_value_zh_tw),
+    EN("en", R.string.language_en, R.string.language_value_en),
     ;
 
     companion object {

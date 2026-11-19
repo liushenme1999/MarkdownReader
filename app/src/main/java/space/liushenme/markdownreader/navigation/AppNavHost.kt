@@ -2,6 +2,7 @@ package space.liushenme.markdownreader.navigation
 
 import android.net.Uri
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -9,6 +10,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import space.liushenme.markdownreader.markdown.MarkdownLinkDispatcher
+import space.liushenme.markdownreader.model.LegalWebDocument
+import space.liushenme.markdownreader.ui.screens.legal.LegalWebScreen
+import space.liushenme.markdownreader.ui.screens.legal.ServiceAgreementScreen
 import space.liushenme.markdownreader.ui.screens.bookshelf.BookshelfLayoutScreen
 import space.liushenme.markdownreader.ui.screens.bookshelf.BookshelfScreen
 import space.liushenme.markdownreader.ui.screens.bookshelf.BookshelfSearchScreen
@@ -89,6 +93,22 @@ fun AppNavHost(
                 documentType = LegalDocumentType.PRIVACY_POLICY,
                 navController = navController,
             )
+        }
+
+        composable(AppRoutes.SERVICE_AGREEMENT) {
+            ServiceAgreementScreen(navController = navController)
+        }
+
+        composable(
+            route = AppRoutes.LEGAL_WEB,
+            arguments = listOf(navArgument("docKey") { type = NavType.StringType }),
+        ) { backStackEntry ->
+            val document = LegalWebDocument.fromKey(backStackEntry.arguments?.getString("docKey"))
+            if (document == null) {
+                LaunchedEffect(Unit) { navController.popBackStack() }
+            } else {
+                LegalWebScreen(document = document, navController = navController)
+            }
         }
 
         composable(AppRoutes.ABOUT) {

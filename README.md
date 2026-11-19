@@ -198,11 +198,21 @@ RELEASE_KEY_PASSWORD=你的密钥密码
 
 ## 权限说明
 
-应用仅声明 **`INTERNET`**（用于 URL 导入书籍、加载 Markdown 中的网络图片等）。
+应用声明 **5 个普通权限**，没有危险权限：
 
-- **不**使用 `READ_EXTERNAL_STORAGE` / `WRITE_EXTERNAL_STORAGE`
+| 权限 | 用途 |
+|------|------|
+| `INTERNET` | URL 导入书籍、加载 Markdown 中的网络图片、导入公开 GitHub 仓库、打开外链、WebDAV 备份、检查新版本 |
+| `ACCESS_NETWORK_STATE` | 后台自动备份任务执行前判断网络是否可用（来自 WorkManager） |
+| `WAKE_LOCK` | 备份任务执行期间保持 CPU 唤醒（来自 WorkManager） |
+| `RECEIVE_BOOT_COMPLETED` | 开机后恢复「每日自动备份」计划（来自 WorkManager） |
+| `FOREGROUND_SERVICE` | 备份等耗时任务在后台可靠运行（来自 WorkManager） |
+
+- **不**使用 `READ_EXTERNAL_STORAGE` / `WRITE_EXTERNAL_STORAGE` / `MANAGE_EXTERNAL_STORAGE`
 - 本地文件通过系统文档选择器（SAF）以 `content://` URI 读取
 - 导出笔记由用户通过系统「另存为」选择保存位置
+- 首次启动会展示隐私政策弹窗，用户同意前不发起网络请求、不注册后台任务
+- 隐私政策：<https://liushenme.space/liu-tech-share/privacy/mdreader>
 
 ## 相关文档
 

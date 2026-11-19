@@ -1,6 +1,7 @@
 package space.liushenme.markdownreader.navigation
 
 import android.net.Uri
+import space.liushenme.markdownreader.model.LegalWebDocument
 
 /** 主导航路由常量，避免魔法字符串分散在各 Composable 中。 */
 object AppRoutes {
@@ -16,6 +17,8 @@ object AppRoutes {
     const val BACKUP_HELP = "backup_help"
     const val USER_AGREEMENT = "user_agreement"
     const val PRIVACY_POLICY = "privacy_policy"
+    const val SERVICE_AGREEMENT = "service_agreement"
+    const val LEGAL_WEB = "legal_web/{docKey}"
     const val ABOUT = "about"
     const val READER =
         "reader/{bookId}?jumpKind={jumpKind}&jumpPosition={jumpPosition}" +
@@ -38,6 +41,8 @@ object AppRoutes {
         BACKUP_HELP,
         USER_AGREEMENT,
         PRIVACY_POLICY,
+        SERVICE_AGREEMENT,
+        LEGAL_WEB,
         ABOUT,
         PROJECT,
     )
@@ -63,4 +68,6 @@ object AppRoutes {
     fun project(projectId: Long): String = "project/$projectId"
 
     fun webLink(url: String): String = "web_link?url=${Uri.encode(url)}"
+
+    fun legalWeb(document: LegalWebDocument): String = "legal_web/${document.name}"
 }
