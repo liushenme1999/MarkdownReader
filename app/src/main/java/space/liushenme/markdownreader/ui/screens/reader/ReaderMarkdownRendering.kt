@@ -1,5 +1,7 @@
 package space.liushenme.markdownreader.ui.screens.reader
 
+import android.annotation.SuppressLint
+
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -516,6 +518,9 @@ internal fun applyMarkdownContent(
 }
 
 @Composable
+// android.text.Layout 的断行常量与 android.graphics.text.LineBreaker 数值相同（0/1/2），
+// 后者 API 29 才提供；这里用 Layout 常量以兼容 minSdk 24，Lint 的 WrongConstant 属误报。
+@SuppressLint("WrongConstant")
 internal fun MarkdownReaderView(
     content: String,
     renderPlainText: Boolean,

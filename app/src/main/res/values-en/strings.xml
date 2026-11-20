@@ -259,7 +259,11 @@
     <string name="reader_show_toc_in_landscape">Show table of contents in landscape</string>
     <string name="reader_show_toc_in_landscape_summary">Landscape only; independent of phone or tablet screen size</string>
     <string name="reader_code_block_copy">Copy</string>
-    <string name="reader_code_block_copied">Code copied</string>
+        <string name="reader_page_turn_markdown_only_hint">Markdown documents contain many block-level elements, so only vertical scrolling is supported.</string>
+    <string name="reader_code_fold_collapse">Collapse</string>
+    <string name="reader_code_fold_expand">Expand</string>
+    <string name="reader_code_folded_lines">⋯ %1$d lines folded</string>
+<string name="reader_code_block_copied">Code copied</string>
     <string name="reader_marks_sheet_title">Bookmarks &amp; highlights</string>
     <string name="reader_marks_tab_bookmarks">Bookmarks</string>
     <string name="reader_marks_tab_highlights">Highlights</string>

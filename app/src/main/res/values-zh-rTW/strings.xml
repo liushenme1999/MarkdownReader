@@ -259,7 +259,11 @@
     <string name="reader_show_toc_in_landscape">橫向顯示目錄欄</string>
     <string name="reader_show_toc_in_landscape_summary">僅橫向生效，與手機或平板螢幕大小無關</string>
     <string name="reader_code_block_copy">複製</string>
-    <string name="reader_code_block_copied">已複製程式碼</string>
+        <string name="reader_page_turn_markdown_only_hint">Markdown 文件區塊元素較多，僅支援上下捲動</string>
+    <string name="reader_code_fold_collapse">收合</string>
+    <string name="reader_code_fold_expand">展開</string>
+    <string name="reader_code_folded_lines">⋯ 已收合 %1$d 行</string>
+<string name="reader_code_block_copied">已複製程式碼</string>
     <string name="reader_marks_sheet_title">書籤與劃線</string>
     <string name="reader_marks_tab_bookmarks">書籤</string>
     <string name="reader_marks_tab_highlights">劃線</string>

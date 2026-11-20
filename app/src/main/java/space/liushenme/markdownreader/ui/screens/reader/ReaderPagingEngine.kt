@@ -1,5 +1,7 @@
 package space.liushenme.markdownreader.ui.screens.reader
 
+import android.annotation.SuppressLint
+
 import android.app.Activity
 import android.content.Context
 import android.text.Spannable
@@ -2750,6 +2752,7 @@ internal fun measureCharsPerPageByLayout(
  * - `setIncludePad`：分页页 TextView 设置了 `includeFontPadding = false`
  *   （见 `MarkdownReaderView`），探针也必须关闭，否则首/末行会多出几像素。
  */
+@SuppressLint("WrongConstant") // 同 MarkdownReaderView：Layout 常量兼容 minSdk 24，数值与 LineBreaker 一致
 private fun buildReaderProbeLayout(
     content: CharSequence,
     start: Int,
